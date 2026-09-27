@@ -1,0 +1,55 @@
+# 금지 표현 목록 — 02b_auto_review.py ① 규칙 검사 (기획서 7장, 의료법 §56②, 표시광고법 §3)
+# 한 줄에 하나. 대소문자 무시, 단어 경계 적용.
+# "re:" 로 시작하면 정규식. "# " 뒤는 주석.
+# 이 목록에 걸리면 ⛔ 차단 → 자동 재생성 1회 → 사람 검수.
+
+# 비교·최상급 (의료법 §56②4호, 표시광고법)
+re:\bbest\b(?!\s+(time|way|months?|season|to))
+re:\b(the\s+)?#\s?1\b
+number one
+top-rated
+top rated
+cheapest
+lowest price
+safest
+re:\bthe\s+only\s+(clinic|place|treatment|procedure|doctor)\b
+world-class
+unbeatable
+최고
+1위
+유일
+최저가
+가장 저렴
+
+# 효과 단정·보장 (의료법 §56②3·8호)
+guarantee
+guaranteed
+100%
+re:\bpermanent(ly)?\s+(results?|fix|cure)
+no side effects
+risk-free
+risk free
+painless
+miracle
+re:\bwill\s+(definitely|surely|certainly)\b
+re:\bcures?\b
+보장
+부작용 없
+완치
+반드시
+
+# 치료경험담·전후 사진 (의료법 §56②2호)
+before and after
+before-and-after
+before & after
+전후 사진
+
+# 할인·유인 (의료법 §56②13호, §27③)
+re:\b\d+\s?%\s?off\b
+discount code
+coupon
+promo code
+free consultation
+book now
+할인
+이벤트가

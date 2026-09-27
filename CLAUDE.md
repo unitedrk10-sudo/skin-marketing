@@ -5,7 +5,7 @@
 ## 작업 규칙
 - 이 프로젝트는 **개발만** Claude Code로 하고, 운영은 Hermes가 한다. 스크립트는 사람 개입 없이 CLI로 단독 실행 가능해야 한다.
 - 모든 LLM 호출은 `pipeline/llm.py`를 통해서만 한다. 모델명은 `config/models.yaml`에서 읽는다.
-- API 키·봇 토큰(`GEMINI_API_KEY`, `LAW_API_OC` 등)은 환경변수로만 읽고, 코드·로그·저장소에 남기지 않는다.
+- API 키·봇 토큰(`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `LAW_API_OC` 등)은 환경변수로만 읽고, 코드·로그·저장소에 남기지 않는다.
 - 파일 상태 이동(drafts → approved → rendered → ready_to_publish → published)은 `03_review.py`와 정해진 스크립트만 수행한다.
 - `06_publish.py`는 `ready_to_publish/` 외의 경로를 처리하지 않는다. 이 제약을 우회하는 코드를 만들지 않는다.
 - 생성 프롬프트에는 기획서 7장 금지 사항과 "모든 사실에 출처 URL" 규칙을 반드시 포함한다.
@@ -16,3 +16,15 @@
 - 테스트: `python -m pytest -q`
 - 법령 조회: `python -m pipeline.law_api search 의료법` / `python -m pipeline.law_api article 의료법 27`
 - 법령 동기화: `python -m pipeline.law_sync`
+- LLM 설정 점검: `python -m pipeline.llm check`
+- 주간 주제: `python -m pipeline.01_topics`
+- 초안 생성: `python -m pipeline.02_draft --week 2026-W40 --pick 1,3` / 수정: `--revise <draft_id> --note "..."`
+- 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate`
+- 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
+- 운영 등록 기준: `hermes/cron_jobs.md`, 답장 해석 규칙: `hermes/skills/review_handler.md`
+
+## 구조 메모
+- 초안 = `content/<상태>/<draft_id>/` 폴더 (`draft.json`, `script.md`, `blog.md`, `review.json`, `history.json`). `content/` 는 운영 데이터라 git 에 올리지 않는다.
+- 대본·블로그는 02_draft 의 사실 목록(`facts`, 사실마다 출처 URL)만 사용하고 `[F#]` / `fact_ids` 로 참조한다. 02b 는 이 참조를 기준으로 출처를 검증한다.
+- 금지 표현은 `config/banned_terms.txt`, 병원명·연락처·체험담 등 패턴은 `02b_auto_review.py` 의 `RULE_PATTERNS`.
+- 테스트는 `llm.set_backend()` 로 가짜 LLM 을 쓰고 `SKIN_CONTENT_DIR`/`SKIN_LOG_DIR` 로 임시 폴더를 쓴다.

@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 logs/
 legal/changes.md
+content/
+reports/

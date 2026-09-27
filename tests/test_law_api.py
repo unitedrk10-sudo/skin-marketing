@@ -95,6 +95,7 @@ def test_select_and_diff():
 def test_run_with_fake_client(tmp_path, monkeypatch):
     monkeypatch.setattr(law_sync, "SNAPSHOT_DIR", tmp_path)
     monkeypatch.setattr(law_sync, "REQUEST_INTERVAL", 0)
+    monkeypatch.setattr(law_sync, "RETRY_PAUSE", 0)
 
     class Fake:
         def find(self, name):
@@ -115,6 +116,7 @@ def test_run_with_fake_client(tmp_path, monkeypatch):
 def test_run_keeps_previous_snapshot_on_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(law_sync, "SNAPSHOT_DIR", tmp_path)
     monkeypatch.setattr(law_sync, "REQUEST_INTERVAL", 0)
+    monkeypatch.setattr(law_sync, "RETRY_PAUSE", 0)
     (tmp_path / "의료법.json").write_text('{"name": "의료법", "articles": {}}', encoding="utf-8")
 
     class Down:
@@ -124,3 +126,23 @@ def test_run_keeps_previous_snapshot_on_failure(tmp_path, monkeypatch):
     snaps, changes, errors = law_sync.run(Down(), {"laws": [{"name": "의료법"}]})
     assert snaps == [{"name": "의료법", "articles": {}}]
     assert changes == [] and len(errors) == 1
+
+
+def test_run_retries_transient_failures_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(law_sync, "SNAPSHOT_DIR", tmp_path)
+    monkeypatch.setattr(law_sync, "REQUEST_INTERVAL", 0)
+    monkeypatch.setattr(law_sync, "RETRY_PAUSE", 0)
+    calls = []
+
+    class Flaky:
+        def find(self, name):
+            calls.append(name)
+            if len(calls) == 1:
+                raise LawApiError("connection reset")
+            return parse_search(SEARCH_ONE)[0]
+
+        def document(self, mst):
+            return parse_document(DOC)
+
+    snaps, changes, errors = law_sync.run(Flaky(), {"laws": [{"name": "의료법", "articles": ["27"]}]})
+    assert errors == [] and len(snaps) == 1 and calls == ["의료법", "의료법"]

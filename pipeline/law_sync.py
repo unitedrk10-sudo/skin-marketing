@@ -26,6 +26,7 @@ CONFIG = ROOT / "config" / "laws.yaml"
 LEGAL_DIR = ROOT / "legal"
 SNAPSHOT_DIR = LEGAL_DIR / "snapshots"
 REQUEST_INTERVAL = 2  # 초
+RETRY_PAUSE = 60  # 초
 
 
 def select_articles(doc: LawDocument, articles: list[str] | None, keywords: list[str] | None) -> list[Article]:
@@ -85,16 +86,30 @@ def _snapshot_path(name: str) -> Path:
     return SNAPSHOT_DIR / f"{name.replace('/', '_').replace(' ', '_')}.json"
 
 
-def run(client: LawApiClient, config: dict) -> tuple[list[dict], list[str], list[str]]:
-    snaps, changes, errors = [], [], []
-    for i, entry in enumerate(config["laws"]):
+def _fetch_all(client: LawApiClient, entries: list[dict]) -> tuple[dict[str, LawDocument], dict[str, str]]:
+    docs, failed = {}, {}
+    for i, entry in enumerate(entries):
         if i:
             time.sleep(REQUEST_INTERVAL)  # 과도한 호출 제한 회피
         try:
             summary = client.find(entry["name"])
-            doc = client.document(summary.mst)
+            docs[entry["name"]] = client.document(summary.mst)
         except LawApiError as e:
-            errors.append(f"{entry['name']}: {e}")
+            failed[entry["name"]] = str(e)
+    return docs, failed
+
+
+def run(client: LawApiClient, config: dict) -> tuple[list[dict], list[str], list[str]]:
+    snaps, changes, errors = [], [], []
+    docs, failed = _fetch_all(client, config["laws"])
+    if failed:  # 연속 호출 시 서버가 연결을 끊는 경우가 있어, 쉬었다가 실패분만 한 번 더
+        time.sleep(RETRY_PAUSE)
+        retried, failed = _fetch_all(client, [e for e in config["laws"] if e["name"] in failed])
+        docs.update(retried)
+    for entry in config["laws"]:
+        doc = docs.get(entry["name"])
+        if doc is None:
+            errors.append(f"{entry['name']}: {failed[entry['name']]}")
             path = _snapshot_path(entry["name"])
             if path.exists():  # 조회 실패 시 요약본에는 직전 스냅샷을 유지
                 snaps.append(json.loads(path.read_text(encoding="utf-8")))
