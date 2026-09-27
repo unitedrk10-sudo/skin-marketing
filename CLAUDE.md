@@ -20,9 +20,10 @@
 - 주간 주제: `python -m pipeline.01_topics`
 - 초안 생성: `python -m pipeline.02_draft --week 2026-W40 --pick 1,3` / 수정: `--revise <draft_id> --note "..."`
 - 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate`
-- Claude Code 검수 요청/반영: `python -m pipeline.02c_external_review export` / `import`
+- Claude Code 검수 한 사이클: `python -m pipeline.02c_external_review review` (export → claude -p → import)
+- 워커(Hermes 크론): `python -m pipeline.worker run` / 주제 선택 요청: `python -m pipeline.worker request-drafts --pick 1,3`
 - 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
-- 운영 등록 기준: `hermes/cron_jobs.md`, 답장 해석 규칙: `hermes/skills/review_handler.md`
+- Hermes 설치·운영: `hermes/README.md` (`bash hermes/install.sh`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 
 ## 구조 메모
 - 초안 = `content/<상태>/<draft_id>/` 폴더 (`draft.json`, `script.md`, `blog.md`, `review.json`, `history.json`). `content/` 는 운영 데이터라 git 에 올리지 않는다.
@@ -32,7 +33,7 @@
 
 ## 검수 요청 처리 (Claude Code 가 운영 검수를 맡는 유일한 작업)
 검수 단계(`source_check`, `cross_review`)는 `provider: claude_code` — Anthropic API 대신 Claude Code 가 한다.
-Hermes 크론이 `hermes/run_claude_review.sh` 로 같은 머신에서 `claude -p` 를 실행해 요청한다 (git 으로 주고받지 않음).
+Hermes 의 `skin-worker` 크론(`pipeline/worker.py` → `02c_external_review.review_cycle`)이 같은 머신에서 `claude -p` 를 실행해 요청한다 (git 으로 주고받지 않음).
 요청을 받으면:
 1. 지정된 `review-queue/pending/<packet_id>.json` 을 읽는다. 파일 안 `instructions` 가 기준이다 (기획서 7장 규칙 + 출력 형식).
 2. 초안마다 ② `sources[].page_excerpt` 로 사실별 supported/weak/unsupported 판정(페이지 본문만 근거, 외부 지식 금지), ③ 대본·블로그 교차 검수.

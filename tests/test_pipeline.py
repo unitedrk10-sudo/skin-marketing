@@ -312,14 +312,14 @@ def test_invalid_reply_moves_nothing(env):
     assert (common.content_dir("drafts") / first).exists()
 
 
-def test_revise_regenerates_and_rereviews(env):
+def test_revise_reply_enqueues_worker_request(env):
     first, _ = _two_reviewed_drafts(env)
     human_mod.list_message("drafts")
-    calls = []
-    out = human_mod.apply("1 수정: 톤 부드럽게",
-                          revise_fn=lambda d, n: calls.append((d, n)),
-                          review_fn=lambda p: {"grade": "pass"})
-    assert calls == [(first, "톤 부드럽게")] and "재생성" in out[0]
+    out = human_mod.apply("1 수정: 톤 부드럽게")
+    reqs = list((common.content_dir() / "requests").glob("*.json"))
+    assert len(reqs) == 1 and "접수" in out[0]
+    req = common.load_json(reqs[0])
+    assert req == {**req, "kind": "revise", "draft_id": first, "note": "톤 부드럽게"}
 
 
 def test_publish_ok_only_from_rendered(env):
@@ -453,3 +453,77 @@ def test_pending_drafts_are_not_approved_without_confirm(external):
     out = human_mod.apply("1 승인")
     assert "검수 대기" in out[0]
     assert (common.content_dir("drafts") / draft_id).exists()
+
+
+# ---- worker (Hermes 크론) ----
+
+worker_mod = importlib.import_module("pipeline.worker")
+
+
+def fake_claude(verdict="supported"):
+    """claude -p 대신: 요청 파일을 읽어 결과 파일을 쓴다."""
+    def runner(packet_path):
+        packet = common.load_json(packet_path)
+        result = {"packet_id": packet["packet_id"], "reviewer": "claude-code", "drafts": [
+            {"draft_id": d["draft_id"], "draft_hash": d["draft_hash"],
+             "sources": [{"id": fid, "verdict": verdict} for s in d["sources"] for fid in s["fact_ids"]],
+             "findings": [], "overall": "ok"} for d in packet["drafts"]]}
+        out = packet_path.parent.parent / "done" / f"{packet['packet_id']}.result.json"
+        common.save_json(out, result)
+        return out
+    return runner
+
+
+@pytest.fixture
+def worker_env(external, monkeypatch):
+    monkeypatch.setattr(review_mod, "fetch_page", ok_fetch)
+    monkeypatch.setattr(review_mod.review_with_regeneration, "__defaults__", (ok_fetch,))
+    common.save_json(common.content_dir("topics") / "2026-W40.json", TOPICS)
+    return external
+
+
+def test_request_drafts_validates_and_enqueues(worker_env):
+    msg = worker_mod.request_drafts("1, 2")
+    assert "2026-W40" in msg and "What is Rejuran?" in msg
+    assert len(list(worker_mod.requests_dir().glob("*.json"))) == 1
+    with pytest.raises(ValueError):
+        worker_mod.request_drafts("9")
+
+
+def test_worker_full_cycle_then_silent(worker_env):
+    worker_mod.request_drafts("1")
+    message, failures = worker_mod.run(review_runner=fake_claude())
+    assert failures == []
+    assert "1. What is Rejuran?" in message and "✅" in message
+    assert not list(worker_mod.requests_dir().glob("*.json"))
+    message, failures = worker_mod.run(review_runner=fake_claude())
+    assert message == "" and failures == []  # 할 일 없으면 조용한 틱
+
+
+def test_worker_claude_failure_reported_and_retried(worker_env):
+    worker_mod.request_drafts("1")
+
+    def broken(packet_path):
+        packet_path.unlink()
+        raise external_mod.ClaudeReviewError("no result")
+
+    message, failures = worker_mod.run(review_runner=broken)
+    assert failures and "⏳" in message and "Claude Code 검수 실패" in message
+    message, failures = worker_mod.run(review_runner=fake_claude())
+    assert failures == [] and "✅" in message  # 다음 틱에 재요청돼 반영
+
+
+def test_worker_failed_request_is_quarantined(worker_env):
+    worker_mod.enqueue("revise", draft_id="nope", note="x")
+    message, failures = worker_mod.run(review_runner=fake_claude())
+    assert failures and (worker_mod.requests_dir() / "failed").exists()
+    assert not list(worker_mod.requests_dir().glob("*.json"))
+
+
+def test_worker_revise_request_regenerates(worker_env):
+    worker_mod.request_drafts("1")
+    worker_mod.run(review_runner=fake_claude())
+    human_mod.apply("1 수정: 톤 부드럽게")
+    message, failures = worker_mod.run(review_runner=fake_claude())
+    draft = common.load_draft(common.content_dir("drafts") / "2026-W40-01-what-is-rejuran")
+    assert failures == [] and draft["revisions"][-1]["note"] == "톤 부드럽게" and "✅" in message

@@ -335,6 +335,20 @@ def regeneration_note(result: dict) -> str:
     return "Automatic review blocked this draft. Fix every item below, keep everything else:\n" + "\n".join(items[:20])
 
 
+def review_with_regeneration(path: Path, fetch=fetch_page) -> dict:
+    """검수 후 ⛔ 이면 자동 재생성 1회 → 재검수 (기획서 6-0)."""
+    result = review(path, fetch)
+    if result["grade"] == "block" and result["regenerated"] == 0:
+        log.info("차단 → 자동 재생성 1회: %s", path.name)
+        importlib.import_module("pipeline.02_draft").revise(path.name, regeneration_note(result), auto=True)
+        result = review(path, fetch)
+    return result
+
+
+def unreviewed_drafts() -> list[Path]:
+    return [p for p in draft_dirs("drafts") if not (p / "review.json").exists()]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="초안 자동 검수")
     parser.add_argument("draft_ids", nargs="*")
@@ -350,18 +364,13 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(f"{draft_id} 는 {state}/ 에 있습니다 (drafts/ 만 검수)")
             paths.append(path)
     else:
-        paths = [p for p in draft_dirs("drafts") if args.all or not (p / "review.json").exists()]
+        paths = draft_dirs("drafts") if args.all else unreviewed_drafts()
     if not paths:
         log.info("검수할 초안 없음")
         return 0
 
-    draft_mod = importlib.import_module("pipeline.02_draft")
     for path in paths:
-        result = review(path)
-        if args.auto_regenerate and result["grade"] == "block" and result["regenerated"] == 0:
-            log.info("차단 → 자동 재생성 1회: %s", path.name)
-            draft_mod.revise(path.name, regeneration_note(result), auto=True)
-            result = review(path)
+        result = review_with_regeneration(path) if args.auto_regenerate else review(path)
         print(summary_line(result, load_draft(path)["shortform"].get("title", "")))
     return 0
 

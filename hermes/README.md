@@ -1,0 +1,38 @@
+# Hermes 운영 설정
+
+## 설치 (Hermes 머신에서 한 번)
+```bash
+git clone https://github.com/unitedrk10-sudo/skin-marketing.git && cd skin-marketing
+bash hermes/install.sh
+# .env 에 GEMINI_API_KEY, LAW_API_OC 입력 후
+bash ~/.hermes/scripts/skin-check.sh      # 키·모델·Claude Code 로그인 점검
+hermes cron run skin-weekly-topics         # 바로 주제 후보 받아보기
+```
+- Hermes 에 등록한 Gemini 키는 크론 스크립트에 전달되지 않는다 (Hermes 관리 자격 증명). 그래서 저장소 `.env`(git 제외, 권한 600)에 따로 넣는다.
+- Claude Code 가 같은 머신에 설치·로그인돼 있어야 한다 (`claude -p` 로 검수). Anthropic API 키는 필요 없다.
+- `install.sh` 는 다시 실행해도 안전하다 (이미 있는 크론은 건너뜀). 스크립트 내용을 바꾸려면 저장소의 `install.sh` 를 고치고 다시 실행.
+
+## 크론 (no-agent — stdout 이 그대로 텔레그램, 출력 없으면 조용, 실패 시 에러 알림)
+| 이름 | 스케줄 | 스크립트 | 하는 일 |
+|---|---|---|---|
+| skin-law-sync | 월 08:00 | `skin-law-sync.sh` | 추적 법령 변경 감지 → 변경 있을 때만 알림 |
+| skin-weekly-topics | 월 09:00 | `skin-topics.sh` | 코드 업데이트(`git pull`) → 주간 주제 후보 전송 |
+| skin-worker | 10분마다 | `skin-worker.sh` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
+
+스크립트는 `~/.hermes/scripts/` 에 생성된다. 수동 실행: `hermes cron run <이름>`.
+
+## 텔레그램 대화 (에이전트 + `skin-marketing` 스킬)
+`~/.hermes/skills/skin-marketing/SKILL.md` 가 답장을 명령으로 바꾼다.
+
+```
+월 09:00  [주제 후보 6건]            ← skin-weekly-topics
+사람      "1,3,4"                    → worker request-drafts (요청만 남김)
+~10분 후  [초안 검수 3건] ✅⚠️⛔     ← skin-worker (생성 → 02b → claude -p 검수)
+사람      "1,3 승인 / 2 수정: …"     → 03_review apply (수정은 요청만 남김)
+~10분 후  [초안 검수 1건]            ← skin-worker (재생성 → 재검수)
+```
+- ⏳ = Claude Code 검수 대기. 결과 반영 전에는 승인이 보류된다 (사람이 명시하면 `--confirm`).
+- Claude Code 검수가 실패하면 알림 후 다음 워커 실행 때 자동 재요청. 로그: `logs/claude_review_<id>.log`.
+- 실패한 요청은 `content/requests/failed/` 로 옮겨져 반복 실행되지 않는다.
+- 게시·삭제(06_publish) 등 되돌릴 수 없는 작업은 명령 승인(approval) 대상으로 등록한다 (구현 후).
+- 미구현: `04_render_video`, `05_preview`, `06_publish`, `07_report` (TTS·합성·예약 게시 도구 선정 후).

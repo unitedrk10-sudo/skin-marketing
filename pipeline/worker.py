@@ -1,0 +1,147 @@
+"""Hermes 작업 워커 — 텔레그램 답장으로 생긴 요청을 처리하고, 끝나면 검수 요청 메시지를 출력한다.
+
+Hermes 에이전트(텔레그램 대화)는 오래 걸리는 작업을 직접 하지 않고 요청 파일만 남긴다:
+    python -m pipeline.worker request-drafts --pick 1,3,4 [--week 2026-W40]   # 주제 선택 답장
+    (수정 요청은 03_review apply "2 수정: ..." 가 자동으로 요청 파일을 남긴다)
+
+no-agent 크론이 주기적으로 실행한다 (stdout 이 그대로 텔레그램으로 간다):
+    python -m pipeline.worker run
+  1. 요청 처리: 초안 생성(02_draft) / 수정 재생성
+  2. 자동 검수: 검수 전 초안 → 02b (⛔ 면 1회 자동 재생성)
+  3. Claude Code 검수: 02c review_cycle (export → claude -p → import)
+  4. 위에서 바뀐 것이 있으면 03_review list 메시지 출력, 없으면 아무것도 출력하지 않음 (조용한 틱)
+동시에 두 번 실행되면 나중 것은 바로 끝난다 (잠금). 실패가 있으면 원인을 stderr 에 남기고 종료 코드 1.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import importlib
+import time
+from pathlib import Path
+
+from pipeline import llm
+from pipeline.common import content_dir, get_logger, load_json, now_iso, run_cli, save_json
+
+log = get_logger("worker")
+
+
+def requests_dir() -> Path:
+    return content_dir() / "requests"
+
+
+def enqueue(kind: str, **data) -> Path:
+    path = requests_dir() / f"{time.strftime('%Y%m%dT%H%M%S')}-{time.monotonic_ns() % 10**6:06d}-{kind}.json"
+    save_json(path, {"kind": kind, "created_at": now_iso(), **data})
+    log.info("요청 접수: %s", path.name)
+    return path
+
+
+def latest_week() -> str:
+    files = sorted(content_dir("topics").glob("*.json"))
+    if not files:
+        raise ValueError("주제 후보가 없습니다 (01_topics 먼저)")
+    return files[-1].stem
+
+
+def request_drafts(pick: str, week: str | None = None) -> str:
+    """주제 번호를 바로 검증하고(잘못된 번호는 대화에서 즉시 알려주도록) 요청을 남긴다."""
+    draft_mod = importlib.import_module("pipeline.02_draft")
+    week = week or latest_week()
+    topics = load_json(content_dir("topics") / f"{week}.json")["topics"]
+    nums = draft_mod.parse_pick(pick, len(topics))
+    enqueue("drafts", week=week, pick=nums)
+    titles = ", ".join(f"{n}. {topics[n - 1]['title']}" for n in nums)
+    return f"초안 생성 요청 접수 ({week}): {titles}\n생성·자동 검수·Claude 검수가 끝나면 검수 요청을 보냅니다."
+
+
+def _process(req: dict) -> None:
+    draft_mod = importlib.import_module("pipeline.02_draft")
+    if req["kind"] == "drafts":
+        topics = load_json(content_dir("topics") / f"{req['week']}.json")["topics"]
+        for n in req["pick"]:
+            draft_mod.create(req["week"], n, topics[n - 1])
+    elif req["kind"] == "revise":
+        draft_mod.revise(req["draft_id"], req["note"])
+    else:
+        raise ValueError(f"알 수 없는 요청: {req['kind']}")
+
+
+def run(review_runner=None) -> tuple[str, list[str]]:
+    """반환: (텔레그램으로 보낼 메시지 — 없으면 "", 실패 목록)"""
+    review_mod = importlib.import_module("pipeline.02b_auto_review")
+    external_mod = importlib.import_module("pipeline.02c_external_review")
+    human_mod = importlib.import_module("pipeline.03_review")
+    changed, failures = False, []
+
+    for path in sorted(requests_dir().glob("*.json")):
+        req = load_json(path)
+        try:
+            _process(req)
+            path.unlink()
+        except Exception as e:  # noqa: BLE001 — 한 요청 실패가 나머지를 막지 않게
+            failures.append(f"{req.get('kind')} 요청 실패: {e}")
+            log.exception("요청 실패: %s", path.name)
+            failed = requests_dir() / "failed"  # 같은 요청을 매 틱 재시도하며 비용을 쓰지 않도록 격리
+            failed.mkdir(parents=True, exist_ok=True)
+            path.replace(failed / path.name)
+        changed = True
+
+    for path in review_mod.unreviewed_drafts():
+        try:
+            review_mod.review_with_regeneration(path)
+            changed = True
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"{path.name} 자동 검수 실패: {e}")
+            log.exception("자동 검수 실패: %s", path.name)
+
+    if llm.is_external("source_check") or llm.is_external("cross_review"):
+        try:
+            lines = external_mod.review_cycle(review_runner or external_mod.run_claude)
+            changed = changed or bool(lines)
+        except Exception as e:  # noqa: BLE001
+            failures.append(f"Claude Code 검수 실패 (다음 실행 때 재요청): {e}")
+            log.exception("Claude Code 검수 실패")
+            changed = True  # ⏳ 상태라도 알려준다
+
+    message = human_mod.list_message("drafts") if changed else ""
+    if failures:
+        message = (message + "\n\n" if message else "") + "\n".join(f"⚠️ {f}" for f in failures)
+    return message, failures
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Hermes 작업 워커")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    rd = sub.add_parser("request-drafts")
+    rd.add_argument("--pick", required=True, help="주제 번호, 예: 1,3,4")
+    rd.add_argument("--week", help="기본: 가장 최근 주제 후보")
+    sub.add_parser("run")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "request-drafts":
+        try:
+            print(request_drafts(args.pick, args.week))
+        except ValueError as e:
+            print(f"❓ {e}")
+            return 2
+        return 0
+
+    requests_dir().mkdir(parents=True, exist_ok=True)
+    with (requests_dir() / ".lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log.info("이전 실행이 진행 중 — 건너뜀")
+            return 0
+        message, failures = run()
+    if message:
+        print(message)
+    for f in failures:
+        log.error(f)
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    run_cli("worker", main)

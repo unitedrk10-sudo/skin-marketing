@@ -2,13 +2,14 @@
 
 config/models.yaml 에서 source_check / cross_review 가 provider: claude_code 일 때 쓴다.
 
-흐름 (hermes/run_claude_review.sh 가 한 번에 실행, 모두 Hermes 머신 로컬 — git 으로 주고받지 않는다):
+흐름 (review_cycle() — pipeline/worker.py 가 호출. 모두 Hermes 머신 로컬, git 으로 주고받지 않는다):
   1. 02b_auto_review 실행 결과 ⏳ 대기 초안 (규칙 검사·출처 페이지 수집 완료)
   2. `02c_external_review export` → review-queue/pending/<packet_id>.json
   3. `claude -p` (Claude Code CLI) 가 요청 파일을 검수해 review-queue/done/<packet_id>.result.json 작성
   4. `02c_external_review import` → 등급 재산정, 요청 파일 삭제 → 03_review list 로 텔레그램 검수 요청
 review-queue/ 는 미공개 초안·출처 본문이 들어 있어 git 에 올리지 않는다 (.gitignore).
 
+    python -m pipeline.02c_external_review review          # export → claude -p → import 한 사이클
     python -m pipeline.02c_external_review export          # 대기 초안이 없으면 아무것도 만들지 않음
     python -m pipeline.02c_external_review import          # review-queue/done/ 결과 반영 (이미 반영된 건 무시)
     python -m pipeline.02c_external_review import <result.json>
@@ -19,6 +20,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import os
+import subprocess
 from pathlib import Path
 
 from pipeline.common import (
@@ -28,6 +31,7 @@ from pipeline.common import (
     draft_dirs,
     get_logger,
     iso_week,
+    log_dir,
     load_draft,
     load_json,
     load_review,
@@ -39,6 +43,7 @@ from pipeline.common import (
 )
 
 log = get_logger("02c_external_review")
+CLAUDE_TIMEOUT = int(os.environ.get("CLAUDE_REVIEW_TIMEOUT", "1800"))  # 초
 review_mod = importlib.import_module("pipeline.02b_auto_review")
 Finding = review_mod.Finding
 
@@ -159,14 +164,63 @@ def import_result(result_path: Path) -> list[str]:
     return lines  # 이미 반영된 초안은 대기 상태가 아니므로 같은 결과를 다시 import 해도 무해하다
 
 
+class ClaudeReviewError(RuntimeError):
+    pass
+
+
+def _rel(path: Path) -> str:
+    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
+
+
+def run_claude(packet_path: Path) -> Path:
+    """같은 머신의 Claude Code CLI 로 검수 요청을 처리한다. 읽기·쓰기만 허용 (셸·웹 불가)."""
+    packet_id = packet_path.stem
+    result = queue_dir("done") / f"{packet_id}.result.json"
+    result.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        os.environ.get("CLAUDE_BIN", "claude"), "-p",
+        f"검수 요청 {_rel(packet_path)} 을 처리해줘. CLAUDE.md 의 '검수 요청 처리' 절차와 파일 안 instructions 를 따르고, "
+        f"결과는 {_rel(result)} 한 파일에만 써.",
+        "--allowedTools", "Read", "Write", "Glob",
+        "--disallowedTools", "Bash", "WebFetch", "WebSearch",
+    ]
+    if os.environ.get("CLAUDE_REVIEW_MODEL"):
+        cmd += ["--model", os.environ["CLAUDE_REVIEW_MODEL"]]
+    log_path = log_dir() / f"claude_review_{packet_id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with log_path.open("w", encoding="utf-8") as out:
+            subprocess.run(cmd, cwd=ROOT, stdout=out, stderr=subprocess.STDOUT, timeout=CLAUDE_TIMEOUT, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        packet_path.unlink(missing_ok=True)
+        raise ClaudeReviewError(f"claude 실행 실패: {e}") from e
+    if not result.exists() or result.stat().st_size == 0:
+        packet_path.unlink(missing_ok=True)  # 요청을 버려 다음 실행 때 같은 초안을 다시 요청하게 한다
+        raise ClaudeReviewError(f"Claude Code 검수 결과 없음 (로그: {log_path})")
+    return result
+
+
+def review_cycle(runner=run_claude) -> list[str]:
+    """export → claude -p → import. 새로 반영된 초안 요약을 돌려준다 (요청할 것이 없으면 빈 목록)."""
+    packet = export()
+    if packet is None:
+        return []
+    return import_result(runner(packet))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Claude Code 외부 검수 내보내기/반영")
     sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("review")
     sub.add_parser("export")
     imp = sub.add_parser("import")
     imp.add_argument("results", nargs="*", type=Path)
     args = parser.parse_args(argv)
 
+    if args.cmd == "review":
+        for line in review_cycle():
+            print(line)
+        return 0
     if args.cmd == "export":
         path = export()
         print(path.relative_to(ROOT) if path and path.is_relative_to(ROOT) else (path or "검수 대기 초안 없음"))
