@@ -66,6 +66,9 @@ write_script skin-worker.sh "exec \"$PYTHON\" -m pipeline.worker run"
 
 write_script skin-law-sync.sh "exec \"$PYTHON\" -m pipeline.law_sync"
 
+# 링크 유입 주간 요약 (TRACKER_URL 미설정이면 조용히 끝남)
+write_script skin-traffic.sh "exec \"$PYTHON\" -m pipeline.tracker report --days 7"
+
 # 점검용 (크론 아님): 크론과 같은 환경에서 키·모델·claude 확인
 write_script skin-check.sh "\"$PYTHON\" -m pipeline.llm check || true
 \"$PYTHON\" -m pipeline.sponsors check || true
@@ -94,6 +97,7 @@ add_job() {  # $1=이름 $2=스케줄 $3=스크립트
 add_job skin-law-sync "every monday 8am" skin-law-sync.sh
 add_job skin-weekly-topics "every monday 9am" skin-topics.sh
 add_job skin-worker "every 10m" skin-worker.sh
+add_job skin-traffic-report "every monday 10am" skin-traffic.sh
 
 cat <<EOF
 

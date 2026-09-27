@@ -1,0 +1,17 @@
+# 배포: tracker/README.md 참고
+name = "skin-tracker"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+BRAND = "skin-info"          # UTM utm_source 값 (브랜드명 정해지면 변경)
+SITE_HOST = ""               # 블로그 도메인 (예: example.com) — 여기서 온 클릭은 blog 로 분류
+
+[[d1_databases]]
+binding = "DB"
+database_name = "skin-tracker"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"   # npx wrangler d1 create skin-tracker 결과값
+
+# 비밀값 (저장소에 넣지 않음):
+#   npx wrangler secret put ADMIN_TOKEN     # 관리 API 토큰 (.env 의 TRACKER_TOKEN 과 같은 값)
+#   npx wrangler secret put VISITOR_SALT    # 고유 방문자 해시용 임의 문자열
