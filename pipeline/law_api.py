@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 BASE_URL = "https://www.law.go.kr/DRF"
 DEFAULT_TIMEOUT = 20
-RETRIES = 3
+RETRIES = 4
 
 
 class LawApiError(RuntimeError):
@@ -151,7 +151,7 @@ class LawApiClient:
                 with urllib.request.urlopen(url, timeout=self.timeout) as resp:
                     body = resp.read().decode("utf-8")
                 break
-            except (urllib.error.URLError, TimeoutError) as e:
+            except (urllib.error.URLError, OSError) as e:  # 연결 재설정·타임아웃 포함
                 last_err = e
                 time.sleep(2**attempt)
         else:

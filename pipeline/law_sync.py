@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import time
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -24,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "config" / "laws.yaml"
 LEGAL_DIR = ROOT / "legal"
 SNAPSHOT_DIR = LEGAL_DIR / "snapshots"
+REQUEST_INTERVAL = 2  # 초
 
 
 def select_articles(doc: LawDocument, articles: list[str] | None, keywords: list[str] | None) -> list[Article]:
@@ -85,12 +87,17 @@ def _snapshot_path(name: str) -> Path:
 
 def run(client: LawApiClient, config: dict) -> tuple[list[dict], list[str], list[str]]:
     snaps, changes, errors = [], [], []
-    for entry in config["laws"]:
+    for i, entry in enumerate(config["laws"]):
+        if i:
+            time.sleep(REQUEST_INTERVAL)  # 과도한 호출 제한 회피
         try:
             summary = client.find(entry["name"])
             doc = client.document(summary.mst)
         except LawApiError as e:
             errors.append(f"{entry['name']}: {e}")
+            path = _snapshot_path(entry["name"])
+            if path.exists():  # 조회 실패 시 요약본에는 직전 스냅샷을 유지
+                snaps.append(json.loads(path.read_text(encoding="utf-8")))
             continue
         selected = select_articles(doc, entry.get("articles"), entry.get("keywords"))
         new = snapshot(entry, doc, selected)
@@ -118,6 +125,8 @@ def main() -> int:
         body = "\n".join(f"- {c}" for c in changes)
         (LEGAL_DIR / "changes.md").write_text(f"# 법령 변경 감지 ({date.today().isoformat()})\n\n{body}\n", encoding="utf-8")
         print(body)
+    else:
+        (LEGAL_DIR / "changes.md").unlink(missing_ok=True)  # 이전 실행의 알림이 남지 않도록
     for e in errors:
         print(f"ERROR: {e}", file=sys.stderr)
     return 1 if errors else 0

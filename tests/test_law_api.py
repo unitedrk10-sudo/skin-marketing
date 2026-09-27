@@ -94,6 +94,7 @@ def test_select_and_diff():
 
 def test_run_with_fake_client(tmp_path, monkeypatch):
     monkeypatch.setattr(law_sync, "SNAPSHOT_DIR", tmp_path)
+    monkeypatch.setattr(law_sync, "REQUEST_INTERVAL", 0)
 
     class Fake:
         def find(self, name):
@@ -109,3 +110,17 @@ def test_run_with_fake_client(tmp_path, monkeypatch):
     assert len(snaps) == 1 and list(snaps[0]["articles"]) == ["27"]
     assert len(changes) == 1 and len(errors) == 1
     assert "제27조" in law_sync.render_digest(snaps)
+
+
+def test_run_keeps_previous_snapshot_on_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(law_sync, "SNAPSHOT_DIR", tmp_path)
+    monkeypatch.setattr(law_sync, "REQUEST_INTERVAL", 0)
+    (tmp_path / "의료법.json").write_text('{"name": "의료법", "articles": {}}', encoding="utf-8")
+
+    class Down:
+        def find(self, name):
+            raise LawApiError("connection reset")
+
+    snaps, changes, errors = law_sync.run(Down(), {"laws": [{"name": "의료법"}]})
+    assert snaps == [{"name": "의료법", "articles": {}}]
+    assert changes == [] and len(errors) == 1
