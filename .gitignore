@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+legal/changes.md
+content/
+reports/
+review-queue/

@@ -1,0 +1,27 @@
+# 채널별 포맷·빈도 (기획서 2장). 01_topics / 02_draft 프롬프트에 그대로 들어간다.
+
+audience:
+  language: en            # 영어권 우선
+  regions: [US, CA, TH, SG]
+
+shortform:
+  duration_sec: [30, 60]
+  hook_sec: 3             # 첫 2~3초 질문형 훅
+  channels:
+    tiktok:    {per_week: 5, aspect: "9:16", notes: "빠른 컷, 트렌드 사운드 금지(라이선스)"}
+    instagram: {per_week: 4, aspect: "9:16", notes: "방한 전 탐색층, 저장 유도"}
+    youtube:   {per_week: 4, aspect: "9:16", notes: "검색 키워드를 제목 앞쪽에"}
+
+blog:
+  per_week: 2
+  words: [1200, 2000]
+
+content_axes:             # 기획서 3장
+  - procedure            # 시술 설명
+  - price_guide          # 가격 가이드 (특정 병원 가격표 X)
+  - how_to               # 이용 가이드
+  - trend                # 트렌드
+  - review_curation      # 후기 큐레이션 (병원별 X)
+  - procedure_travel     # 시술 × 여행 (정보만)
+
+topics_per_week: 6
