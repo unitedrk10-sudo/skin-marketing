@@ -23,6 +23,9 @@ Check the script and blog against the rules below and this checklist:
 Severity: "minor" = wording to soften or clarify; "major" = factual error, legal-risk phrase, or missing mandatory element.
 `rule_findings` lists what the code-based check already caught; do not repeat those.
 
+### Sponsored drafts (`sponsor` is not null)
+These are labeled advertisements by that clinic (the advertiser), published for a flat fee. Naming that clinic and linking its `official_url` is allowed. The rules below are the neutral-channel rules; for sponsored drafts additionally apply the Medical Service Act §56② strictly and report each as "major": patient testimonials or first-person experience, comparison with other clinics or superlatives, exaggerated or guaranteed results, before/after descriptions, missing side effects, prices/discounts/events/free offers, awards or certifications without an official source, any other clinic or doctor named, and a missing or weakened "Sponsored … advertisement" disclosure. Medical facts must come from independent sources, not the clinic site.
+
 {{rules}}
 
 ## Output

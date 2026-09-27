@@ -5,6 +5,9 @@
 
     python -m pipeline.02_draft --week 2026-W40 --pick 1,3,4
     python -m pipeline.02_draft --revise 2026-W40-01-what-is-rejuran --note "가격 출처 다시"
+    python -m pipeline.02_draft --sponsor example-clinic --title "Rejuran at ..." --angle "..." [--keywords a,b]
+
+스폰서 글(기획서 12-1-1): 광고주 병원 규칙(_sponsored_rules.md)으로 생성하고 광고 표시를 자동으로 넣는다.
 
 결과: content/drafts/<draft_id>/{draft.json, script.md, blog.md}. 생성된 draft_id 를 stdout 에 한 줄씩 출력.
 """
@@ -16,13 +19,14 @@ import re
 from datetime import date
 from pathlib import Path
 
-from pipeline import llm
+from pipeline import llm, sponsors
 from pipeline.common import (
     blog_text,
     content_dir,
     facts_text,
     find_draft,
     get_logger,
+    iso_week,
     load_draft,
     load_json,
     load_yaml,
@@ -42,9 +46,10 @@ def _revision(note: str | None) -> str:
     return f"\nREVISION REQUEST from the human reviewer (must be addressed): {note}\n" if note else ""
 
 
-def research(topic: dict, note: str | None) -> list[dict]:
+def research(topic: dict, note: str | None, rules: str | None = None) -> list[dict]:
     text = prompt(
         "fact_research",
+        rules=rules,
         today=date.today().isoformat(),
         title=topic["title"],
         axis=topic["axis"],
@@ -67,10 +72,11 @@ def research(topic: dict, note: str | None) -> list[dict]:
     return facts
 
 
-def write_script(topic: dict, facts: list[dict], note: str | None) -> dict:
+def write_script(topic: dict, facts: list[dict], note: str | None, rules: str | None = None) -> dict:
     lo, hi = load_yaml("channels.yaml")["shortform"]["duration_sec"]
     text = prompt(
         "shortform_script",
+        rules=rules,
         duration=f"{lo}-{hi}",
         title=topic["title"],
         angle=topic["angle"],
@@ -84,10 +90,11 @@ def write_script(topic: dict, facts: list[dict], note: str | None) -> dict:
     return data
 
 
-def write_blog(topic: dict, facts: list[dict], note: str | None) -> dict:
+def write_blog(topic: dict, facts: list[dict], note: str | None, rules: str | None = None) -> dict:
     lo, hi = load_yaml("channels.yaml")["blog"]["words"]
     text = prompt(
         "blog_post",
+        rules=rules,
         min_words=str(lo),
         max_words=str(hi),
         title=topic["title"],
@@ -102,8 +109,8 @@ def write_blog(topic: dict, facts: list[dict], note: str | None) -> dict:
     return data
 
 
-def precheck(draft: dict) -> dict:
-    text = prompt("compliance_check", script=script_text(draft), blog=blog_text(draft))
+def precheck(draft: dict, rules: str | None = None) -> dict:
+    text = prompt("compliance_check", rules=rules, script=script_text(draft), blog=blog_text(draft))
     data, result = llm.generate_json("compliance", text)
     return {"model": result.model, "issues": data.get("issues", []), "summary": data.get("summary", "")}
 
@@ -113,16 +120,29 @@ def used_fact_ids(draft: dict) -> set[str]:
     return ids | set(FACT_REF.findall(draft["blog"].get("markdown", "")))
 
 
-def compose(topic: dict, note: str | None = None) -> dict:
-    facts = research(topic, note)
+def add_disclosures(draft: dict, sponsor: dict) -> None:
+    """광고 표시는 모델에 맡기지 않고 코드로 넣는다 (02b 가 다시 확인)."""
+    draft["shortform"]["on_screen_disclosure"] = sponsors.short_disclosure(sponsor)
+    notice = sponsors.blog_disclosure(sponsor)
+    markdown = draft["blog"]["markdown"]
+    if notice not in markdown:
+        draft["blog"]["markdown"] = f"{notice}\n\n{markdown}"
+
+
+def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -> dict:
+    rules = sponsors.rules_text(sponsor) if sponsor else None
+    facts = research(topic, note, rules)
     draft = {"topic": topic, "facts": facts}
-    draft["shortform"] = write_script(topic, facts, note)
-    draft["blog"] = write_blog(topic, facts, note)
+    draft["shortform"] = write_script(topic, facts, note, rules)
+    draft["blog"] = write_blog(topic, facts, note, rules)
+    if sponsor:
+        draft["sponsor"] = sponsor
+        add_disclosures(draft, sponsor)
     known = {f["id"] for f in facts}
     unknown = used_fact_ids(draft) - known
     if unknown:
         log.warning("존재하지 않는 사실 id 참조: %s (02b 에서 차단됨)", sorted(unknown))
-    draft["precheck"] = precheck(draft)
+    draft["precheck"] = precheck(draft, rules)
     return draft
 
 
@@ -148,13 +168,33 @@ def create(week: str, index: int, topic: dict) -> str:
     return draft_id
 
 
+def create_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str] | None = None) -> str:
+    """스폰서 글 초안. 계약 기간이 아니면 만들지 않는다."""
+    sponsor = sponsors.get(sponsor_id)
+    if not sponsors.contract_active(sponsor):
+        raise sponsors.SponsorError(f"{sponsor_id}: 계약 기간이 아닙니다 ({sponsor['contract']['start']} ~ {sponsor['contract']['end']})")
+    topic = {"title": title, "axis": "sponsored", "angle": angle, "keywords": keywords or [], "hook": "", "has_price": False}
+    draft_id = f"sp-{sponsor_id}-{date.today().strftime('%Y%m%d')}-{slugify(title, 30)}"
+    path = content_dir("drafts") / draft_id
+    if (path / "draft.json").exists():
+        log.info("이미 있음, 건너뜀: %s", draft_id)
+        return draft_id
+    draft = compose(topic, sponsor=sponsor)
+    draft.update({"id": draft_id, "week": iso_week(), "content_type": "sponsored", "created_at": now_iso(),
+                  "revisions": [], "regenerated": 0})
+    write_files(path, draft)
+    log.info("스폰서 초안 생성: %s (%s)", draft_id, sponsor["name_en"])
+    return draft_id
+
+
 def revise(draft_id: str, note: str, auto: bool = False) -> str:
     """수정 요청 반영 재생성. drafts/ 에 있는 초안만 대상."""
     state, path = find_draft(draft_id)
     if state != "drafts":
         raise ValueError(f"{draft_id} 는 {state}/ 에 있어 수정할 수 없습니다 (drafts/ 만 가능)")
     old = load_draft(path)
-    draft = compose(old["topic"], note)
+    sponsor = sponsors.get(old["sponsor"]["id"]) if old.get("sponsor") else None  # 최신 계약·심의번호 반영
+    draft = compose(old["topic"], note, sponsor)
     for key in ("id", "week", "content_type", "created_at"):
         draft[key] = old[key]
     draft["revisions"] = old.get("revisions", []) + [{"at": now_iso(), "note": note, "auto": auto}]
@@ -178,12 +218,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pick", help="주제 번호, 예: 1,3,4")
     parser.add_argument("--revise", metavar="DRAFT_ID")
     parser.add_argument("--note", help="수정 요청 내용 (--revise 와 함께)")
+    parser.add_argument("--sponsor", metavar="SPONSOR_ID", help="스폰서 글 (config/sponsors.yaml 의 id)")
+    parser.add_argument("--title", help="스폰서 글 제목 (--sponsor 와 함께)")
+    parser.add_argument("--angle", help="스폰서 글에서 답할 질문 (--sponsor 와 함께)")
+    parser.add_argument("--keywords", default="", help="쉼표로 구분")
     args = parser.parse_args(argv)
 
     if args.revise:
         if not args.note:
             parser.error("--revise 에는 --note 가 필요합니다")
         print(revise(args.revise, args.note))
+        return 0
+    if args.sponsor:
+        if not (args.title and args.angle):
+            parser.error("--sponsor 에는 --title 과 --angle 이 필요합니다")
+        keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
+        print(create_sponsored(args.sponsor, args.title, args.angle, keywords))
         return 0
     if not (args.week and args.pick):
         parser.error("--week 와 --pick 이 필요합니다")

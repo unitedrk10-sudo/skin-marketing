@@ -1,0 +1,20 @@
+# 스폰서(광고주 병원) 목록 — 복사해서 config/sponsors.yaml 로 만든다 (git 제외: 병원명·계약은 공개 저장소에 올리지 않음).
+#   cp config/sponsors.example.yaml config/sponsors.yaml
+# 확인: python -m pipeline.sponsors check
+#
+# 원칙 (기획서 12-1-1 스폰서 트랙):
+# - 광고 주체는 병원. 우리는 매체(게재) + 제작 대행. 모든 글에 "Sponsored by <병원>" 광고 표시가 자동으로 붙는다.
+# - 대가는 정액(월 구독 / 글당)만. 환자 수·매출 연동 계약 금지 (의료법 §27③).
+# - 병원이 최종 내용을 확인해야 승인 가능 (03_review "N 병원확인").
+
+sponsors:
+  - id: example-clinic                 # 영문 소문자·숫자·하이픈. 초안 id 에 들어감
+    name_en: Example Dermatology Clinic  # 글에 표시될 영문 병원명 (이 이름만 본문에 허용)
+    name_ko: 예시피부과의원
+    official_url: https://www.example-clinic.com   # 본문에 허용되는 유일한 병원 링크
+    contract:
+      type: monthly                    # monthly | per_post
+      start: 2026-10-01
+      end: 2027-03-31
+    ad_review_required: false          # 의료광고 사전심의 대상 매체면 true (변호사·심의기구 확인 후)
+    review_no: ""                      # 심의번호. ad_review_required: true 면 필수 (없으면 ⛔)

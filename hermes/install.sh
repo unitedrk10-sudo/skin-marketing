@@ -68,6 +68,7 @@ write_script skin-law-sync.sh "exec \"$PYTHON\" -m pipeline.law_sync"
 
 # 점검용 (크론 아님): 크론과 같은 환경에서 키·모델·claude 확인
 write_script skin-check.sh "\"$PYTHON\" -m pipeline.llm check || true
+\"$PYTHON\" -m pipeline.sponsors check || true
 \"$CLAUDE_BIN\" -p 'Reply with exactly: ok' || echo 'claude -p 실패 — Claude Code 로그인 확인'"
 
 # 3. 스킬 -----------------------------------------------------------------

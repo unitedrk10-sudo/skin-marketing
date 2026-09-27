@@ -2,6 +2,7 @@
 
 Hermes 에이전트(텔레그램 대화)는 오래 걸리는 작업을 직접 하지 않고 요청 파일만 남긴다:
     python -m pipeline.worker request-drafts --pick 1,3,4 [--week 2026-W40]   # 주제 선택 답장
+    python -m pipeline.worker request-sponsored --sponsor example-clinic --title "..." --angle "..."  # 스폰서 글
     (수정 요청은 03_review apply "2 수정: ..." 가 자동으로 요청 파일을 남긴다)
 
 no-agent 크론이 주기적으로 실행한다 (stdout 이 그대로 텔레그램으로 간다):
@@ -56,12 +57,25 @@ def request_drafts(pick: str, week: str | None = None) -> str:
     return f"초안 생성 요청 접수 ({week}): {titles}\n생성·자동 검수·Claude 검수가 끝나면 검수 요청을 보냅니다."
 
 
+def request_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str] | None = None) -> str:
+    """스폰서 등록·계약 기간을 바로 확인하고 요청을 남긴다."""
+    sponsors = importlib.import_module("pipeline.sponsors")
+    sponsor = sponsors.get(sponsor_id)
+    if not sponsors.contract_active(sponsor):
+        raise ValueError(f"{sponsor_id}: 계약 기간이 아닙니다 ({sponsor['contract']['start']} ~ {sponsor['contract']['end']})")
+    enqueue("sponsored", sponsor=sponsor_id, title=title, angle=angle, keywords=keywords or [])
+    return (f"💼 스폰서 글 요청 접수: {sponsor['name_ko']} — {title}\n"
+            "생성·검수가 끝나면 검수 요청을 보냅니다. 병원 확인(`N 병원확인`) 후에 승인할 수 있습니다.")
+
+
 def _process(req: dict) -> None:
     draft_mod = importlib.import_module("pipeline.02_draft")
     if req["kind"] == "drafts":
         topics = load_json(content_dir("topics") / f"{req['week']}.json")["topics"]
         for n in req["pick"]:
             draft_mod.create(req["week"], n, topics[n - 1])
+    elif req["kind"] == "sponsored":
+        draft_mod.create_sponsored(req["sponsor"], req["title"], req["angle"], req.get("keywords"))
     elif req["kind"] == "revise":
         draft_mod.revise(req["draft_id"], req["note"])
     else:
@@ -117,8 +131,22 @@ def main(argv: list[str] | None = None) -> int:
     rd = sub.add_parser("request-drafts")
     rd.add_argument("--pick", required=True, help="주제 번호, 예: 1,3,4")
     rd.add_argument("--week", help="기본: 가장 최근 주제 후보")
+    rs = sub.add_parser("request-sponsored")
+    rs.add_argument("--sponsor", required=True)
+    rs.add_argument("--title", required=True)
+    rs.add_argument("--angle", required=True)
+    rs.add_argument("--keywords", default="", help="쉼표로 구분")
     sub.add_parser("run")
     args = parser.parse_args(argv)
+
+    if args.cmd == "request-sponsored":
+        try:
+            keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
+            print(request_sponsored(args.sponsor, args.title, args.angle, keywords))
+        except ValueError as e:  # SponsorError 포함
+            print(f"❓ {e}")
+            return 2
+        return 0
 
     if args.cmd == "request-drafts":
         try:

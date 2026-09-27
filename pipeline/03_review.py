@@ -8,6 +8,9 @@
     python -m pipeline.03_review apply "5 폐기"
     python -m pipeline.03_review apply "전체 승인" [--confirm]           # ⚠️/⛔ 건은 --confirm 있어야 승인
     python -m pipeline.03_review apply "게시 OK" --stage rendered        # 또는 "1,2 게시 OK"
+    python -m pipeline.03_review apply "2 병원확인"                       # 스폰서 글: 광고주 병원이 최종본을 확인함
+
+스폰서 글은 병원 확인(현재 내용 기준)이 없으면 --confirm 으로도 승인되지 않는다 (광고 주체 = 병원).
 
 번호는 마지막 `list` 가 만든 번호표(<stage>/_batch.json) 기준이다.
 종료 코드: 0 처리 완료, 2 답장을 해석하지 못함(사람에게 다시 묻기), 1 실행 오류.
@@ -25,6 +28,7 @@ from datetime import date
 from pathlib import Path
 
 from pipeline.common import (
+    draft_hash,
     content_dir,
     draft_dirs,
     get_logger,
@@ -50,7 +54,7 @@ class ReplyError(ValueError):
 
 @dataclass
 class Command:
-    action: str  # approve | revise | reject | publish_ok
+    action: str  # approve | revise | reject | publish_ok | sponsor_ok
     numbers: list[int] = field(default_factory=list)  # 빈 목록 = 전체
     note: str = ""
 
@@ -78,6 +82,8 @@ def parse_reply(reply: str) -> list[Command]:
             commands.append(Command("approve"))
         elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:승인|approve|ok)", line, re.I):
             commands.append(Command("approve", _numbers(m.group(1))))
+        elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:병원\s*확인|clinic\s*ok|sponsor\s*ok)", line, re.I):
+            commands.append(Command("sponsor_ok", _numbers(m.group(1))))
         elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:폐기|reject|drop)", line, re.I):
             commands.append(Command("reject", _numbers(m.group(1))))
         elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:[가-힣]+\s*)?(?:수정|revise|fix)\s*[:：]\s*(.+)", line, re.I):
@@ -127,6 +133,8 @@ def list_message(stage: str) -> str:
         secs = sf.get("estimated_seconds")
         head = f"{i}. {sf.get('title') or draft['topic']['title']}" + (f" ({secs}s)" if secs else "")
         line = f"{head} {GRADE_ICON[grade]}"
+        if draft.get("sponsor"):
+            line += f" 💼{draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}"
         if review:
             issues = [f for f in review["findings"] if f["severity"] in ("block", "caution", "pending")]
             if issues:
@@ -141,6 +149,14 @@ def list_message(stage: str) -> str:
 
 
 # ---------------- 이동·기록 ----------------
+
+def sponsor_confirmed(path: Path) -> bool:
+    """스폰서 글이 아니면 True. 스폰서 글은 현재 내용으로 병원 확인이 기록돼 있어야 True (재생성되면 무효)."""
+    if not load_draft(path).get("sponsor"):
+        return True
+    record = path / "sponsor_approval.json"
+    return record.exists() and load_json(record).get("draft_hash") == draft_hash(path)
+
 
 def move(draft_id: str, src: str, dst: str) -> Path:
     if (src, dst) not in ALLOWED_MOVES:
@@ -188,7 +204,8 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
     commands = parse_reply(reply)
     batch = load_batch(stage)
     # 전부 검증한 뒤에 실행한다 (한 줄이 틀려 일부만 처리되는 일이 없도록)
-    stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered"}, "publish_ok": {"rendered"}}
+    stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered"}, "publish_ok": {"rendered"},
+                "sponsor_ok": {"drafts"}}
     hint = {"approve": "렌더링 영상은 `게시 OK` 로 답해주세요",
             "revise": "렌더링 영상 수정(재렌더링)은 아직 미구현입니다",
             "publish_ok": "`게시 OK` 는 렌더링 영상 확인(--stage rendered) 단계에서만 씁니다"}
@@ -205,6 +222,16 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             out.append(f"- {draft_id}: 이미 처리됨")
             continue
         grade = (load_review(path) or {}).get("grade")
+        if cmd.action == "sponsor_ok":
+            if not load_draft(path).get("sponsor"):
+                out.append(f"- {draft_id}: 스폰서 글이 아닙니다 (병원 확인 불필요)")
+                continue
+            save_json(path / "sponsor_approval.json", {"at": now_iso(), "draft_hash": draft_hash(path)})
+            out.append(f"- {draft_id}: 병원 확인 기록 — 이제 승인할 수 있습니다")
+            continue
+        if cmd.action == "approve" and not sponsor_confirmed(path):
+            out.append(f"- {draft_id}: 💼 병원 확인 전 — 병원에 최종본을 보내 확인받은 뒤 `N 병원확인` 을 먼저 보내주세요")
+            continue
         if cmd.action == "approve":
             if grade == "pending" and not confirm:  # 번호로 골라도 Claude Code 검수 전에는 보류
                 out.append(f"- {draft_id}: ⏳ Claude Code 검수 대기 — 결과 반영 후 다시 승인하거나 `--confirm`")

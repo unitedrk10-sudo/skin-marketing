@@ -12,6 +12,14 @@ hermes cron run skin-weekly-topics         # 바로 주제 후보 받아보기
 - Claude Code 가 같은 머신에 설치·로그인돼 있어야 한다 (`claude -p` 로 검수). Anthropic API 키는 필요 없다.
 - `install.sh` 는 다시 실행해도 안전하다 (이미 있는 크론은 건너뜀). 스크립트 내용을 바꾸려면 저장소의 `install.sh` 를 고치고 다시 실행.
 
+## 스폰서(광고주 병원) 등록
+```bash
+cp config/sponsors.example.yaml config/sponsors.yaml   # git 제외 — 병원명·계약은 이 머신에만
+# 병원명(영/한), 공식 사이트, 계약(monthly|per_post, 기간), 사전심의 여부·번호 입력
+python -m pipeline.sponsors check
+```
+텔레그램: "글로우 스폰서 글: 리쥬란 안내" → 초안(광고 표시 자동) → 검수 → 병원에 최종본 전달 → 병원 OK 후 `N 병원확인` → `N 승인`.
+
 ## 크론 (no-agent — stdout 이 그대로 텔레그램, 출력 없으면 조용, 실패 시 에러 알림)
 | 이름 | 스케줄 | 스크립트 | 하는 일 |
 |---|---|---|---|
