@@ -652,3 +652,48 @@ def test_worker_processes_sponsored_request(sponsored, monkeypatch, tmp_path):
     assert failures == [] and "💼글로우피부과의원" in message
     assert captured["packet"]["drafts"][0]["sponsor"]["name_en"] == "Glow Skin Clinic"
     assert "Sponsored drafts" in captured["packet"]["instructions"]
+
+
+# ---- 링크 유입 추적 (tracker) ----
+
+tracker_mod = importlib.import_module("pipeline.tracker")
+
+STATS = {"from": "2026-10-01", "to": "2026-10-31", "sponsor": "glow",
+         "totals": {"clicks": 40, "unique_daily": 31, "bots": 5},
+         "by_source": [{"source": "tiktok", "clicks": 25}, {"source": "ai", "clicks": 10}, {"source": "direct", "clicks": 5}],
+         "by_link": [{"code": "abc234", "label": "Rejuran guide", "sponsor_id": "glow", "clicks": 40}],
+         "by_day": [{"day": "2026-10-02", "clicks": 40}], "by_country": [{"country": "US", "clicks": 30}, {"country": "TH", "clicks": 10}]}
+
+
+def test_tracker_add_link_only_to_sponsor_site(env, tmp_path, monkeypatch):
+    write_sponsors(tmp_path, SPONSOR)
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    sent = {}
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: sent.update(body=body) or
+                        {"code": "abc234", "url": "https://go.example/abc234"})
+    tracker_mod.add_link("glow", None, "Rejuran guide")
+    assert sent["body"]["target_url"] == "https://www.glow-clinic.example"
+    tracker_mod.add_link("glow", "https://book.glow-clinic.example/rejuran", "sub")  # 하위 도메인 허용
+    with pytest.raises(tracker_mod.TrackerError):
+        tracker_mod.add_link("glow", "https://glow-clinic.example.evil.com/", "spoof")
+
+
+def test_tracker_weekly_message_and_silence():
+    msg = tracker_mod.weekly_message(STATS, {"totals": {"clicks": 30}})
+    assert "클릭 40" in msg and "지난주 대비 +10" in msg and "AI 검색 답변에서 넘어온 클릭 10건" in msg
+    empty = {**STATS, "totals": {"clicks": 0, "unique_daily": 0, "bots": 0}, "by_source": [], "by_link": []}
+    assert tracker_mod.weekly_message(empty, {"totals": {"clicks": 0}}) == ""
+
+
+def test_tracker_sponsor_report_content():
+    report = tracker_mod.sponsor_report(sponsors_mod.validate(SPONSOR), "2026-10", STATS)
+    assert "글로우피부과의원" in report and "**40**" in report
+    assert "| TikTok | 25 | 62% |" in report and "| AI 검색 답변 | 10 | 25% |" in report
+    assert "utm_source" in report and "정액" in report
+
+
+def test_tracker_report_silent_when_unconfigured(monkeypatch, capsys):
+    monkeypatch.delenv("TRACKER_URL", raising=False)
+    assert tracker_mod.main(["report"]) == 0
+    assert capsys.readouterr().out == ""

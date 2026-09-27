@@ -1,0 +1,9 @@
+{
+  "name": "skin-tracker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --no-warnings --experimental-sqlite --test test/*.test.mjs",
+    "deploy": "npx wrangler deploy"
+  }
+}

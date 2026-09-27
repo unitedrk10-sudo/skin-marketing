@@ -46,6 +46,12 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 ## 3. 게시 전 확인 (직전 봇 메시지가 `[게시 전 확인 …]` 일 때)
 `cd {{REPO}} && {{PYTHON}} -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
 
+## 3-1. 링크 유입 추적 (스폰서 병원 링크)
+- "글로우 링크 만들어줘 (리쥬란 글용)": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker add --sponsor <id> --label "<용도>"` → 채널별 링크 4개를 그대로 보낸다. 틱톡 프로필엔 `?s=tt`, 인스타 `?s=ig`, 유튜브 설명란 `?s=yt`, 블로그 `?s=blog`.
+- "유입 어때?": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker report --days 7` (출력이 없으면 "아직 클릭 없음")
+- "글로우 10월 리포트": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker sponsor-report --sponsor <id> --month 2026-10` → 생성된 파일을 첨부
+- 유입 수치를 근거로 클릭당·방문당 요금을 제안하지 않는다 (정액 원칙, 의료법 §27③).
+
 ## 4. 조회
 - "N번 보여줘 / 대본 보여줘": `cd {{REPO}} && {{PYTHON}} -c "import json;print(json.load(open('content/drafts/_batch.json'))['ids'][N-1])"` 로 초안 id 를 찾고 `content/drafts/<id>/script.md` 를 보낸다. "블로그" 라고 하면 `blog.md` (길면 파일로 첨부하거나 앞부분 + 섹션 제목 요약).
 - "검수 결과 왜 그래?": `content/drafts/<id>/review.json` 의 findings 를 요약한다 (severity block/caution/pending 위주).

@@ -24,6 +24,7 @@
 - 워커(Hermes 크론): `python -m pipeline.worker run` / 주제 선택 요청: `python -m pipeline.worker request-drafts --pick 1,3`
 - 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` / 목록 점검 `python -m pipeline.sponsors check`
+- 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
 - Hermes 설치·운영: `hermes/README.md` (`bash hermes/install.sh`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 
 ## 구조 메모
@@ -31,6 +32,7 @@
 - 대본·블로그는 02_draft 의 사실 목록(`facts`, 사실마다 출처 URL)만 사용하고 `[F#]` / `fact_ids` 로 참조한다. 02b 는 이 참조를 기준으로 출처를 검증한다.
 - 금지 표현은 `config/banned_terms.txt`, 병원명·연락처·체험담 등 패턴은 `02b_auto_review.py` 의 `RULE_PATTERNS`.
 - 스폰서 트랙(기획서 12-1-1): 광고주 병원 = 광고 주체, 우리는 매체+제작 대행, 정액만. `config/sponsors.yaml`(git 제외). 스폰서 글은 `_sponsored_rules.md` 로 생성하고 광고 표시를 코드로 넣는다(`02_draft.add_disclosures`). 02b 는 광고 표시·계약·심의번호를 ⛔ 로 검사하고, 중립 글에 스폰서 병원이 나오면 ⛔. 03_review 는 현재 내용 기준 `병원확인` 없이는 승인하지 않는다 (--confirm 으로도 불가). 이 분리를 약화하는 변경은 하지 않는다.
+- 링크 유입 추적기(`tracker/`, Cloudflare Worker + D1): 추적 링크 클릭 → 기록 → UTM 붙여 병원 사이트로 302. IP 원문 미저장. 스폰서 링크 대상은 공식 사이트(하위 도메인 포함)만. 유입 수치는 보고 자료일 뿐 요금은 정액.
 - 테스트는 `llm.set_backend()` 로 가짜 LLM 을 쓰고 `SKIN_CONTENT_DIR`/`SKIN_LOG_DIR` 로 임시 폴더를 쓴다.
 
 ## 검수 요청 처리 (Claude Code 가 운영 검수를 맡는 유일한 작업)

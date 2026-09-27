@@ -20,12 +20,16 @@ python -m pipeline.sponsors check
 ```
 텔레그램: "글로우 스폰서 글: 리쥬란 안내" → 초안(광고 표시 자동) → 검수 → 병원에 최종본 전달 → 병원 OK 후 `N 병원확인` → `N 승인`.
 
+## 링크 유입 추적기
+`tracker/README.md` 대로 Cloudflare 에 배포하고 `.env` 에 `TRACKER_URL`, `TRACKER_TOKEN` 입력. 텔레그램에서 "글로우 링크 만들어줘" → 채널별 추적 링크.
+
 ## 크론 (no-agent — stdout 이 그대로 텔레그램, 출력 없으면 조용, 실패 시 에러 알림)
 | 이름 | 스케줄 | 스크립트 | 하는 일 |
 |---|---|---|---|
 | skin-law-sync | 월 08:00 | `skin-law-sync.sh` | 추적 법령 변경 감지 → 변경 있을 때만 알림 |
 | skin-weekly-topics | 월 09:00 | `skin-topics.sh` | 코드 업데이트(`git pull`) → 주간 주제 후보 전송 |
 | skin-worker | 10분마다 | `skin-worker.sh` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
+| skin-traffic-report | 월 10:00 | `skin-traffic.sh` | 스폰서 링크 유입 주간 요약 (추적기 배포 전·클릭 없으면 조용) |
 
 스크립트는 `~/.hermes/scripts/` 에 생성된다. 수동 실행: `hermes cron run <이름>`.
 
