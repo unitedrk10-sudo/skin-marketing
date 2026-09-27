@@ -18,11 +18,12 @@ import importlib
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from pipeline import llm
+from pipeline import llm, sponsors
 from pipeline.common import (
     CONFIG_DIR,
     blog_text,
@@ -139,6 +140,8 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
     human: set[str] = set()
     texts = content_texts(draft)
     fact_urls = {f.get("url", "") for f in draft.get("facts", [])}
+    sponsor = draft.get("sponsor")
+    sponsor_names = [sponsor["name_en"], sponsor["name_ko"]] if sponsor else []
 
     for where, text in texts.items():
         for term, pat in banned:
@@ -148,11 +151,16 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
             for m in pat.finditer(text):
                 if kind == "clinic_name" and (INSTITUTION.search(_snippet(text, m)) or _generic(m.group(0))):
                     continue
+                if kind == "clinic_name" and any(n in _snippet(text, m, 60) for n in sponsor_names):
+                    continue  # 스폰서 글의 광고주 병원명은 허용
                 findings.append(Finding("rules", "block", f"[{where}] {label}", _snippet(text, m)))
                 if kind in ("clinic_name", "doctor_name"):
                     human.add("병원·의사 언급")
         for m in re.finditer(r"https?://[^\s)\]>\"']+", text):
-            if m.group(0).rstrip(".,") not in fact_urls:
+            url = m.group(0).rstrip(".,")
+            if sponsor and urlparse(url).netloc.lower().removeprefix("www.") == sponsors.official_host(sponsor):
+                continue  # 광고주 공식 사이트 링크만 허용
+            if url not in fact_urls:
                 findings.append(Finding("rules", "block", f"[{where}] 출처 목록에 없는 URL", m.group(0)))
         if PRICE.search(text):
             human.add("가격 포함")
@@ -162,6 +170,8 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
         findings.append(Finding("rules", "block", "[script] 영상 내 'AI-generated' 표기 없음 (AI 기본법 §31)"))
     if not BLOG_DISCLOSURE.search(texts["blog"]):
         findings.append(Finding("rules", "block", "[blog] AI 활용·출처 기반 고지 문장 없음"))
+
+    findings += check_sponsor(draft, texts, human) if sponsor else check_no_sponsor_names(texts)
 
     # 출처 연결: 모든 사실 참조가 실제 사실 목록에 있어야 한다
     known = {f["id"] for f in draft.get("facts", [])}
@@ -176,6 +186,34 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
         if re.search(r"\d", ln.get("voice", "")) and not ln.get("fact_ids"):
             findings.append(Finding("rules", "block", f"[script] {i}번 줄 수치에 출처 없음", ln.get("voice", "")))
     return findings, human
+
+
+def check_sponsor(draft: dict, texts: dict[str, str], human: set[str]) -> list[Finding]:
+    """스폰서 글: 광고 표시·계약·심의번호 (기획서 12-1-1). 병원 확인은 03_review 에서 강제."""
+    sponsor = draft["sponsor"]
+    findings = [Finding("rules", "block", f"[sponsor] {p}") for p in sponsors.problems(sponsor)]
+    disclosure = (draft.get("shortform") or {}).get("on_screen_disclosure", "")
+    if f"Sponsored by {sponsor['name_en']}" not in disclosure:
+        findings.append(Finding("rules", "block", "[script] 영상 내 스폰서 광고 표시 없음", disclosure))
+    if not re.search(rf"Sponsored content.*advertisement by {re.escape(sponsor['name_en'])}", texts["blog"], re.I):
+        findings.append(Finding("rules", "block", "[blog] 스폰서 광고 표시 없음 (표시광고법 — 대가 관계 명시)"))
+    human.add(f"스폰서 광고({sponsor['name_ko']}) — 병원 확인 필요")
+    return findings
+
+
+def check_no_sponsor_names(texts: dict[str, str]) -> list[Finding]:
+    """중립 정보 글에는 스폰서 병원이 등장하면 안 된다 (트랙 분리 — 대가 받은 병원의 숨은 노출 방지)."""
+    try:
+        registered = sponsors.load().values()
+    except sponsors.SponsorError as e:
+        return [Finding("rules", "block", f"스폰서 목록 오류로 확인 불가: {e}")]
+    findings = []
+    for s in registered:
+        for name in (s["name_en"], s["name_ko"], sponsors.official_host(s)):
+            for where, text in texts.items():
+                if name and name.lower() in text.lower():
+                    findings.append(Finding("rules", "block", f"[{where}] 중립 글에 스폰서 병원 노출: {s['id']}", name))
+    return findings
 
 
 # ---------------- ② 출처 검증 ----------------

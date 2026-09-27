@@ -87,9 +87,9 @@ def render(template: str, **values) -> str:
     return out
 
 
-def prompt(name: str, **values) -> str:
-    """생성 프롬프트에는 기획서 7장 규칙(_rules.md)이 항상 들어간다."""
-    return render(read_prompt(name), rules=read_prompt("_rules"), **values)
+def prompt(name: str, rules: str | None = None, **values) -> str:
+    """생성 프롬프트에는 기획서 7장 규칙(_rules.md)이 항상 들어간다. 스폰서 글은 _sponsored_rules.md 로 대체."""
+    return render(read_prompt(name), rules=rules or read_prompt("_rules"), **values)
 
 
 def parse_json(text: str):
@@ -150,6 +150,12 @@ def save_json(path: Path, data) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def draft_hash(path: Path) -> str:
+    """초안 내용 지문 — 외부 검수·병원 확인 이후 초안이 바뀌었는지 판단."""
+    import hashlib
+    return hashlib.sha256((path / "draft.json").read_bytes()).hexdigest()[:16]
 
 
 def load_draft(path: Path) -> dict:

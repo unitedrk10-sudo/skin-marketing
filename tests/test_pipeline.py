@@ -69,6 +69,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_CONTENT_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("SKIN_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setattr(llm, "stage_config", _api_mode_stage_config)
+    monkeypatch.setenv("SKIN_SPONSORS_FILE", str(tmp_path / "sponsors.yaml"))  # 기본: 스폰서 없음
     fake = FakeLLM()
     llm.set_backend(fake)
     yield fake
@@ -527,3 +528,127 @@ def test_worker_revise_request_regenerates(worker_env):
     message, failures = worker_mod.run(review_runner=fake_claude())
     draft = common.load_draft(common.content_dir("drafts") / "2026-W40-01-what-is-rejuran")
     assert failures == [] and draft["revisions"][-1]["note"] == "톤 부드럽게" and "✅" in message
+
+
+# ---- 스폰서 트랙 ----
+
+sponsors_mod = importlib.import_module("pipeline.sponsors")
+from datetime import date, timedelta  # noqa: E402
+
+SPONSOR = {"id": "glow", "name_en": "Glow Skin Clinic", "name_ko": "글로우피부과의원",
+           "official_url": "https://www.glow-clinic.example",
+           "contract": {"type": "monthly", "start": "2026-01-01", "end": "2099-12-31"},
+           "ad_review_required": False, "review_no": ""}
+
+
+def write_sponsors(tmp_path, *items):
+    import yaml
+    (tmp_path / "sponsors.yaml").write_text(yaml.safe_dump({"sponsors": list(items)}, allow_unicode=True), encoding="utf-8")
+
+
+@pytest.fixture
+def sponsored(env, tmp_path):
+    write_sponsors(tmp_path, SPONSOR)
+    env.responses["blog"] = blog(f"# Rejuran at Glow Skin Clinic\n\nGlow Skin Clinic offers Rejuran [F1]. "
+                                 f"See https://www.glow-clinic.example/rejuran. Results vary; consult a doctor.")
+    return env
+
+
+def make_sponsored(env):
+    return draft_mod.create_sponsored("glow", "Rejuran at Glow Skin Clinic", "what to expect")
+
+
+@pytest.mark.parametrize("change,error", [
+    ({"contract": {"type": "per_patient", "start": "2026-01-01", "end": "2026-12-31"}}, "monthly"),
+    ({"official_url": "http://glow.example"}, "https"),
+    ({"id": "Glow Clinic"}, "id"),
+])
+def test_sponsor_validation(change, error):
+    with pytest.raises(sponsors_mod.SponsorError, match=error):
+        sponsors_mod.validate({**SPONSOR, **change})
+
+
+def test_sponsored_draft_has_disclosures_and_sponsor_rules(sponsored):
+    draft_id = make_sponsored(sponsored)
+    draft = common.load_draft(common.content_dir("drafts") / draft_id)
+    assert draft_id.startswith("sp-glow-") and draft["content_type"] == "sponsored"
+    assert draft["shortform"]["on_screen_disclosure"].startswith("Sponsored by Glow Skin Clinic")
+    assert draft["blog"]["markdown"].startswith("> **Sponsored content — this is an advertisement by Glow Skin Clinic.**")
+    research_prompt = sponsored.calls[0][1]
+    assert "labeled advertisement" in research_prompt and "NON-NEGOTIABLE CONTENT RULES" not in research_prompt
+
+
+def test_sponsored_rules_allow_own_clinic_only(sponsored):
+    draft = common.load_draft(common.content_dir("drafts") / make_sponsored(sponsored))
+    findings, human = review_mod.check_rules(draft)
+    assert [f.message for f in findings] == []
+    assert any("병원 확인 필요" in h for h in human)
+    draft["blog"]["markdown"] += " Unlike Shine Dermatology, call 02-123-4567."
+    msgs = [f.message for f in review_mod.check_rules(draft)[0]]
+    assert any("병원명" in m for m in msgs) and any("전화번호" in m for m in msgs)
+
+
+def test_sponsored_missing_disclosure_or_expired_contract_blocks(sponsored, tmp_path):
+    draft = common.load_draft(common.content_dir("drafts") / make_sponsored(sponsored))
+    draft["blog"]["markdown"] = draft["blog"]["markdown"].split("\n\n", 1)[1]
+    draft["shortform"]["on_screen_disclosure"] = "AI-generated content"
+    msgs = [f.message for f in review_mod.check_rules(draft)[0]]
+    assert any("[blog] 스폰서 광고 표시 없음" in m for m in msgs) and any("[script] 영상 내 스폰서" in m for m in msgs)
+    expired = {**SPONSOR, "contract": {"type": "monthly", "start": "2020-01-01", "end": "2020-12-31"},
+               "ad_review_required": True}
+    draft["sponsor"] = sponsors_mod.validate(expired)
+    msgs = [f.message for f in review_mod.check_rules(draft)[0]]
+    assert any("계약 기간 아님" in m for m in msgs) and any("심의번호 없음" in m for m in msgs)
+
+
+def test_expired_sponsor_cannot_start_draft(env, tmp_path):
+    write_sponsors(tmp_path, {**SPONSOR, "contract": {"type": "per_post", "start": "2020-01-01", "end": "2020-02-01"}})
+    with pytest.raises(sponsors_mod.SponsorError):
+        make_sponsored(env)
+    with pytest.raises(ValueError):
+        worker_mod.request_sponsored("glow", "t", "a")
+
+
+def test_neutral_draft_mentioning_sponsor_is_blocked(env, tmp_path):
+    write_sponsors(tmp_path, SPONSOR)
+    msgs, _ = rules_for(script={"voice": "Many visitors go to glow-clinic.example for this."})
+    assert any("중립 글에 스폰서 병원 노출" in m for m in msgs)
+
+
+def test_sponsored_approval_requires_current_clinic_confirmation(sponsored):
+    draft_id = make_sponsored(sponsored)
+    path = common.content_dir("drafts") / draft_id
+    review_mod.review(path, fetch=ok_fetch)
+    msg = human_mod.list_message("drafts")
+    assert "💼글로우피부과의원 광고 · 병원확인 대기" in msg
+    out = human_mod.apply("1 승인", confirm=True)
+    assert "병원 확인 전" in out[0] and path.exists()  # --confirm 으로도 우회 불가
+    human_mod.apply("1 병원확인")
+    draft_mod.revise(draft_id, "tone")  # 내용이 바뀌면 병원 확인 무효
+    assert "병원 확인 전" in human_mod.apply("1 승인", confirm=True)[0]
+    human_mod.apply("1 병원확인")
+    human_mod.apply("1 승인", confirm=True)
+    assert (common.content_dir("approved") / draft_id / "sponsor_approval.json").exists()
+
+
+def test_sponsor_ok_on_neutral_draft_is_noop(env):
+    make_draft(env)
+    human_mod.list_message("drafts")
+    assert "스폰서 글이 아닙니다" in human_mod.apply("1 병원확인")[0]
+
+
+def test_worker_processes_sponsored_request(sponsored, monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "stage_config", _real_stage_config)
+    monkeypatch.setattr(external_mod, "queue_dir", lambda kind: tmp_path / "review-queue" / kind)
+    monkeypatch.setattr(review_mod.review_with_regeneration, "__defaults__", (ok_fetch,))
+    assert "요청 접수" in worker_mod.request_sponsored("glow", "Rejuran at Glow Skin Clinic", "what to expect")
+    captured = {}
+
+    def runner(packet_path):
+        captured["packet"] = common.load_json(packet_path)
+        return fake_claude()(packet_path)
+
+    message, failures = worker_mod.run(review_runner=runner)
+    assert failures == [] and "💼글로우피부과의원" in message
+    assert captured["packet"]["drafts"][0]["sponsor"]["name_en"] == "Glow Skin Clinic"
+    assert "Sponsored drafts" in captured["packet"]["instructions"]

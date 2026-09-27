@@ -18,7 +18,6 @@ review-queue/ 는 미공개 초안·출처 본문이 들어 있어 git 에 올�
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib
 import os
 import subprocess
@@ -29,6 +28,7 @@ from pipeline.common import (
     blog_text,
     content_dir,
     draft_dirs,
+    draft_hash,
     get_logger,
     iso_week,
     log_dir,
@@ -52,9 +52,6 @@ def queue_dir(kind: str) -> Path:
     return ROOT / "review-queue" / kind
 
 
-def draft_hash(path: Path) -> str:
-    """내보낸 뒤 초안이 재생성되면 결과를 반영하지 않기 위한 지문."""
-    return hashlib.sha256((path / "draft.json").read_bytes()).hexdigest()[:16]
 
 
 def waiting(path: Path) -> bool:
@@ -78,6 +75,8 @@ def packet_entry(path: Path) -> dict:
             for s in review.get("sources", []) if "page_excerpt" in s
         ],
         "needs_cross_review": bool((review.get("cross_review") or {}).get("pending")),
+        "sponsor": ({k: draft["sponsor"][k] for k in ("name_en", "name_ko", "official_url")}
+                    if draft.get("sponsor") else None),
     }
 
 
