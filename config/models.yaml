@@ -2,6 +2,7 @@
 # 모델 교체는 여기서만 한다. 사용 가능 여부 확인: python -m pipeline.llm check
 #
 # provider: gemini (GEMINI_API_KEY) | anthropic (ANTHROPIC_API_KEY)
+#           | claude_code (API 호출 없음 — 검수 요청 파일을 Claude Code 세션이 처리, 02c_external_review.py)
 # search: true 면 Gemini Google 검색 연동(grounding) 사용
 # 원칙: 생성(Gemini)과 검수(Claude)는 다른 회사 모델 (기획서 6-0)
 
@@ -33,13 +34,18 @@ stages:
     model: gemini-2.5-flash
     temperature: 0.0
 
-  source_check:    # 02b ② 출처 본문 대조 — 생성 모델과 다른 회사
-    provider: anthropic
-    model: claude-haiku-4-5
-    max_tokens: 4096
+  # 검수 단계는 생성 모델(Gemini)과 다른 회사 모델이 맡는다.
+  # 현재: ANTHROPIC_API_KEY 없이 Claude Code 가 검수 (Hermes 가 페이지 수집까지 하고 요청 파일을 올림).
+  # API 로 바꾸려면 아래 주석 처리된 설정으로 교체하고 ANTHROPIC_API_KEY 를 등록한다.
+  source_check:    # 02b ② 출처 본문 대조
+    provider: claude_code
+    # provider: anthropic
+    # model: claude-haiku-4-5
+    # max_tokens: 4096
 
   cross_review:    # 02b ③ 교차 모델 검수
-    provider: anthropic
-    model: claude-opus-5
-    effort: high
-    max_tokens: 16000
+    provider: claude_code
+    # provider: anthropic
+    # model: claude-opus-5
+    # effort: high
+    # max_tokens: 16000

@@ -4,7 +4,9 @@
     python -m pipeline.02b_auto_review <draft_id> ...  # 지정 초안
     python -m pipeline.02b_auto_review --auto-regenerate   # ⛔ 차단 건은 1회 자동 재생성 후 재검수
 
-등급: pass(✅) / caution(⚠️) / block(⛔). 결과는 <draft>/review.json, 요약은 stdout.
+등급: pass(✅) / caution(⚠️) / pending(⏳) / block(⛔). 결과는 <draft>/review.json, 요약은 stdout.
+config/models.yaml 에서 검수 단계가 provider: claude_code 면 ②의 본문 대조와 ③은 API 를 부르지 않고
+⏳ 대기로 남긴다 (페이지 수집·규칙 검사는 여기서 끝냄). 이후 02c_external_review.py 로 내보내고 결과를 반영한다.
 종료 코드는 검수 등급과 무관하게 실행 성공이면 0.
 """
 
@@ -41,7 +43,7 @@ from pipeline.common import (
 
 log = get_logger("02b_auto_review")
 
-GRADE_ICON = {"pass": "✅", "caution": "⚠️", "block": "⛔"}
+GRADE_ICON = {"pass": "✅", "caution": "⚠️", "pending": "⏳", "block": "⛔"}
 FETCH_TIMEOUT = 20
 PAGE_CHARS = 15000
 USER_AGENT = "Mozilla/5.0 (compatible; skin-marketing-source-check/1.0)"
@@ -53,7 +55,7 @@ FACT_REF = re.compile(r"\[(F\d+)\]")
 @dataclass
 class Finding:
     check: str  # rules | sources | cross
-    severity: str  # block | caution | info
+    severity: str  # block | caution | pending | info
     message: str
     quote: str = ""
 
@@ -215,10 +217,11 @@ def check_sources(draft: dict, fetch=fetch_page) -> tuple[list[Finding], list[di
 
     findings: list[Finding] = []
     details: list[dict] = []
+    external = llm.is_external("source_check")
     for url, facts in by_url.items():
         ids = ",".join(f["id"] for f in facts)
         status, page = fetch(url)
-        entry = {"url": url, "status": status, "facts": {}}
+        entry = {"url": url, "status": status, "fact_ids": [f["id"] for f in facts], "facts": {}}
         details.append(entry)
         if status in (401, 403, 429):
             findings.append(Finding("sources", "caution", f"출처 접속 차단({status}) — 사람이 확인 [{ids}]", url))
@@ -228,6 +231,10 @@ def check_sources(draft: dict, fetch=fetch_page) -> tuple[list[Finding], list[di
             continue
         if len(page) < 200:
             findings.append(Finding("sources", "caution", f"출처 본문 추출 불가(PDF·스크립트 렌더링 등) — 사람이 확인 [{ids}]", url))
+            continue
+        if external:  # 본문 대조는 Claude Code 가 한다 — 수집한 본문을 넘긴다
+            entry["page_excerpt"] = page[:PAGE_CHARS]
+            findings.append(Finding("sources", "pending", f"출처 본문 대조 대기 [{ids}]", url))
             continue
         text = render(read_prompt("source_check"), url=url, page=page[:PAGE_CHARS],
                       claims="\n".join(f"[{f['id']}] {f['text']}" for f in facts))
@@ -246,6 +253,8 @@ def check_sources(draft: dict, fetch=fetch_page) -> tuple[list[Finding], list[di
 # ---------------- ③ 교차 모델 검수 ----------------
 
 def check_cross(draft: dict) -> tuple[list[Finding], dict]:
+    if llm.is_external("cross_review"):
+        return [Finding("cross", "pending", "Claude Code 교차 검수 대기")], {"pending": True}
     text = prompt("cross_review", facts=facts_text(draft.get("facts", [])),
                   script=script_text(draft), blog=blog_text(draft))
     data, result = llm.generate_json("cross_review", text)
@@ -260,10 +269,12 @@ def check_cross(draft: dict) -> tuple[list[Finding], dict]:
 # ---------------- 등급 ----------------
 
 def grade(findings: list[Finding]) -> str:
-    """① 금지 항목 또는 ② 출처 실패 → 차단. ③ 지적 또는 ② 약한 출처 → 주의."""
+    """① 금지 항목 또는 ② 출처 실패 → 차단. 외부 검수 미완료 → 대기. ③ 지적 또는 ② 약한 출처 → 주의."""
     severities = {f.severity for f in findings}
     if "block" in severities:
         return "block"
+    if "pending" in severities:
+        return "pending"
     if "caution" in severities:
         return "caution"
     return "pass"
@@ -308,12 +319,12 @@ def review(path: Path, fetch=fetch_page) -> dict:
 
 def summary_line(result: dict, title: str = "") -> str:
     g = result["grade"]
-    top = next((f for f in result["findings"] if f["severity"] == ("block" if g == "block" else "caution")), None)
+    top = next((f for f in result["findings"] if f["severity"] == g), None)
     if top is None:
         reason = " 자동점검 통과"
     else:
         reason = f" {top['message']}" + (f" “{top['quote'][:60]}”" if top["quote"] else "")
-        extra = sum(1 for f in result["findings"] if f["severity"] in ("block", "caution")) - 1
+        extra = sum(1 for f in result["findings"] if f["severity"] in ("block", "caution", "pending")) - 1
         reason += f" 외 {extra}건" if extra > 0 else ""
     human = f" 👤{', '.join(result['always_human'])}" if result["always_human"] else ""
     return f"{GRADE_ICON[g]} {title or result['draft_id']}:{reason}{human}"

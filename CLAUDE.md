@@ -5,7 +5,7 @@
 ## 작업 규칙
 - 이 프로젝트는 **개발만** Claude Code로 하고, 운영은 Hermes가 한다. 스크립트는 사람 개입 없이 CLI로 단독 실행 가능해야 한다.
 - 모든 LLM 호출은 `pipeline/llm.py`를 통해서만 한다. 모델명은 `config/models.yaml`에서 읽는다.
-- API 키·봇 토큰(`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `LAW_API_OC` 등)은 환경변수로만 읽고, 코드·로그·저장소에 남기지 않는다.
+- API 키·봇 토큰(`GEMINI_API_KEY`, `LAW_API_OC` 등)은 환경변수로만 읽고, 코드·로그·저장소에 남기지 않는다.
 - 파일 상태 이동(drafts → approved → rendered → ready_to_publish → published)은 `03_review.py`와 정해진 스크립트만 수행한다.
 - `06_publish.py`는 `ready_to_publish/` 외의 경로를 처리하지 않는다. 이 제약을 우회하는 코드를 만들지 않는다.
 - 생성 프롬프트에는 기획서 7장 금지 사항과 "모든 사실에 출처 URL" 규칙을 반드시 포함한다.
@@ -20,6 +20,7 @@
 - 주간 주제: `python -m pipeline.01_topics`
 - 초안 생성: `python -m pipeline.02_draft --week 2026-W40 --pick 1,3` / 수정: `--revise <draft_id> --note "..."`
 - 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate`
+- Claude Code 검수 요청/반영: `python -m pipeline.02c_external_review export` / `import`
 - 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
 - 운영 등록 기준: `hermes/cron_jobs.md`, 답장 해석 규칙: `hermes/skills/review_handler.md`
 
@@ -28,3 +29,11 @@
 - 대본·블로그는 02_draft 의 사실 목록(`facts`, 사실마다 출처 URL)만 사용하고 `[F#]` / `fact_ids` 로 참조한다. 02b 는 이 참조를 기준으로 출처를 검증한다.
 - 금지 표현은 `config/banned_terms.txt`, 병원명·연락처·체험담 등 패턴은 `02b_auto_review.py` 의 `RULE_PATTERNS`.
 - 테스트는 `llm.set_backend()` 로 가짜 LLM 을 쓰고 `SKIN_CONTENT_DIR`/`SKIN_LOG_DIR` 로 임시 폴더를 쓴다.
+
+## 검수 요청 처리 (Claude Code 가 운영 검수를 맡는 유일한 작업)
+검수 단계(`source_check`, `cross_review`)는 `provider: claude_code` — Anthropic API 대신 Claude Code 세션이 한다. "검수해줘" 요청을 받거나 `review-queue/pending/*.json` 이 있으면:
+1. `git pull` 후 `review-queue/pending/` 의 요청 파일을 읽는다. 파일 안 `instructions` 가 기준이다 (기획서 7장 규칙 + 출력 형식).
+2. 초안마다 ② `sources[].page_excerpt` 로 사실별 supported/weak/unsupported 판정(페이지 본문만 근거, 외부 지식 금지), ③ 대본·블로그 교차 검수.
+3. 결과를 `review-queue/done/<packet_id>.result.json` 에 쓰고, 요청 파일은 같은 커밋에서 삭제, 작업 브랜치 규칙에 따라 푸시한다. 2주 지난 `done/` 결과도 이때 지운다.
+4. 사용자에게 초안별 판정 요약(⛔/⚠️/✅ 예상과 핵심 지적)을 알려준다. 등급 확정·승인은 Hermes 의 import 와 사람이 한다.
+- 초안을 직접 고치지 않는다. 판정이 애매하면 weak/minor 로 두고 사람이 보게 한다.

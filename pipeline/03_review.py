@@ -40,7 +40,7 @@ from pipeline.common import (
 log = get_logger("03_review")
 
 ALLOWED_MOVES = {("drafts", "approved"), ("drafts", "rejected"), ("rendered", "ready_to_publish"), ("rendered", "rejected")}
-GRADE_ICON = {"pass": "✅", "caution": "⚠️", "block": "⛔", None: "❔"}
+GRADE_ICON = {"pass": "✅", "caution": "⚠️", "pending": "⏳", "block": "⛔", None: "❔"}
 NUMS = r"(\d+(?:\s*[,，]\s*\d+|\s*~\s*\d+|\s*-\s*\d+|\s+\d+)*)"
 
 
@@ -128,7 +128,7 @@ def list_message(stage: str) -> str:
         head = f"{i}. {sf.get('title') or draft['topic']['title']}" + (f" ({secs}s)" if secs else "")
         line = f"{head} {GRADE_ICON[grade]}"
         if review:
-            issues = [f for f in review["findings"] if f["severity"] in ("block", "caution")]
+            issues = [f for f in review["findings"] if f["severity"] in ("block", "caution", "pending")]
             if issues:
                 line += f" {issues[0]['message']}" + (f" 외 {len(issues) - 1}건" if len(issues) > 1 else "")
             if review.get("always_human"):
@@ -206,6 +206,9 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False, revise_fn=No
             continue
         grade = (load_review(path) or {}).get("grade")
         if cmd.action == "approve":
+            if grade == "pending" and not confirm:  # 번호로 골라도 Claude Code 검수 전에는 보류
+                out.append(f"- {draft_id}: ⏳ Claude Code 검수 대기 — 결과 반영 후 다시 승인하거나 `--confirm`")
+                continue
             if not cmd.numbers and grade != "pass" and not confirm:
                 out.append(f"- {draft_id}: {GRADE_ICON[grade]} 자동검수 {grade or '미실시'} — 번호로 따로 승인하거나 `전체 승인` 재확인 필요")
                 continue

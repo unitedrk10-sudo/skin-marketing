@@ -53,10 +53,22 @@ class FakeLLM:
         return llm.LLMResult(text=json.dumps(self.responses[stage]), model=f"fake-{cfg['model']}", stage=stage)
 
 
+_real_stage_config = llm.stage_config
+
+
+def _api_mode_stage_config(stage):
+    """검수 단계를 Anthropic API 모드로 시험 (설정 기본값은 claude_code 외부 검수)."""
+    cfg = _real_stage_config(stage)
+    if cfg["provider"] == llm.EXTERNAL:
+        cfg = {"provider": "anthropic", "model": "claude-test"}
+    return cfg
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_CONTENT_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("SKIN_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(llm, "stage_config", _api_mode_stage_config)
     fake = FakeLLM()
     llm.set_backend(fake)
     yield fake
@@ -95,14 +107,18 @@ def test_parse_json_handles_fences_and_prose():
 
 
 def test_llm_stage_models_come_from_config():
-    cfg = llm.stage_config("cross_review")
-    assert cfg["provider"] == "anthropic"
     assert llm.stage_config("research")["provider"] == "gemini"
+    assert llm.is_external("cross_review") and llm.is_external("source_check")
 
 
 def test_generation_and_review_use_different_vendors():
     assert llm.stage_config("cross_review")["provider"] != llm.stage_config("blog")["provider"]
     assert llm.stage_config("source_check")["provider"] != llm.stage_config("research")["provider"]
+
+
+def test_external_stage_is_never_called_as_api():
+    with pytest.raises(llm.LLMError):
+        llm.generate("cross_review", "x")
 
 
 # ---- 01 / 02 ----
@@ -332,3 +348,105 @@ def test_visual_directions_are_checked():
     draft["shortform"]["lines"][0]["visual"] = "split-screen before and after of a patient"
     findings, _ = review_mod.check_rules(draft)
     assert any("before and after" in f.message for f in findings)
+
+
+# ---- 02c Claude Code 외부 검수 ----
+
+external_mod = importlib.import_module("pipeline.02c_external_review")
+
+
+@pytest.fixture
+def external(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "stage_config", _real_stage_config)  # 검수 단계 = claude_code
+    monkeypatch.setattr(external_mod, "queue_dir", lambda kind: tmp_path / "review-queue" / kind)
+    return env
+
+
+def _pending_draft(external):
+    draft_id = make_draft(external)
+    path = common.content_dir("drafts") / draft_id
+    result = review_mod.review(path, fetch=ok_fetch)
+    return draft_id, path, result
+
+
+def test_external_mode_marks_pending_without_api_calls(external):
+    _, path, result = _pending_draft(external)
+    assert result["grade"] == "pending"
+    assert not any(stage in ("source_check", "cross_review") for stage, _ in external.calls)
+    assert result["sources"][0]["page_excerpt"].startswith("Polynucleotide")
+    assert "⏳" in review_mod.summary_line(result)
+
+
+def test_rule_block_outranks_pending(external):
+    external.responses["shortform"] = script(voice="The best clinic for Rejuran.")
+    _, _, result = _pending_draft(external)
+    assert result["grade"] == "block"
+
+
+def test_export_packet_and_no_duplicate_export(external):
+    draft_id, path, _ = _pending_draft(external)
+    packet_path = external_mod.export()
+    packet = common.load_json(packet_path)
+    entry = packet["drafts"][0]
+    assert entry["draft_id"] == draft_id and entry["sources"][0]["fact_ids"] == ["F1"]
+    assert "page_excerpt" in entry["sources"][0] and entry["needs_cross_review"]
+    assert "NON-NEGOTIABLE CONTENT RULES" in packet["instructions"] and packet["packet_id"] in packet["instructions"]
+    assert external_mod.export() is None  # 이미 요청한 초안은 다시 내보내지 않는다
+
+
+def _result(packet, verdict="supported", findings=()):
+    entry = packet["drafts"][0]
+    return {"packet_id": packet["packet_id"], "reviewer": "claude-code", "drafts": [{
+        "draft_id": entry["draft_id"], "draft_hash": entry["draft_hash"],
+        "sources": [{"id": "F1", "verdict": verdict, "evidence": "..."}],
+        "findings": list(findings), "overall": "ok"}]}
+
+
+@pytest.mark.parametrize("verdict,findings,grade", [
+    ("supported", [], "pass"),
+    ("weak", [], "caution"),
+    ("unsupported", [], "block"),
+    ("supported", [{"severity": "minor", "where": "blog", "quote": "q", "issue": "soften", "suggestion": "s"}], "caution"),
+])
+def test_import_regrades(external, tmp_path, verdict, findings, grade):
+    _, path, _ = _pending_draft(external)
+    packet = common.load_json(external_mod.export())
+    result_path = tmp_path / "r.result.json"
+    common.save_json(result_path, _result(packet, verdict, findings))
+    lines = external_mod.import_result(result_path)
+    review = common.load_review(path)
+    assert review["grade"] == grade and len(lines) == 1
+    assert review["cross_review"]["model"] == "claude-code"
+    assert "page_excerpt" not in review["sources"][0]
+    assert not any(f["severity"] == "pending" for f in review["findings"])
+    assert external_mod.import_result(result_path) == []  # 두 번 반영해도 무해
+
+
+def test_import_skips_drafts_changed_after_export(external, tmp_path):
+    draft_id, path, _ = _pending_draft(external)
+    packet = common.load_json(external_mod.export())
+    draft_mod.revise(draft_id, "tone")
+    review_mod.review(path, fetch=ok_fetch)
+    result_path = tmp_path / "r.result.json"
+    common.save_json(result_path, _result(packet))
+    assert external_mod.import_result(result_path) == []
+    assert common.load_review(path)["grade"] == "pending"
+    assert external_mod.export() is not None  # 바뀐 초안은 다시 요청
+
+
+def test_missing_verdict_needs_human(external, tmp_path):
+    _, path, _ = _pending_draft(external)
+    packet = common.load_json(external_mod.export())
+    result = _result(packet)
+    result["drafts"][0]["sources"] = []
+    common.save_json(tmp_path / "r.json", result)
+    external_mod.import_result(tmp_path / "r.json")
+    assert common.load_review(path)["grade"] == "caution"
+
+
+def test_pending_drafts_are_not_approved_without_confirm(external):
+    draft_id, _, _ = _pending_draft(external)
+    human_mod.list_message("drafts")
+    out = human_mod.apply("1 승인")
+    assert "검수 대기" in out[0]
+    assert (common.content_dir("drafts") / draft_id).exists()

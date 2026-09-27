@@ -23,6 +23,8 @@ from pipeline.common import get_logger, load_yaml, parse_json
 log = get_logger("llm")
 
 KEY_ENV = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+# API 를 부르지 않고 검수 요청 파일로 내보내 Claude Code 세션이 처리하는 단계 (02c_external_review.py)
+EXTERNAL = "claude_code"
 RETRIES = 3
 
 
@@ -53,9 +55,13 @@ def stage_config(stage: str) -> dict:
     if stage not in stages:
         raise LLMError(f"config/models.yaml 에 stage '{stage}' 없음")
     cfg = dict(stages[stage])
-    if cfg.get("provider") not in KEY_ENV:
+    if cfg.get("provider") not in (*KEY_ENV, EXTERNAL):
         raise LLMError(f"stage '{stage}': 지원하지 않는 provider {cfg.get('provider')!r}")
     return cfg
+
+
+def is_external(stage: str) -> bool:
+    return stage_config(stage)["provider"] == EXTERNAL
 
 
 def _api_key(provider: str) -> str:
@@ -126,6 +132,8 @@ PROVIDERS = {"gemini": _gemini, "anthropic": _anthropic}
 
 def generate(stage: str, prompt: str, system: str | None = None) -> LLMResult:
     cfg = stage_config(stage)
+    if cfg["provider"] == EXTERNAL:
+        raise LLMError(f"stage '{stage}' 는 Claude Code 외부 검수 단계라 API 로 호출하지 않습니다")
     call = _backend or PROVIDERS[cfg["provider"]]
     last: Exception | None = None
     for attempt in range(RETRIES):
@@ -169,9 +177,12 @@ def _check() -> int:
             present = bool(os.environ.get(env))
             ok &= present
             print(f"{env}: {'OK' if present else '없음'} (사용 단계: {', '.join(used)})")
+    external = [s for s, c in stages.items() if c.get("provider") == EXTERNAL]
+    if external:
+        print(f"Claude Code 외부 검수: {', '.join(external)} (02c_external_review export/import)")
     if not ok:
         return 1
-    for stage in stages:
+    for stage in (s for s in stages if s not in external):
         try:
             r = generate(stage, 'Reply with exactly: {"ok": true}')
             print(f"{stage}: OK ({r.model})")
