@@ -67,7 +67,7 @@ def _numbers(text: str) -> list[int]:
 
 
 def parse_reply(reply: str) -> list[Command]:
-    """권장 형식의 답장을 명령 목록으로. 자연어 해석은 Hermes 스킬(review_handler.md)이 이 형식으로 바꿔서 넘긴다."""
+    """권장 형식의 답장을 명령 목록으로. 자연어 해석은 Hermes 스킬(hermes/skills/skin-marketing/SKILL.md)이 이 형식으로 바꿔서 넘긴다."""
     commands: list[Command] = []
     # 수정 요청은 줄 끝까지가 메모이므로 줄 단위로 나눈다
     for raw in re.split(r"[\n;]+", reply):
@@ -183,7 +183,7 @@ def _targets(cmd: Command, batch: list[str]) -> list[str]:
     return [batch[n - 1] for n in cmd.numbers]
 
 
-def apply(reply: str, stage: str = "drafts", confirm: bool = False, revise_fn=None, review_fn=None) -> list[str]:
+def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]:
     """답장을 처리하고 텔레그램으로 돌려줄 결과 줄들을 반환한다."""
     commands = parse_reply(reply)
     batch = load_batch(stage)
@@ -221,12 +221,10 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False, revise_fn=No
                 record_agreement(draft_id, grade, "reject")
             out.append(f"- {draft_id}: 폐기 → rejected")
         elif cmd.action == "revise":
+            # 재생성은 오래 걸리므로 워커가 처리한다 (재생성 → 자동 검수 → Claude 검수 → 검수 요청 재전송)
             record_agreement(draft_id, grade, "revise")
-            revise_fn = revise_fn or importlib.import_module("pipeline.02_draft").revise
-            review_fn = review_fn or importlib.import_module("pipeline.02b_auto_review").review
-            revise_fn(draft_id, cmd.note)
-            result = review_fn(path)
-            out.append(f"- {draft_id}: 재생성 완료 {GRADE_ICON[result['grade']]} — 다시 검수 요청 예정")
+            importlib.import_module("pipeline.worker").enqueue("revise", draft_id=draft_id, note=cmd.note)
+            out.append(f"- {draft_id}: 수정 요청 접수 — 재생성·검수 후 다시 보내드립니다")
         elif cmd.action == "publish_ok":
             move(draft_id, "rendered", "ready_to_publish")
             out.append(f"- {draft_id}: 게시 OK → ready_to_publish")
