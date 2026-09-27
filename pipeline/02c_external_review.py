@@ -2,11 +2,12 @@
 
 config/models.yaml 에서 source_check / cross_review 가 provider: claude_code 일 때 쓴다.
 
-흐름 (hermes/cron_jobs.md):
-  1. Hermes: 02b_auto_review 실행 → ⏳ 대기 초안 생김 (규칙 검사·출처 페이지 수집 완료)
-  2. Hermes: `02c_external_review export` → review-queue/pending/<packet_id>.json 을 커밋·푸시
-  3. Claude Code: 요청 파일을 검수해 review-queue/done/<packet_id>.result.json 을 커밋·푸시
-  4. Hermes: git pull → `02c_external_review import` → 03_review list 로 텔레그램 검수 요청
+흐름 (hermes/run_claude_review.sh 가 한 번에 실행, 모두 Hermes 머신 로컬 — git 으로 주고받지 않는다):
+  1. 02b_auto_review 실행 결과 ⏳ 대기 초안 (규칙 검사·출처 페이지 수집 완료)
+  2. `02c_external_review export` → review-queue/pending/<packet_id>.json
+  3. `claude -p` (Claude Code CLI) 가 요청 파일을 검수해 review-queue/done/<packet_id>.result.json 작성
+  4. `02c_external_review import` → 등급 재산정, 요청 파일 삭제 → 03_review list 로 텔레그램 검수 요청
+review-queue/ 는 미공개 초안·출처 본문이 들어 있어 git 에 올리지 않는다 (.gitignore).
 
     python -m pipeline.02c_external_review export          # 대기 초안이 없으면 아무것도 만들지 않음
     python -m pipeline.02c_external_review import          # review-queue/done/ 결과 반영 (이미 반영된 건 무시)
@@ -76,8 +77,9 @@ def packet_entry(path: Path) -> dict:
 
 
 def already_requested(path: Path) -> bool:
+    """같은 내용으로 요청했고 그 요청 파일이 아직 처리 대기 중이면 True (실패로 파일이 지워졌으면 다시 요청)."""
     req = (load_review(path) or {}).get("external_request") or {}
-    return req.get("draft_hash") == draft_hash(path)
+    return req.get("draft_hash") == draft_hash(path) and (queue_dir("pending") / f"{req.get('packet_id')}.json").exists()
 
 
 def export(out_dir: Path | None = None) -> Path | None:
@@ -152,6 +154,8 @@ def import_result(result_path: Path) -> list[str]:
             continue
         review = merge(path, entry, data.get("reviewer", "claude-code"), data.get("packet_id", result_path.stem))
         lines.append(review_mod.summary_line(review, (load_draft(path).get("shortform") or {}).get("title", "")))
+    pending = queue_dir("pending") / f"{data.get('packet_id', '')}.json"
+    pending.unlink(missing_ok=True)  # 반영이 끝난 요청(출처 본문 사본 포함)은 남기지 않는다
     return lines  # 이미 반영된 초안은 대기 상태가 아니므로 같은 결과를 다시 import 해도 무해하다
 
 

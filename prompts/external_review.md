@@ -42,4 +42,4 @@ Write ONE JSON file to `review-queue/done/{{packet_id}}.result.json`, copying `d
   ]
 }
 ```
-Then delete `review-queue/pending/{{packet_id}}.json` in the same commit.
+Write only that one file. Do not modify drafts, code, or any other file, and do not commit anything.

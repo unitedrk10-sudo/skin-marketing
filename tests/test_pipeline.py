@@ -392,6 +392,8 @@ def test_export_packet_and_no_duplicate_export(external):
     assert "page_excerpt" in entry["sources"][0] and entry["needs_cross_review"]
     assert "NON-NEGOTIABLE CONTENT RULES" in packet["instructions"] and packet["packet_id"] in packet["instructions"]
     assert external_mod.export() is None  # 이미 요청한 초안은 다시 내보내지 않는다
+    packet_path.unlink()  # claude -p 실패 시 스크립트가 요청 파일을 버린다
+    assert external_mod.export() is not None  # → 다음 실행 때 재요청
 
 
 def _result(packet, verdict="supported", findings=()):
@@ -420,6 +422,7 @@ def test_import_regrades(external, tmp_path, verdict, findings, grade):
     assert "page_excerpt" not in review["sources"][0]
     assert not any(f["severity"] == "pending" for f in review["findings"])
     assert external_mod.import_result(result_path) == []  # 두 번 반영해도 무해
+    assert not list((tmp_path / "review-queue" / "pending").glob("*.json"))  # 반영 후 요청 파일 삭제
 
 
 def test_import_skips_drafts_changed_after_export(external, tmp_path):

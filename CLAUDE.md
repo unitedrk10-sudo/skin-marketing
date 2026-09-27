@@ -31,9 +31,10 @@
 - 테스트는 `llm.set_backend()` 로 가짜 LLM 을 쓰고 `SKIN_CONTENT_DIR`/`SKIN_LOG_DIR` 로 임시 폴더를 쓴다.
 
 ## 검수 요청 처리 (Claude Code 가 운영 검수를 맡는 유일한 작업)
-검수 단계(`source_check`, `cross_review`)는 `provider: claude_code` — Anthropic API 대신 Claude Code 세션이 한다. "검수해줘" 요청을 받거나 `review-queue/pending/*.json` 이 있으면:
-1. `git pull` 후 `review-queue/pending/` 의 요청 파일을 읽는다. 파일 안 `instructions` 가 기준이다 (기획서 7장 규칙 + 출력 형식).
+검수 단계(`source_check`, `cross_review`)는 `provider: claude_code` — Anthropic API 대신 Claude Code 가 한다.
+Hermes 크론이 `hermes/run_claude_review.sh` 로 같은 머신에서 `claude -p` 를 실행해 요청한다 (git 으로 주고받지 않음).
+요청을 받으면:
+1. 지정된 `review-queue/pending/<packet_id>.json` 을 읽는다. 파일 안 `instructions` 가 기준이다 (기획서 7장 규칙 + 출력 형식).
 2. 초안마다 ② `sources[].page_excerpt` 로 사실별 supported/weak/unsupported 판정(페이지 본문만 근거, 외부 지식 금지), ③ 대본·블로그 교차 검수.
-3. 결과를 `review-queue/done/<packet_id>.result.json` 에 쓰고, 요청 파일은 같은 커밋에서 삭제, 작업 브랜치 규칙에 따라 푸시한다. 2주 지난 `done/` 결과도 이때 지운다.
-4. 사용자에게 초안별 판정 요약(⛔/⚠️/✅ 예상과 핵심 지적)을 알려준다. 등급 확정·승인은 Hermes 의 import 와 사람이 한다.
-- 초안을 직접 고치지 않는다. 판정이 애매하면 weak/minor 로 두고 사람이 보게 한다.
+3. 결과를 `review-queue/done/<packet_id>.result.json` 한 파일에만 쓴다. 초안·코드·다른 파일은 건드리지 않고 커밋하지 않는다. 반영·정리는 Hermes 의 `import` 가 한다.
+- 판정이 애매하면 weak/minor 로 두고 사람이 보게 한다.

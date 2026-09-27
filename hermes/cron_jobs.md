@@ -1,18 +1,17 @@
 # Hermes 크론 작업 정의
 
 작업 디렉터리는 저장소 루트. 모든 스크립트는 실패 시 0이 아닌 종료 코드 + stderr 원인 로그를 남긴다 → 0이 아니면 텔레그램 실패 알림.
-환경변수: `GEMINI_API_KEY`, `LAW_API_OC` (저장소·로그에 남기지 않는다). `ANTHROPIC_API_KEY` 는 쓰지 않는다 — 검수(②본문 대조·③교차 검수)는 Claude Code 가 저장소의 검수 요청 파일로 처리한다.
-Hermes 는 이 저장소 클론에서 실행하며 `review-queue/` 를 커밋·푸시할 권한이 있어야 한다.
+환경변수: `GEMINI_API_KEY`, `LAW_API_OC` (저장소·로그에 남기지 않는다). `ANTHROPIC_API_KEY` 는 쓰지 않는다 — 검수(②본문 대조·③교차 검수)는 같은 머신의 Claude Code CLI(`claude -p`, Pro 로그인)가 한다.
+Hermes 는 이 저장소 클론(main)에서 실행한다. 코드 업데이트는 `git pull --ff-only`.
 
 | 이름 | 스케줄 | 모드 | 명령 | 결과 처리 |
 |---|---|---|---|---|
 | weekly-topics | 월 09:00 | no-agent | `python -m pipeline.01_topics` | stdout 을 텔레그램으로 전송. 사람이 번호로 답장 → `draft-generate` 실행 |
 | draft-generate | 주제 선택 답장 직후 | no-agent | `python -m pipeline.02_draft --week <주차> --pick <번호>` | 이어서 `auto-review` 실행 |
-| auto-review | draft-generate 직후 | no-agent | `python -m pipeline.02b_auto_review --auto-regenerate` | 이어서 `external-export` 실행 |
-| external-export | auto-review 직후 | no-agent | `git pull --ff-only && python -m pipeline.02c_external_review export` | 출력이 `review-queue/pending/…json` 이면 `git add review-queue/pending && git commit -m "review request <파일명>" && git push`. 텔레그램에 "Claude Code 검수 요청 올림" 알림 |
-| external-import | 매시 정각 (월~수) | no-agent | `git pull --ff-only && python -m pipeline.02c_external_review import` | 출력이 있을 때만 이어서 `review-request` 실행 (없으면 아무것도 보내지 않음) |
-| review-request | external-import 출력이 있을 때 | no-agent | `python -m pipeline.03_review list` | stdout + 각 초안의 `script.md`, `blog.md` 첨부해 텔레그램 전송 |
-| review-reply | 텔레그램 검수 답장 수신 시 | 에이전트 (review_handler 스킬) | `python -m pipeline.03_review apply "<정규화된 답장>"` | 종료 코드 2 → 스킬 규칙대로 다시 질문. 수정 요청이 있었으면 재생성된 초안이 ⏳ 가 되므로 `external-export` 부터 다시 |
+| auto-review | draft-generate 직후 | no-agent | `python -m pipeline.02b_auto_review --auto-regenerate` | 이어서 `claude-review` 실행 |
+| claude-review | auto-review 직후 | no-agent | `hermes/run_claude_review.sh` | 검수 요청 export → `claude -p` 검수 → import. 수 분 걸릴 수 있음(타임아웃 20분 권장). 이어서 `review-request` 실행 |
+| review-request | claude-review 직후 | no-agent | `python -m pipeline.03_review list` | stdout + 각 초안의 `script.md`, `blog.md` 첨부해 텔레그램 전송 |
+| review-reply | 텔레그램 검수 답장 수신 시 | 에이전트 (review_handler 스킬) | `python -m pipeline.03_review apply "<정규화된 답장>"` | 종료 코드 2 → 스킬 규칙대로 다시 질문. 수정 요청이 있었으면 재생성된 초안이 ⏳ 가 되므로 `claude-review` → `review-request` 다시 |
 | preview-request | 수 (렌더링 후) | no-agent | `python -m pipeline.03_review list --stage rendered` | 영상 파일 첨부 전송 (`04_render_video` 구현 후) |
 | preview-reply | 게시 확인 답장 수신 시 | 에이전트 | `python -m pipeline.03_review apply "<답장>" --stage rendered` | |
 | law-sync | 월 08:00 | no-agent | `python -m pipeline.law_sync` | `legal/changes.md` 가 생기면 내용 전송 |
@@ -20,6 +19,7 @@ Hermes 는 이 저장소 클론에서 실행하며 `review-queue/` 를 커밋·�
 - `주차`는 `content/topics/` 에서 가장 최근 파일명(예: `2026-W40`).
 - `02b --auto-regenerate`: ⛔ 차단 초안은 자동 재생성 1회 후 재검수. 그래도 ⛔ 면 그대로 사람 검수로 넘어간다.
 - ⏳ 대기 초안은 Claude Code 결과가 반영되기 전에는 번호로 승인해도 보류된다 (`--confirm` 으로만 강제 승인).
-- Claude Code 쪽 처리 절차는 `CLAUDE.md` 의 "검수 요청 처리" 참고. 결과는 `review-queue/done/<packet_id>.result.json` 으로 푸시된다.
+- Claude Code 쪽 처리 절차는 `CLAUDE.md` 의 "검수 요청 처리" 참고. 요청·결과 파일은 `review-queue/`(git 제외)에 로컬로만 생기고, 반영 후 요청 파일은 삭제된다. `claude -p` 출력 로그: `logs/claude_review_<packet_id>.log`.
+- `claude-review` 가 실패(종료 코드 1)하면 초안은 ⏳ 로 남고 요청 파일은 버려진다. 실패 알림 후 `hermes/run_claude_review.sh` 를 다시 실행하면 같은 초안을 재요청한다.
 - 게시·삭제(06_publish) 등 되돌릴 수 없는 작업은 명령 승인(approval) 대상으로 등록한다.
 - 미구현: `04_render_video`, `05_preview`, `06_publish`, `07_report` (TTS·합성·예약 게시 도구 선정 후).
