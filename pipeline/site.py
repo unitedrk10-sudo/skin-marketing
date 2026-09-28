@@ -22,11 +22,12 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+import urllib.parse
 from urllib.parse import urlparse
 
 import markdown
 
-from pipeline import sponsors, tracker
+from pipeline import clinics, sponsors, tracker
 from pipeline.common import ROOT, content_dir, draft_dirs, get_logger, load_draft, load_json, load_yaml, run_cli, save_json, slugify
 
 log = get_logger("site")
@@ -36,6 +37,7 @@ PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
 REGISTRY_URL = "https://www.medicalkorea.or.kr/en/registeredhospitals"
 REGISTRY_AXES = {"procedure", "price_guide", "how_to", "procedure_travel", "travel_guide", "review_curation", "trend"}
 REGISTRY_KEY = "_registry"
+CLINIC_LIST_AXES = {"procedure_travel", "travel_guide"}  # 코스 주변 피부과 목록을 붙이는 글 (중립 여행 글만)
 FACT_REF = re.compile(r"\s?\[(F\d+)\]")
 FAQ_HEADING = re.compile(r"^##\s+.*\b(FAQ|Frequently Asked Questions)\b", re.I | re.M)
 SAFE_HREF = re.compile(r"^(https?://|/|#|mailto:)", re.I)
@@ -253,6 +255,37 @@ def registry_box(registry_url: str | None) -> str:
             f'registry</a>. We don\'t recommend or rank individual clinics.</aside>')
 
 
+def clinic_directory_html(post: dict) -> str:
+    """여행 글 코스 주변 피부과 전부 (심평원 공공데이터, 거리순, 추천·순위 없음, 광고주 표시). pipeline/clinics.py"""
+    draft = post["draft"]
+    text = " ".join([draft["blog"].get("title", ""), " ".join((draft.get("topic") or {}).get("keywords", [])),
+                     draft["blog"].get("markdown", "")])
+    stops = clinics.directory(text)
+    if not stops:
+        return ""
+    esc = html.escape
+    parts = []
+    for stop in stops:
+        rows = []
+        for c in stop["clinics"]:
+            ad = c["advertiser"]
+            tag = f' <span class="badge">Advertiser</span>' if ad else ""
+            maps = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(f"{c['name']} {c['addr']}")
+            rows.append(f'<li>{esc(c["name"])}{tag} <span class="meta">{esc(c["type"])} · {esc(c["district"])} · '
+                        f'{c["distance_m"]} m · <a href="{esc(maps)}" rel="nofollow noopener" target="_blank">map</a></span></li>')
+        shown = len(stop["clinics"])
+        count = (f"all {stop['total']}" if shown == stop["total"] else f"the {shown} closest of {stop['total']}")
+        parts.append(f'<details><summary>Near {esc(stop["name"])}: {count} clinics offering dermatology within '
+                     f'{stop["radius_m"]} m</summary><ol>{"".join(rows)}</ol></details>')
+    fetched = max(s["fetched_at"] for s in stops)
+    return (f'<section class="box clinics"><h2>Dermatology clinics near this route</h2>'
+            f'<p class="meta">Every clinic listed in the Korean government\'s public health-insurance facility data (HIRA) '
+            f'with a dermatology department within the radius, sorted by distance only (as of {esc(fetched)}). '
+            f'We do not recommend, rank or review clinics; names are shown in Korean as registered. '
+            f'"Advertiser" marks clinics that pay us for labeled ads — it does not change their place in the list. '
+            f'Check a clinic\'s status on the official registry before booking.</p>{"".join(parts)}</section>')
+
+
 def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None) -> str:
     draft = post["draft"]
     blog = draft["blog"]
@@ -268,6 +301,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
 <p class="meta">{badge}{esc(post['date'][:10])} · {esc(cfg['byline'])} · Based on publicly available sources</p>
 {body_html}
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
+{clinic_directory_html(post) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
 <section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article>"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
     return page(cfg, f"{blog.get('title', '')} | {cfg['name']}", body, path=f"/{post['slug']}/",
@@ -303,11 +337,14 @@ with the claim, and a second AI model from a different company reviews it.</li>
 side effects vary from person to person — always consult a licensed doctor.</p>
 <h2>What we never do</h2>
 <ul><li>No clinic rankings, "best clinic" lists, patient testimonials or before-and-after photos.</li>
-<li>No clinic names or booking links in our independent guides, and no payment from clinics for those guides.</li></ul>
+<li>No clinic recommendations or booking links in our independent guides, and no payment from clinics for those guides.</li>
+<li>Route guides may end with a list of every clinic with a dermatology department near the route, taken from Korean
+government public data and sorted by distance only. Clinics cannot pay to be added, removed or moved in that list;
+advertisers are marked.</li></ul>
 <h2>Sponsored posts</h2>
 <p>Some posts are advertisements paid for by a licensed clinic at a flat fee, or produced free of charge during a short
 partner pilot. They are always labeled <em>Sponsored</em> or <em>Partner</em> and as an advertisement at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
-sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, our independent guides.</p>"""
+sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, the text of our independent guides.</p>"""
     return page(cfg, f"About — {cfg['name']}", body, path="/about/")
 
 

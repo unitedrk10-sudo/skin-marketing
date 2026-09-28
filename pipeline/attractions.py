@@ -80,7 +80,8 @@ Route rules: on a procedure day, choose only indoor, low-activity places near wh
 a procedure (the observation day), use ONLY places marked "OK for the observation day". Places with strong sun, sauna/heat, hikes,
 day trips or another city go on later days, and say to follow the treating clinic's aftercare advice. Group places by area to
 limit travel time. {guide}Present places neutrally — no rankings or "best", no paid placements. Restaurants and cafes only as
-unpaid editorial examples backed by an independent source (see the rules).
+unpaid editorial examples backed by an independent source (see the rules). Do not name or recommend any clinic: a list of
+every nearby clinic from public data is added below the article automatically.
 {food}"""
 
 
