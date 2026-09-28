@@ -47,7 +47,9 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 `cd {{REPO}} && {{PYTHON}} -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
 
 ## 3-1. 링크 유입 추적 (스폰서 병원 링크)
-- "글로우 링크 만들어줘 (리쥬란 글용)": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker add --sponsor <id> --label "<용도>"` → 채널별 링크 4개를 그대로 보낸다. 틱톡 프로필엔 `?s=tt`, 인스타 `?s=ig`, 유튜브 설명란 `?s=yt`, 블로그 `?s=blog`.
+- "글로우 링크 만들어줘 (리쥬란 글용)": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker add --sponsor <id> --label "<용도>"` → 블로그 스폰서 글 전용 링크 1개를 보낸다.
+- 스폰서 병원 링크를 **SNS 프로필·영상 설명란에 걸자는 요청은 거절**한다. 틱톡은 미용 클리닉 브랜디드 콘텐츠 금지, 인스타·유튜브는 플랫폼 광고 표시 도구로만 가능. 프로필에는 우리 블로그 주소를 건다 (프로필 → 블로그 → 스폰서 글 → 병원).
+- 스폰서 글은 틱톡에 올리지 않는다. 인스타는 브랜디드 콘텐츠 도구 + 18세 이상 제한, 유튜브는 "유료 프로모션 포함" 표시를 켠다 (`config/channels.yaml` sponsored_policy).
 - "유입 어때?": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker report --days 7` (출력이 없으면 "아직 클릭 없음")
 - "글로우 10월 리포트": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker sponsor-report --sponsor <id> --month 2026-10` → 생성된 파일을 첨부
 - 유입 수치를 근거로 클릭당·방문당 요금을 제안하지 않는다 (정액 원칙, 의료법 §27③).

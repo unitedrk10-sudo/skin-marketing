@@ -697,3 +697,21 @@ def test_tracker_report_silent_when_unconfigured(monkeypatch, capsys):
     monkeypatch.delenv("TRACKER_URL", raising=False)
     assert tracker_mod.main(["report"]) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_sponsored_draft_records_platform_policy(sponsored):
+    draft_id = make_sponsored(sponsored)
+    draft = common.load_draft(common.content_dir("drafts") / draft_id)
+    assert "tiktok" in draft["platforms"]["blocked"] and "tiktok" not in draft["platforms"]["allowed"]
+    assert "blog" in draft["platforms"]["allowed"]
+    assert any("18" in r for r in draft["platforms"]["requires"]["instagram"])
+    review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
+    assert "tiktok 게시 불가" in human_mod.list_message("drafts")
+
+
+def test_tracker_sponsor_link_is_blog_only(env, tmp_path, monkeypatch, capsys):
+    write_sponsors(tmp_path, SPONSOR)
+    monkeypatch.setattr(tracker_mod, "_request", lambda *a, **k: {"code": "abc234", "url": "https://go.example/abc234"})
+    tracker_mod.main(["add", "--sponsor", "glow", "--label", "x"])
+    out = capsys.readouterr().out
+    assert "?s=blog" in out and "?s=tt" not in out and "?s=ig" not in out

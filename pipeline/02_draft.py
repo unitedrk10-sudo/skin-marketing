@@ -182,6 +182,7 @@ def create_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str
     draft = compose(topic, sponsor=sponsor)
     draft.update({"id": draft_id, "week": iso_week(), "content_type": "sponsored", "created_at": now_iso(),
                   "revisions": [], "regenerated": 0})
+    draft["platforms"] = sponsors.platform_policy()  # 06_publish 가 따를 채널 제한 (틱톡 불가 등)
     write_files(path, draft)
     log.info("스폰서 초안 생성: %s (%s)", draft_id, sponsor["name_en"])
     return draft_id
@@ -197,6 +198,8 @@ def revise(draft_id: str, note: str, auto: bool = False) -> str:
     draft = compose(old["topic"], note, sponsor)
     for key in ("id", "week", "content_type", "created_at"):
         draft[key] = old[key]
+    if sponsor:
+        draft["platforms"] = sponsors.platform_policy()
     draft["revisions"] = old.get("revisions", []) + [{"at": now_iso(), "note": note, "auto": auto}]
     draft["regenerated"] = old.get("regenerated", 0) + (1 if auto else 0)
     write_files(path, draft)

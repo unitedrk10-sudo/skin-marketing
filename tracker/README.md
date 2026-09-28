@@ -35,7 +35,8 @@ python -m pipeline.tracker report --days 7                               # 주�
 python -m pipeline.tracker sponsor-report --sponsor glow --month 2026-10 # reports/sponsors/glow-2026-10.md
 ```
 - 링크 대상은 스폰서의 공식 사이트(또는 하위 도메인)만 허용.
-- 틱톡·인스타 프로필 링크와 유튜브 설명란에는 해당 채널용(`?s=tt` 등) 링크를 쓴다. 앱 내 브라우저는 리퍼러를 안 보내는 경우가 많아 `?s=` 가 가장 정확하다.
+- **스폰서 병원 링크는 블로그 스폰서 글 안에만** 건다 (`add --sponsor` 는 `?s=blog` 링크만 출력). SNS 프로필·설명란에 대가 관계 병원 링크를 거는 것은 브랜디드 콘텐츠로 볼 여지가 있고, 틱톡은 미용 클리닉 브랜디드 콘텐츠를 금지한다. SNS 프로필에는 우리 블로그 주소를 건다 → 블로그를 거쳐 온 클릭은 리퍼러로 `blog` 로 분류된다.
+- 스폰서가 아닌 일반 링크(`--target` 만)는 채널별(`?s=tt|ig|yt|blog`) 링크를 출력한다.
 - AI 검색(ChatGPT·Perplexity·Gemini·Claude 등) 답변 안의 링크로 들어온 클릭은 리퍼러로 `ai` 로 분류된다.
 
 ## 개발
