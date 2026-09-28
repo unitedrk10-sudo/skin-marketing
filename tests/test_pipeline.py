@@ -817,7 +817,7 @@ def test_seed_topics_are_valid_and_compliant():
 def test_from_seed_order_and_reuse(env):
     week1 = topics_mod.from_seed("2026-W40", 3)
     ids = [t["seed_id"] for t in week1["topics"]]
-    assert ids[0] == "rejuran-explained"                                   # 수요 점수 높은 순 (관심도 5 + wave 1)
+    assert "rejuran-explained" in ids                                      # 관심도 5 + wave 1
     scores = [t["demand"]["score"] for t in week1["topics"]]
     assert scores == sorted(scores, reverse=True) and "관심도" in week1["topics"][0]["demand"]["reason"]
     assert "📈 수요" in topics_mod.telegram_message("2026-W40", week1["topics"])
@@ -1059,8 +1059,70 @@ def test_procedure_travel_itinerary_needs_observation_day():
 def test_travel_topics_compete_on_attraction_demand(env):
     tables = demand_mod.all_scores()
     score, focus, why = demand_mod.topic_score({"title": "Seongsu-dong and Seoul Forest: a half-day guide"}, tables)
-    assert focus == "attractions:seongsu" and score == 1.0 and "Seongsu" in why
+    assert focus == "attractions:seongsu" and score >= 1.0 and "Seongsu" in why
     assert demand_mod.topic_score({"title": "Your first consultation"}, tables)[1] == "procedures:other"
     assert "Places & areas:" in demand_mod.prompt_block(tables)
     week = topics_mod.from_seed("2026-W40", 6, tables)
     assert any(t["axis"] == "travel_guide" for t in week["topics"])
+
+
+# ---- 관광지 트렌드 ----
+
+trends_mod = importlib.import_module("pipeline.trends")
+TREND_SCAN = {
+    "attractions": [
+        {"id": "ddp", "trend": 90, "why": "Viral light show", "sources": ["https://english.visitseoul.net/x"]},
+        {"id": "hongdae", "trend": 80, "why": "no source", "sources": []},
+        {"id": "unknown-place", "trend": 99, "why": "x", "sources": ["https://a.example"]},
+    ],
+    "emerging": [
+        {"name": "Seoul Autumn Pop-up", "area": "Seongsu", "trend": 85, "why": "Pop-up trending on TikTok",
+         "sources": ["https://news.example/popup"], "until": "2099-12-31",
+         "topic": {"title": "The autumn pop-up everyone visits in Seongsu", "angle": "What it is and how to visit",
+                   "keywords": ["seongsu pop-up"], "hook": "Seen this pop-up?"}},
+        {"name": "Ended Fest", "area": "Seoul", "trend": 95, "why": "over", "sources": ["https://news.example/f"],
+         "until": "2020-01-01", "topic": {"title": "t", "angle": "a"}},
+    ],
+}
+
+
+def test_trend_scan_keeps_only_sourced_current_items(env):
+    env.responses["trends"] = TREND_SCAN
+    data = trends_mod.scan("2026-W40")
+    assert set(data["attractions"]) == {"ddp"}                              # 출처 없음·모르는 id 제외
+    assert [e["name"] for e in data["emerging"]] == ["Seoul Autumn Pop-up"]  # 끝난 행사 제외
+    assert env.calls[0][0] == "trends" and "Known places" in env.calls[0][1] and "- ddp:" in env.calls[0][1]
+    assert trends_mod.latest()["week"] == "2026-W40"
+    assert trends_mod.ensure_fresh()["week"] == "2026-W40" and len(env.calls) == 1   # 최근 스캔 있으면 다시 안 함
+
+
+def test_trend_and_season_raise_attraction_scores(env):
+    today = date(2026, 9, 28)
+    before = demand_mod.scores(today, "attractions")
+    assert before["ddp"]["trend"] == 0
+    assert before["gyeongbokgung"]["season"] and not before["jjimjilbang"]["season"]   # 9~10월 궁 시즌, 찜질방 겨울
+    assert before["jjimjilbang"]["score"] < before["gyeongbokgung"]["score"]
+    winter = demand_mod.scores(date(2026, 12, 10), "attractions")
+    assert winter["jjimjilbang"]["season"] and winter["jjimjilbang"]["score"] > before["jjimjilbang"]["score"]
+    env.responses["trends"] = TREND_SCAN
+    trends_mod.scan("2026-W40")
+    after = demand_mod.scores(date.today(), "attractions")
+    assert after["ddp"]["trend"] == 90 and after["ddp"]["score"] > before["ddp"]["score"]
+    assert "🔥 트렌드 90" in demand_mod.reason(after["ddp"])
+    block = demand_mod.prompt_block(demand_mod.all_scores())
+    assert "Trending right now" in block and "Seoul Autumn Pop-up" in block
+
+
+def test_emerging_places_become_topic_candidates(env):
+    env.responses["trends"] = TREND_SCAN
+    trends_mod.scan("2026-W40")
+    week = topics_mod.from_seed("2026-W40", 40)
+    popup = [t for t in week["topics"] if t["seed_id"].startswith("trend-")]
+    assert popup and popup[0]["axis"] == "travel_guide" and popup[0]["sources"][0]["url"] == "https://news.example/popup"
+    assert "🔥" in popup[0]["demand"]["reason"]
+
+
+def test_old_trend_scan_is_ignored(env):
+    env.responses["trends"] = TREND_SCAN
+    trends_mod.scan("2026-W40")
+    assert trends_mod.latest(date.today() + timedelta(days=30)) is None

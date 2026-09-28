@@ -13,6 +13,12 @@ stages:
     search: true
     temperature: 0.8
 
+  trends:          # 01 관광지 트렌드 스캔 (주 1회, 외국인 사이 지금 뜨는 곳·행사 — pipeline/trends.py)
+    provider: gemini
+    model: gemini-2.5-flash
+    search: true
+    temperature: 0.3
+
   research:        # 02 사실 수집 (모든 사실에 출처 URL)
     provider: gemini
     model: gemini-2.5-pro

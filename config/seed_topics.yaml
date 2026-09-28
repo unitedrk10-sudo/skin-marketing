@@ -479,3 +479,12 @@ topics:
     has_price: false
     sources:
       - https://english.seoul.go.kr/foreign-tourists-enjoying-k-culture-and-k-hiking-in-seoul-tourists-in-every-nook-and-cranny-of-the-city/
+  - id: seoul-autumn-foliage
+    wave: 1
+    axis: travel_guide
+    title: "Seoul autumn foliage: when and where, with a skin-trip twist"
+    angle: "Typical foliage timing in Seoul, easy viewing spots (palaces, Namsan, city parks) versus hikes, and how to fit leaf-peeping around the sun and exercise limits after a treatment."
+    why_now: "Seasonal: autumn is a peak travel season and foliage searches rise from September."
+    keywords: [seoul autumn foliage, fall leaves korea, namsan autumn, bukhansan autumn, korea foliage forecast]
+    hook: "Fall leaves in Seoul — right after your laser?"
+    has_price: false

@@ -51,6 +51,7 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - 스폰서 병원 링크를 **SNS 프로필·영상 설명란에 걸자는 요청은 거절**한다. 틱톡은 미용 클리닉 브랜디드 콘텐츠 금지, 인스타·유튜브는 플랫폼 광고 표시 도구로만 가능. 프로필에는 우리 블로그 주소를 건다 (프로필 → 블로그 → 스폰서 글 → 병원).
 - 스폰서 글은 틱톡에 올리지 않는다. 인스타는 브랜디드 콘텐츠 도구 + 18세 이상 제한, 유튜브는 "유료 프로모션 포함" 표시를 켠다 (`config/channels.yaml` sponsored_policy).
 - "유입 어때?": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker report --days 7` (출력이 없으면 "아직 클릭 없음")
+- "요즘 뜨는 관광지?" / "관광지 트렌드": `cd {{REPO}} && {{PYTHON}} -m pipeline.trends show` (새로 조사: `scan`) → 출력 그대로 전달
 - "유입 분석 / 영업 자료 뽑아줘 (10월)": `cd {{REPO}} && {{PYTHON}} -m pipeline.analytics report --month 2026-10` (기간 지정: `--days 90`) → 요약 줄을 보내고 생성된 .md·.csv 를 첨부. 다른 병원에 보여줄 자료에는 파일럿 병원명·병원별 수치를 빼라고 안내.
 - "글로우 10월 리포트": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker sponsor-report --sponsor <id> --month 2026-10` → 생성된 파일을 첨부
 - 유입 수치를 근거로 클릭당·방문당 요금을 제안하지 않는다 (정액 원칙, 의료법 §27③).

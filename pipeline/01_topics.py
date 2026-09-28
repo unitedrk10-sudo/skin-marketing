@@ -14,7 +14,7 @@ import argparse
 from collections import Counter
 from datetime import date
 
-from pipeline import demand, llm
+from pipeline import demand, llm, trends
 from pipeline.common import (
     STATES,
     content_dir,
@@ -77,6 +77,14 @@ def annotate(topics: list[dict], tables: dict[str, dict[str, dict]], bonus: dict
     """주제마다 수요 점수·근거를 붙이고 점수 순으로 정렬한다 (bonus: 주제 index → 가산점)."""
     for i, t in enumerate(topics):
         score, focus, why = demand.topic_score(t, tables)
+        hot = t.pop("trend", None)  # 트렌드 스캔의 신규 장소
+        if hot:
+            hot_score = demand.EMERGING_PRIOR + demand.TREND_BOOST * hot["score"]
+            label = f"🔥 신규 트렌드: {hot['name']} ({round(hot['score'] * 100)})"
+            if hot_score > score:
+                score, focus, why = hot_score, t["seed_id"], label
+            else:
+                why = f"{why} · {label}"
         t["demand"] = {"score": round(score + (bonus or {}).get(i, 0), 3), "focus": focus, "reason": why}
     return sorted(topics, key=lambda t: -t["demand"]["score"])  # 동점은 원래 순서
 
@@ -99,6 +107,7 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
     seeds = load_yaml("seed_topics.yaml").get("topics", [])
     used = used_seed_ids()
     fresh = [s for s in seeds if s["id"] not in used]
+    hot = [t for t in trends.emerging_topics(trends.latest()) if t["seed_id"] not in used]  # 이번 주 뜨는 신규 장소
     if not fresh:
         return None
     candidates = []
@@ -108,7 +117,8 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
         topic["seed_id"] = s["id"]
         candidates.append(topic)
     tables = tables or demand.all_scores()
-    ranked = annotate(candidates, tables, {i: WAVE_BONUS.get(s.get("wave", 9), 0) for i, s in enumerate(fresh)})
+    bonus = {i: WAVE_BONUS.get(s.get("wave", 9), 0) for i, s in enumerate(fresh)}
+    ranked = annotate(candidates + hot, tables, bonus)
     return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [],
             "topics": validate(diverse(ranked, count), axes)}
 
@@ -158,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from-seed", type=int, metavar="N", help="조사해 둔 초기 주제 N개 사용 (Gemini 호출 없음)")
     args = parser.parse_args(argv)
 
+    scan = trends.ensure_fresh()  # 관광지 트렌드 주 1회 스캔 (실패해도 계속)
     data = from_seed(args.week, args.from_seed) if args.from_seed else None
     if data is None:
         if args.from_seed:
@@ -167,6 +178,12 @@ def main(argv: list[str] | None = None) -> int:
     save_json(path, data)
     log.info("주제 %d건 저장: %s", len(data["topics"]), path)
     print(telegram_message(args.week, data["topics"]))
+    if scan and (scan["attractions"] or scan["emerging"]):
+        hot = sorted(scan["attractions"].items(), key=lambda x: -x[1]["trend"])[:3]
+        names = load_yaml("attractions.yaml").get("attractions") or {}
+        line = ", ".join(f"{names.get(a, {}).get('name', a)} {t['trend']}" for a, t in hot)
+        new = ", ".join(e["name"] for e in scan["emerging"][:3])
+        print(f"🔥 관광지 트렌드: {line or '-'}" + (f" / 신규: {new}" if new else ""))
     return 0
 
 
