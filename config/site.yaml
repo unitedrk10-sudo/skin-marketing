@@ -12,5 +12,9 @@ byline: Skinbound Editorial Team  # 사람 의사·전문의 명의 금지 (자�
 contact_email: ""                 # 브랜드 이메일 생기면 입력 (소개·개인정보 페이지에 표시)
 cloudflare_project: skin-site     # Cloudflare Pages 프로젝트명 (wrangler pages deploy)
 posts_on_home: 30
+clinic_directory:               # 여행 글 코스 주변 피부과 목록 (pipeline/clinics.py) — 기준을 바꾸면 모든 글에 똑같이 적용
+  radius_m: 700                 # 관광지 중심 반경 — 이 안의 피부과 진료 의료기관 전부
+  max_per_stop: 40              # 관광지당 표시 수 (넘으면 가까운 순으로 자르고 'N곳 중 가까운 M곳' 표시)
+  refresh_days: 30
 analytics_site_tag: ""         # Web Analytics 사이트 태그(site tag) — 주제 추천이 글별 조회수를 읽을 때 사용 (.env CF_API_TOKEN, CF_ACCOUNT_ID)
 analytics_token: ""             # Cloudflare Web Analytics 토큰 (대시보드 → Web Analytics → 사이트 추가) — 방문·AI 유입 집계

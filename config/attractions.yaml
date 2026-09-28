@@ -16,40 +16,41 @@
 #   setting: indoor | outdoor | mixed      sun: low | mid | high (햇빛 노출)      activity: low | mid | high (걷기·땀)
 #   heat: true = 사우나·찜질방·온천 (시술 직후 피함)      zone: gangnam | central | east | west | north | day_trip | other_city
 #   season: 시즌인 달 (벚꽃·단풍·야간개장·해변·겨울 등) — 이번 달·다음 달이 시즌이면 추천 가산점 (pipeline.trends.in_season)
+#   lat/lng: 대략 중심 좌표 (내부용, 글에 쓰지 않음) — 코스 주변 피부과 목록(pipeline/clinics.py, 심평원 공공데이터) 검색 기준점
 #   관찰일 가능 = 실내 또는 햇빛 적음 + 활동 적음 + 열 없음 + 서울 시내 (pipeline.attractions.observation_ok)
 
 attractions:
-  myeongdong:         {name: "Myeongdong", area: "Jung-gu", demand: 5, setting: mixed, sun: mid, activity: low, zone: central,
+  myeongdong:         {name: "Myeongdong", area: "Jung-gu", demand: 5, setting: mixed, sun: mid, activity: low, zone: central, lat: 37.5636, lng: 126.9826,
                        keywords: [myeongdong, myeong-dong, namdaemun]}
-  gyeongbokgung:      {name: "Gyeongbokgung Palace", area: "Jongno-gu", demand: 5, setting: outdoor, sun: high, activity: mid, zone: central, season: [4, 5, 9, 10],
+  gyeongbokgung:      {name: "Gyeongbokgung Palace", area: "Jongno-gu", demand: 5, setting: outdoor, sun: high, activity: mid, zone: central, lat: 37.5796, lng: 126.977, season: [4, 5, 9, 10],
                        keywords: [gyeongbokgung, gyeongbok palace, royal palace, hanbok, changdeokgung, palace]}
-  bukchon:            {name: "Bukchon Hanok Village", area: "Jongno-gu", demand: 4, setting: outdoor, sun: high, activity: mid, zone: central, season: [4, 10, 11],
+  bukchon:            {name: "Bukchon Hanok Village", area: "Jongno-gu", demand: 4, setting: outdoor, sun: high, activity: mid, zone: central, lat: 37.5826, lng: 126.983, season: [4, 10, 11],
                        keywords: [bukchon, hanok village, samcheong]}
-  seongsu:            {name: "Seongsu-dong & Seoul Forest", area: "Seongdong-gu", demand: 5, setting: mixed, sun: mid, activity: low, zone: east, season: [4, 5, 10],
+  seongsu:            {name: "Seongsu-dong & Seoul Forest", area: "Seongdong-gu", demand: 5, setting: mixed, sun: mid, activity: low, zone: east, lat: 37.5446, lng: 127.0557, season: [4, 5, 10],
                        keywords: [seongsu, seoul forest, seongsu-dong]}
-  n_seoul_tower:      {name: "N Seoul Tower & Namsan", area: "Yongsan-gu", demand: 4, setting: mixed, sun: mid, activity: mid, zone: central, season: [4, 10, 11],
+  n_seoul_tower:      {name: "N Seoul Tower & Namsan", area: "Yongsan-gu", demand: 4, setting: mixed, sun: mid, activity: mid, zone: central, lat: 37.5512, lng: 126.9882, season: [4, 10, 11],
                        keywords: [n seoul tower, namsan, namsan tower, seoul tower]}
-  coex:               {name: "COEX & Starfield Library", area: "Gangnam-gu (Samseong)", demand: 4, setting: indoor, sun: low, activity: low, zone: gangnam,
+  coex:               {name: "COEX & Starfield Library", area: "Gangnam-gu (Samseong)", demand: 4, setting: indoor, sun: low, activity: low, zone: gangnam, lat: 37.5116, lng: 127.0595,
                        keywords: [coex, starfield, starfield library, samseong]}
-  gangnam_sinsa:      {name: "Gangnam, Sinsa & Garosu-gil", area: "Gangnam-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: gangnam,
+  gangnam_sinsa:      {name: "Gangnam, Sinsa & Garosu-gil", area: "Gangnam-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: gangnam, lat: 37.521, lng: 127.0229,
                        keywords: [garosu-gil, garosugil, sinsa, apgujeong, cheongdam, gangnam station]}
-  lotte_world_tower:  {name: "Lotte World Tower & Seokchon Lake", area: "Songpa-gu (Jamsil)", demand: 3, setting: indoor, sun: low, activity: low, zone: gangnam, season: [4],
+  lotte_world_tower:  {name: "Lotte World Tower & Seokchon Lake", area: "Songpa-gu (Jamsil)", demand: 3, setting: indoor, sun: low, activity: low, zone: gangnam, lat: 37.5126, lng: 127.1025, season: [4],
                        keywords: [lotte world tower, seoul sky, jamsil, lotte world, seokchon]}
-  hongdae:            {name: "Hongdae & Yeonnam-dong", area: "Mapo-gu", demand: 4, setting: mixed, sun: mid, activity: low, zone: west,
+  hongdae:            {name: "Hongdae & Yeonnam-dong", area: "Mapo-gu", demand: 4, setting: mixed, sun: mid, activity: low, zone: west, lat: 37.5563, lng: 126.9236,
                        keywords: [hongdae, yeonnam, hongik, mangwon]}
-  gwangjang_market:   {name: "Gwangjang Market", area: "Jongno-gu", demand: 4, setting: indoor, sun: low, activity: low, zone: central,
+  gwangjang_market:   {name: "Gwangjang Market", area: "Jongno-gu", demand: 4, setting: indoor, sun: low, activity: low, zone: central, lat: 37.57, lng: 126.9996,
                        keywords: [gwangjang, gwangjang market, bindaetteok]}
-  ddp:                {name: "Dongdaemun Design Plaza (DDP)", area: "Jung-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: central,
+  ddp:                {name: "Dongdaemun Design Plaza (DDP)", area: "Jung-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: central, lat: 37.5667, lng: 127.0095,
                        keywords: [ddp, dongdaemun design plaza, dongdaemun]}
-  insadong_ikseon:    {name: "Insadong & Ikseon-dong", area: "Jongno-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: central,
+  insadong_ikseon:    {name: "Insadong & Ikseon-dong", area: "Jongno-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: central, lat: 37.574, lng: 126.985,
                        keywords: [insadong, ikseon, ikseon-dong, ssamziegil]}
-  the_hyundai:        {name: "The Hyundai Seoul & Yeouido", area: "Yeongdeungpo-gu", demand: 3, setting: indoor, sun: low, activity: low, zone: west,
+  the_hyundai:        {name: "The Hyundai Seoul & Yeouido", area: "Yeongdeungpo-gu", demand: 3, setting: indoor, sun: low, activity: low, zone: west, lat: 37.5259, lng: 126.9284,
                        keywords: [the hyundai seoul, yeouido, ifc mall]}
-  museums:            {name: "Museums (National Museum of Korea, Leeum)", area: "Yongsan-gu", demand: 3, setting: indoor, sun: low, activity: low, zone: central,
+  museums:            {name: "Museums (National Museum of Korea, Leeum)", area: "Yongsan-gu", demand: 3, setting: indoor, sun: low, activity: low, zone: central, lat: 37.5239, lng: 126.9804,
                        keywords: [national museum of korea, leeum, museum, gallery]}
-  han_river:          {name: "Han River parks & cruise", area: "Seoul", demand: 3, setting: outdoor, sun: high, activity: mid, zone: central, season: [4, 5, 6, 9, 10],
+  han_river:          {name: "Han River parks & cruise", area: "Seoul", demand: 3, setting: outdoor, sun: high, activity: mid, zone: central, lat: 37.51, lng: 126.996, season: [4, 5, 6, 9, 10],
                        keywords: [han river, hangang, banpo, river cruise, yeouido park]}
-  naksan_seoul_wall:  {name: "Naksan Park & Seoul City Wall", area: "Jongno-gu", demand: 2, setting: outdoor, sun: high, activity: mid, zone: central, season: [10, 11],
+  naksan_seoul_wall:  {name: "Naksan Park & Seoul City Wall", area: "Jongno-gu", demand: 2, setting: outdoor, sun: high, activity: mid, zone: central, lat: 37.5806, lng: 127.0075, season: [10, 11],
                        keywords: [naksan, city wall, ihwa mural]}
   k_hiking:           {name: "K-hiking (Bukhansan, Inwangsan)", area: "Seoul", demand: 3, setting: outdoor, sun: high, activity: high, zone: north, season: [10, 11],
                        keywords: [bukhansan, inwangsan, hiking, hike]}
@@ -63,5 +64,5 @@ attractions:
                        keywords: [busan, haeundae, gamcheon]}
   jeju:               {name: "Jeju Island", area: "Jeju", demand: 4, setting: outdoor, sun: high, activity: mid, zone: other_city, season: [3, 4, 10],
                        keywords: [jeju]}
-  cheonggyecheon:     {name: "Cheonggyecheon Stream & Seoul Lantern Festival", area: "Jung-gu/Jongno-gu", demand: 3, setting: outdoor, sun: low, activity: low, zone: central, season: [11, 12],
+  cheonggyecheon:     {name: "Cheonggyecheon Stream & Seoul Lantern Festival", area: "Jung-gu/Jongno-gu", demand: 3, setting: outdoor, sun: low, activity: low, zone: central, lat: 37.569, lng: 126.978, season: [11, 12],
                        keywords: [cheonggyecheon, lantern festival, seoul lantern]}

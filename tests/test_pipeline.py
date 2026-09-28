@@ -1178,3 +1178,88 @@ def test_sponsored_course_requires_zone(sponsored):
         worker_mod.request_sponsored("glow", "t", "a", course=True)
     with pytest.raises(sponsors_mod.SponsorError, match="zone"):
         sponsors_mod.validate({**SPONSOR, "zone": "mars"})
+
+
+# ---- 코스 주변 피부과 목록 (심평원 공공데이터) ----
+
+clinics_mod = importlib.import_module("pipeline.clinics")
+
+
+def _hira_item(name, lat, lng, url=""):
+    return {"yadmNm": name, "clCdNm": "의원", "addr": f"서울 강남구 {name}", "sgguCdNm": "강남구", "emdongNm": "삼성동",
+            "XPos": str(lng), "YPos": str(lat), "hospUrl": url}
+
+
+def test_hira_fetch_reads_all_pages_sorted_by_distance(monkeypatch):
+    pages = {1: {"totalCount": 600, "items": {"item": [_hira_item("먼피부과의원", 37.5150, 127.0595),
+                                                        _hira_item("가까운피부과의원", 37.5117, 127.0596)]}},
+             2: {"totalCount": 600, "items": {"item": _hira_item("중간피부과의원", 37.5130, 127.0595)}}}  # 1건이면 dict
+    calls = []
+    monkeypatch.setattr(clinics_mod, "_get", lambda params: calls.append(params) or pages[params["pageNo"]])
+    rows = clinics_mod.fetch_near(37.5116, 127.0595, 700)
+    assert [c["name"] for c in rows] == ["가까운피부과의원", "중간피부과의원", "먼피부과의원"]
+    assert len(calls) == 2 and calls[0]["dgsbjtCd"] == "14" and calls[0]["radius"] == 700
+    assert calls[0]["xPos"].startswith("127.0595") and calls[0]["yPos"].startswith("37.5116")
+    assert rows[0]["district"] == "강남구 삼성동" and rows[0]["distance_m"] < rows[1]["distance_m"]
+
+
+def _clinic_cache(env_tmp, clinics_list):
+    common.save_json(common.content_dir() / "clinics" / "coex.json",
+                     {"attraction": "coex", "fetched_at": "2026-09-28T00:00:00+00:00", "radius_m": 700, "source": "HIRA",
+                      "clinics": clinics_list})
+
+
+def _travel_post(env):
+    env.responses["blog"] = blog("# Indoor Gangnam\n\nCOEX and Starfield Library are indoors [F1]. Results vary; ask a licensed doctor.\n\n"
+                                 + DISCLOSURE)
+    topic = {**TOPICS["topics"][0], "title": "Indoor Gangnam: COEX", "axis": "travel_guide", "keywords": ["coex"]}
+    draft_id = draft_mod.create("2026-W40", 1, topic)
+    return {"draft": common.load_draft(common.content_dir("drafts") / draft_id), "slug": "x", "date": "2026-10-01"}
+
+
+def test_route_post_lists_every_nearby_clinic_with_advertiser_label(sponsored, tmp_path):
+    write_sponsors(tmp_path, SPONSOR)
+    near = [{"name": "가까운피부과의원", "type": "의원", "addr": "서울 강남구 A", "district": "강남구 삼성동", "url": "",
+             "lat": 0, "lng": 0, "distance_m": 80},
+            {"name": "글로우피부과의원", "type": "의원", "addr": "서울 강남구 B", "district": "강남구 삼성동",
+             "url": "http://www.glow-clinic.example", "lat": 0, "lng": 0, "distance_m": 150},
+            {"name": "먼피부과의원", "type": "병원", "addr": "서울 강남구 C", "district": "강남구 대치동",
+             "url": "https://far.example", "lat": 0, "lng": 0, "distance_m": 690}]
+    _clinic_cache(tmp_path, near)
+    post = _travel_post(sponsored)
+    cfg = {**common.load_yaml("site.yaml"), "domain": ""}
+    out = site_mod.render_post(cfg, post)
+    assert "Dermatology clinics near this route" in out and "all 3 clinics" in out
+    assert out.index("가까운피부과의원") < out.index("글로우피부과의원") < out.index("먼피부과의원")   # 거리순 그대로
+    assert out.count("Advertiser</span>") == 1 and "글로우피부과의원 <span class=\"badge\">Advertiser" in out
+    assert "far.example" not in out and "glow-clinic.example" not in out                           # 병원 사이트 링크 없음
+    assert "google.com/maps/search" in out
+    orig = clinics_mod.settings
+    clinics_mod.settings = lambda: {**orig(), "max_per_stop": 2}  # 표시 수를 줄여도 가까운 순으로 자르고 밝힌다
+    try:
+        assert "the 2 closest of 3" in site_mod.render_post(cfg, post)
+    finally:
+        clinics_mod.settings = orig
+
+
+def test_no_clinic_list_in_sponsored_or_non_travel_posts(sponsored, tmp_path):
+    _clinic_cache(tmp_path, [{"name": "가까운피부과의원", "type": "의원", "addr": "a", "district": "d", "url": "",
+                              "lat": 0, "lng": 0, "distance_m": 80}])
+    cfg = {**common.load_yaml("site.yaml"), "domain": ""}
+    sp = {"draft": common.load_draft(common.content_dir("drafts") / make_sponsored(sponsored)), "slug": "s", "date": "2026-10-01"}
+    sp["draft"]["blog"]["markdown"] += " Near COEX."
+    assert "near this route" not in site_mod.render_post(cfg, sp)
+    neutral = {"draft": {**sp["draft"], "sponsor": None, "content_type": "procedure"}, "slug": "n", "date": "2026-10-01"}
+    assert "near this route" not in site_mod.render_post(cfg, neutral)
+    assert "Do not name or recommend any clinic" in attractions_mod.context({"title": "COEX", "axis": "travel_guide"})
+
+
+def test_clinic_refresh_needs_key_and_skips_fresh_cache(env, monkeypatch, tmp_path):
+    monkeypatch.delenv("DATA_GO_KR_KEY", raising=False)
+    assert clinics_mod.main(["refresh"]) == 0                        # 키 없으면 조용히
+    monkeypatch.setenv("DATA_GO_KR_KEY", "k")
+    calls = []
+    monkeypatch.setattr(clinics_mod, "fetch_near", lambda lat, lng, r: calls.append((lat, lng)) or [])
+    done = clinics_mod.refresh()
+    assert "coex" in done and "jeju" not in done and len(calls) == len(done)
+    assert clinics_mod.refresh() == {}                                # 30일 안이면 다시 안 부름
