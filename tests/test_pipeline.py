@@ -1467,3 +1467,25 @@ def test_publish_only_touches_ready_to_publish(env):
     with pytest.raises(ValueError, match="ready_to_publish"):
         publish_mod.kit(path)
     assert publish_mod.kits_message() == "" and publish_mod.status_message() == "게시 대기 없음"
+
+
+# ---- 07 주간 리포트 ----
+
+report_mod = importlib.import_module("pipeline.07_report")
+
+
+def test_weekly_report_counts_pipeline_activity(env, monkeypatch, tmp_path):
+    approved = make_draft(env)
+    review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
+    _approve(env, approved)
+    _ready("2026-W40-09-posted")
+    publish_mod.kit(common.content_dir("ready_to_publish") / "2026-W40-09-posted")
+    publish_mod.done("2026-W40-09-posted", "tiktok", "https://www.tiktok.com/@s/video/1")
+    data = report_mod.collect(7)
+    assert data["created"] >= 1 and data["moves"]["approved"] == 1 and data["posts"]["tiktok"] == 1
+    assert data["waiting"]["ready_to_publish"] == 1
+    monkeypatch.setattr(report_mod, "ROOT", tmp_path)
+    monkeypatch.setattr(report_mod, "extras", lambda: ["🌐 블로그 글 1개 (스폰서 0)"])
+    assert report_mod.main([]) == 0
+    text = next((tmp_path / "reports" / "weekly").glob("*.md")).read_text()
+    assert "[주간 리포트" in text and "승인 1" in text and "tiktok 1" in text and "게시 키트 1" in text

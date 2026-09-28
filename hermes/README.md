@@ -46,6 +46,7 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 | skin-weekly-topics | 월 09:00 | `skin-topics.sh` | 코드 업데이트(`git pull`) → 관광지 트렌드 스캔(주 1회) → 주간 주제 후보 전송 (수요·트렌드·계절 순) |
 | skin-worker | 10분마다 | `skin-worker.sh` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
 | skin-traffic-report | 월 10:00 | `skin-traffic.sh` | 스폰서 링크 유입 주간 요약 (추적기 배포 전·클릭 없으면 조용) |
+| skin-weekly-report | 일 20:00 | `skin-weekly-report.sh` | 주간 리포트 (초안·검수 등급·승인·렌더링·게시·대기·자동/사람 일치율·블로그·유입·수요 상위) |
 | skin-clinics | 월 07:00 | `skin-clinics.sh` | 코스 관광지 주변 피부과 목록 갱신 (심평원 공공데이터, `DATA_GO_KR_KEY` 없으면 조용) |
 | skin-analytics | 매월 1일 11:00 | `skin-analytics.sh` | 지난달 유입 분석 → `reports/analytics/<월>.md·.csv` (시술별 의도·도착, 영업 벤치마크) |
 | skin-site | 매시 | `skin-site.sh` | 승인된 블로그 글이 바뀌었을 때만 사이트 빌드·배포 → "새 글" 알림 |
