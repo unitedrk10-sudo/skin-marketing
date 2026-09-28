@@ -91,6 +91,8 @@ def published_counts(links: dict[str, dict], end: date) -> Counter:
     """기간 말까지 게시된 글 수 (추적 링크가 있는 글) — 글당 평균의 분모. 클릭 0 인 글도 센다."""
     counts = Counter()
     for v in links.values():
+        if v.get("placement") == "route_ad":
+            continue  # 코스 광고 카드는 글이 아니라 자리 — 글당 평균 분모에서 뺀다 (클릭은 도착으로 센다)
         if v.get("kind") and (v.get("date") or "0000")[:10] <= end.isoformat():
             counts["pilot" if v["kind"] == "sponsor" and v.get("contract") == "pilot" else v["kind"]] += 1
     return counts

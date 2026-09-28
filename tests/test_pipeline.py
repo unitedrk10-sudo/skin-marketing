@@ -1263,3 +1263,60 @@ def test_clinic_refresh_needs_key_and_skips_fresh_cache(env, monkeypatch, tmp_pa
     done = clinics_mod.refresh()
     assert "coex" in done and "jeju" not in done and len(calls) == len(done)
     assert clinics_mod.refresh() == {}                                # 30일 안이면 다시 안 부름
+
+
+# ---- 코스 광고 카드 (중립 여행 글, 조용한 광고) ----
+
+ROUTE_AD = {**SPONSOR, "zone": "gangnam", "area": "Sinsa, Gangnam-gu",
+            "route_ad": {"tagline": "English-speaking dermatology clinic in Sinsa", "confirmed": "2026-09-01"}}
+
+
+def test_route_ad_card_is_small_labeled_and_geo_hidden(sponsored, tmp_path, monkeypatch):
+    write_sponsors(tmp_path, ROUTE_AD)
+    post = _travel_post(sponsored)                                             # COEX = gangnam
+    cfg = {**common.load_yaml("site.yaml"), "domain": ""}
+    out = site_mod.render_post(cfg, post, ad_url="https://go.example/ad1?s=blog")
+    card = out[out.index('<aside class="adcard"'):out.index("</aside>", out.index('<aside class="adcard"'))]
+    assert "data-geo-ad hidden" in card and "Ad · Sponsored" in card and "Glow Skin Clinic" in card
+    assert 'href="https://go.example/ad1?s=blog" rel="sponsored noopener"' in card and "Not a recommendation" in card
+    assert "/cdn-cgi/trace" in out and '["KR"]' in out
+    assert out.index('<aside class="adcard"') > out.index("Starfield Library are indoors")   # 본문 뒤
+    other_zone = {**post, "draft": {**post["draft"], "blog": {**post["draft"]["blog"], "title": "Hongdae",
+                                                                 "markdown": "Hongdae walk [F1]."}}}
+    assert '<aside class="adcard"' not in site_mod.render_post(cfg, other_zone)       # 권역이 다르면 없음
+    sp = {"draft": common.load_draft(common.content_dir("drafts") / make_sponsored(sponsored)), "slug": "s", "date": "2026-10-01"}
+    assert site_mod.route_ad_sponsor(sp) is None                                       # 스폰서 글에는 없음
+
+
+def test_route_ad_needs_confirmation_and_clean_tagline():
+    with pytest.raises(sponsors_mod.SponsorError, match="confirmed"):
+        sponsors_mod.validate({**ROUTE_AD, "route_ad": {"tagline": "x"}})
+    with pytest.raises(sponsors_mod.SponsorError, match="금지 표현"):
+        sponsors_mod.validate({**ROUTE_AD, "route_ad": {"tagline": "The best clinic near COEX", "confirmed": "2026-09-01"}})
+    with pytest.raises(sponsors_mod.SponsorError, match="zone"):
+        sponsors_mod.validate({k: v for k, v in ROUTE_AD.items() if k != "zone"})
+    v = sponsors_mod.validate({**ROUTE_AD, "route_ad": {"tagline": "ok", "confirmed": date(2026, 9, 1)}})
+    assert v["route_ad"]["confirmed"] == "2026-09-01"                                  # JSON 저장 가능
+
+
+def test_route_ad_tracked_link_and_expired_contract(site_env, tmp_path, monkeypatch):
+    write_sponsors(tmp_path, ROUTE_AD)
+    monkeypatch.setenv("SKIN_SPONSORS_FILE", str(tmp_path / "sponsors.yaml"))
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+
+    def fake(m, p, body=None, query=None):
+        if p == "/api/export":
+            return {"rows": []}
+        made.append(body)
+        return {"code": f"c{len(made)}", "url": f"https://go.example/c{len(made)}"}
+    monkeypatch.setattr(tracker_mod, "_request", fake)
+    post = _travel_post(site_env)
+    links = site_mod.tracked_links([post])
+    key = site_mod.route_ad_key(post["draft"]["id"], "glow")
+    assert links[key]["placement"] == "route_ad" and links[key]["sponsor_id"] == "glow"
+    assert any(b["sponsor_id"] == "glow" and b["label"].startswith("route ad:") for b in made)
+    assert analytics_mod.published_counts(links, date(2099, 1, 1))["sponsor"] == 0    # 광고 자리는 글 수에 안 셈
+    write_sponsors(tmp_path, {**ROUTE_AD, "contract": {"type": "monthly", "start": "2020-01-01", "end": "2020-12-31"}})
+    assert site_mod.route_ad_sponsor(post) is None                                     # 계약 끝나면 자동으로 빠짐

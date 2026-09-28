@@ -13,7 +13,10 @@ sponsors:
     name_ko: 예시피부과의원
     official_url: https://www.example-clinic.com   # 본문에 허용되는 유일한 병원 링크
     area: "Sinsa, Gangnam-gu"          # 선택: 지역명 (동·구까지, 주소 X) — 병원 중심 코스 글에 사용
-    zone: gangnam                      # 선택: gangnam | central | east | west | north (config/attractions.yaml 권역) — --course 글에 필요
+    zone: gangnam                      # 선택: gangnam | central | east | west | north (config/attractions.yaml 권역) — --course 글·코스 광고에 필요
+    # route_ad:                        # 선택 상품: 같은 권역 중립 여행 글 하단의 작은 광고 카드 (정액 계약 기간 동안, 해외 방문자에게만)
+    #   tagline: "English-speaking dermatology clinic in Sinsa"   # 120자 이내, 금지 표현 검사 — 비교·최상급·할인·효과 보장 X
+    #   confirmed: 2026-10-01          # 병원이 카드 문구를 확인한 날짜 (필수)
     contract:
       type: monthly                    # monthly | per_post | pilot (무상 파일럿, 최대 183일 — 광고 표시는 동일)
       start: 2026-10-01

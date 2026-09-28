@@ -56,8 +56,29 @@ def validate(s: dict) -> dict:
     zones = {"gangnam", "central", "east", "west", "north"}
     if s.get("zone") and s["zone"] not in zones:
         raise SponsorError(f"스폰서 {s['id']}: zone 은 {sorted(zones)} 중 하나 (config/attractions.yaml 권역)")
+    ad = s.get("route_ad")
+    if ad:
+        if not s.get("zone"):
+            raise SponsorError(f"스폰서 {s['id']}: route_ad 에는 zone(병원 권역)이 필요합니다")
+        if not isinstance(ad, dict) or not ad.get("confirmed"):
+            raise SponsorError(f"스폰서 {s['id']}: route_ad.confirmed (병원이 광고 카드 문구를 확인한 날짜)가 필요합니다")
+        tagline = str(ad.get("tagline") or "")
+        if len(tagline) > 120:
+            raise SponsorError(f"스폰서 {s['id']}: route_ad.tagline 은 120자 이내")
+        hits = banned_hits(tagline)
+        if hits:
+            raise SponsorError(f"스폰서 {s['id']}: route_ad.tagline 에 금지 표현 {hits} (의료법 §56②)")
+    if ad:
+        s = {**s, "route_ad": {**ad, "confirmed": _as_date(ad["confirmed"]).isoformat(), "tagline": str(ad.get("tagline") or "")}}
     return {**s, "contract": {**contract, "start": start.isoformat(), "end": end.isoformat()},
             "ad_review_required": bool(s.get("ad_review_required")), "review_no": str(s.get("review_no") or "")}
+
+
+def banned_hits(text: str) -> list[str]:
+    """config/banned_terms.txt 기준 금지 표현 (02b 와 같은 목록)."""
+    import importlib
+    review = importlib.import_module("pipeline.02b_auto_review")
+    return [term for term, pat in review.load_banned() if pat.search(text)]
 
 
 def load() -> dict[str, dict]:

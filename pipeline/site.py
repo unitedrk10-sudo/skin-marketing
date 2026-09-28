@@ -182,6 +182,7 @@ main,header,footer{max-width:720px;margin:0 auto;padding:0 20px}header{padding-t
 .meta{color:var(--muted);font-size:.9em}.badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:4px;padding:0 6px;font-size:.8em;font-weight:600}
 blockquote{margin:1em 0;padding:.6em 1em;border-left:4px solid var(--ad);background:var(--adbg)}sup.ref a{text-decoration:none;font-size:.8em}
 .box{margin:1.5em 0;padding:.8em 1em;border:1px solid var(--line);border-radius:6px}
+.adcard{margin:1em 0;padding:.5em .8em;border:1px dashed var(--line);border-radius:6px;font-size:.9em}
 .sources{font-size:.9em;border-top:1px solid var(--line);margin-top:2em}.sources li{word-break:break-word}
 .posts{list-style:none;padding:0}.posts li{padding:.8em 0;border-bottom:1px solid var(--line)}.posts a{font-weight:600;text-decoration:none}
 footer{color:var(--muted);font-size:.85em;border-top:1px solid var(--line);margin-top:3em;padding-bottom:40px}table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8px}
@@ -286,7 +287,54 @@ def clinic_directory_html(post: dict) -> str:
             f'Check a clinic\'s status on the official registry before booking.</p>{"".join(parts)}</section>')
 
 
-def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None) -> str:
+def route_ad_sponsor(post: dict) -> dict | None:
+    """중립 여행 글의 코스 광고 카드에 들어갈 광고주 1곳 (없으면 None).
+    조건: route_ad 계약·광고 문구 병원 확인·계약 기간·코스 정류장과 같은 권역. 여러 곳이면 글마다 돌아가며 (글 id 해시)."""
+    draft = post["draft"]
+    if draft.get("sponsor") or draft.get("content_type") not in CLINIC_LIST_AXES:
+        return None
+    try:
+        registered = sponsors.load().values()
+    except sponsors.SponsorError as e:
+        log.warning("스폰서 목록 오류 — 코스 광고 생략: %s", e)
+        return None
+    from pipeline import attractions
+    catalog = attractions.load()
+    text = " ".join([draft["blog"].get("title", ""), draft["blog"].get("markdown", "")])
+    zones = {catalog[a]["zone"] for a in clinics.stops_for(text)}
+    candidates = sorted((s for s in registered if s.get("route_ad") and s.get("zone") in zones
+                         and not sponsors.problems(s)), key=lambda s: s["id"])
+    if not candidates:
+        return None
+    return candidates[int(hashlib.sha1(draft["id"].encode()).hexdigest(), 16) % len(candidates)]
+
+
+def route_ad_html(cfg: dict, sponsor: dict | None, tracked_url: str | None) -> str:
+    """조용한 광고 카드: 작게·본문 뒤에, 표시는 분명히 ("Ad"). 설정한 나라(기본 KR)에서는 보이지 않는다 (해외 대상 광고)."""
+    if not sponsor or not (cfg.get("route_ads") or {}).get("enabled", True):
+        return ""
+    esc = html.escape
+    href = esc(tracked_url or sponsor["official_url"])
+    tagline = sponsor["route_ad"].get("tagline") or ""
+    area = sponsor.get("area") or ""
+    label = "Ad · Partner (unpaid pilot)" if sponsors.is_pilot(sponsor) else "Ad · Sponsored"
+    return (f'<aside class="adcard" data-geo-ad hidden><span class="badge">{label}</span> '
+            f'<strong>{esc(sponsor["name_en"])}</strong>{" — " + esc(tagline) if tagline else ""}'
+            f'{" · " + esc(area) if area else ""} · <a href="{href}" rel="sponsored noopener" target="_blank">Official website</a>'
+            f'<br><span class="meta">Advertisement. Not a recommendation; it does not affect the clinic list or this guide.</span>'
+            f'</aside>')
+
+
+def geo_ad_script(cfg: dict) -> str:
+    """광고 카드는 기본 숨김 → 방문 국가가 제외 국가가 아니면 표시 (Cloudflare /cdn-cgi/trace). 확인 실패 시 숨김 유지."""
+    hide = [c.upper() for c in (cfg.get("route_ads") or {}).get("hide_in_countries", ["KR"])]
+    return ('<script>(function(){var a=document.querySelectorAll("[data-geo-ad]");if(!a.length)return;'
+            'fetch("/cdn-cgi/trace").then(function(r){return r.text()}).then(function(t){var m=/loc=([A-Z]{2})/.exec(t);'
+            f'if(m&&{json.dumps(hide)}.indexOf(m[1])<0)a.forEach(function(e){{e.hidden=false}})}}).catch(function(){{}})}})();</script>')
+
+
+def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None,
+                ad_url: str | None = None) -> str:
     draft = post["draft"]
     blog = draft["blog"]
     sponsor = draft.get("sponsor")
@@ -294,6 +342,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
     body_html = _rewrite_links(render_markdown(md), sponsor, tracked_url)
     esc = html.escape
     badge = f'<span class="badge">{sponsors.label(sponsor)} · Ad by {esc(sponsor["name_en"])}</span> ' if sponsor else ""
+    ad_sponsor = route_ad_sponsor(post)
     src_items = "".join(
         f'<li id="src-{i}"><a href="{esc(s["url"])}" rel="noopener" target="_blank">{esc(s["title"])}</a> '
         f'<span class="meta">({esc(hostname(s["url"]))})</span></li>' for i, s in enumerate(sources, 1))
@@ -302,7 +351,8 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
 {body_html}
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
 {clinic_directory_html(post) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
-<section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article>"""
+{route_ad_html(cfg, ad_sponsor, ad_url)}
+<section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article>{geo_ad_script(cfg) if ad_sponsor else ""}"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
     return page(cfg, f"{blog.get('title', '')} | {cfg['name']}", body, path=f"/{post['slug']}/",
                 description=blog.get("meta_description", ""), jsonld=post_jsonld(cfg, post, sources, faq))
@@ -340,7 +390,9 @@ side effects vary from person to person — always consult a licensed doctor.</p
 <li>No clinic recommendations or booking links in our independent guides, and no payment from clinics for those guides.</li>
 <li>Route guides may end with a list of every clinic with a dermatology department near the route, taken from Korean
 government public data and sorted by distance only. Clinics cannot pay to be added, removed or moved in that list;
-advertisers are marked.</li></ul>
+advertisers are marked.</li>
+<li>Some route guides show one small card labeled <em>Ad</em> for a clinic in the same area. It is a flat-fee advertisement,
+not a recommendation, and it does not change the guide's text or the clinic list.</li></ul>
 <h2>Sponsored posts</h2>
 <p>Some posts are advertisements paid for by a licensed clinic at a flat fee, or produced free of charge during a short
 partner pilot. They are always labeled <em>Sponsored</em> or <em>Partner</em> and as an advertisement at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
@@ -361,6 +413,8 @@ go through our link counter. It records
 the date, which post and channel the click came from, the country, and whether it looks automated. We do not store your IP
 address; a one-way code that changes every day is used only to count unique visits per day. The clinic's page receives
 standard campaign tags (utm_source, utm_medium, utm_campaign) so the clinic can see the visit came from us.</li>
+<li><strong>Ad display:</strong> to show clinic ads only to visitors outside Korea, the page asks our host (Cloudflare)
+for your country code. Nothing is stored.</li>
 <li>We do not sell personal information.</li></ul>
 <p>Questions: {contact}.</p>"""
     return page(cfg, f"Privacy — {cfg['name']}", body, path="/privacy/")
@@ -422,6 +476,10 @@ def link_meta(post: dict, kind: str) -> dict:
             "sponsor_id": sponsor.get("id"), "contract": (sponsor.get("contract") or {}).get("type")}
 
 
+def route_ad_key(draft_id: str, sponsor_id: str) -> str:
+    return f"_routead:{draft_id}:{sponsor_id}"
+
+
 def registry_key(draft_id: str) -> str:
     return f"{REGISTRY_KEY}:{draft_id}"
 
@@ -450,6 +508,13 @@ def tracked_links(posts: list[dict]) -> dict[str, dict]:
             key, kind, sponsor_id, target, label = registry_key(draft["id"]), "registry", None, REGISTRY_URL, f"registry: {title}"
         else:
             continue
+        ad = route_ad_sponsor(p)
+        if ad and route_ad_key(draft["id"], ad["id"]) not in mapping:  # 코스 광고 카드 → 광고주 공식 사이트 (글·광고주별로 센다)
+            link = tracker.add_link(ad["id"], None, f"route ad: {title}"[:120])
+            mapping[route_ad_key(draft["id"], ad["id"])] = {
+                "url": f"{link['url']}?s=blog", "code": link["code"], **link_meta(p, "sponsor"),
+                "sponsor_id": ad["id"], "contract": ad["contract"]["type"], "placement": "route_ad"}
+            changed = True
         if key in mapping:
             if "kind" not in mapping[key]:  # 예전 형식 → 메타데이터 보강 (링크는 그대로)
                 mapping[key] = {**mapping[key], **link_meta(p, kind)}
@@ -482,7 +547,9 @@ def build(out: Path | None = None) -> dict:
     for p in posts:
         own = links.get(p["draft"]["id"], {}).get("url")
         registry = (links.get(registry_key(p["draft"]["id"])) or links.get(REGISTRY_KEY) or {}).get("url")
-        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry))
+        ad = route_ad_sponsor(p)
+        ad_url = (links.get(route_ad_key(p["draft"]["id"], ad["id"])) or {}).get("url") if ad else None
+        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url))
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))
