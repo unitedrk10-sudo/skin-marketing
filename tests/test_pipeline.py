@@ -1489,3 +1489,23 @@ def test_weekly_report_counts_pipeline_activity(env, monkeypatch, tmp_path):
     assert report_mod.main([]) == 0
     text = next((tmp_path / "reports" / "weekly").glob("*.md")).read_text()
     assert "[주간 리포트" in text and "승인 1" in text and "tiktok 1" in text and "게시 키트 1" in text
+
+
+def test_site_share_images_and_icons(sponsored, tmp_path, monkeypatch):
+    pytest.importorskip("PIL")
+    monkeypatch.setenv("SKIN_SITE_DIR", str(tmp_path / "dist"))
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example"})
+    draft_id = make_sponsored(sponsored)
+    review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
+    human_mod.list_message("drafts")
+    human_mod.apply("1 병원확인\n1 승인", confirm=True)
+    site_mod.build()
+    dist = tmp_path / "dist"
+    assert (dist / "og" / "rejuran.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and (dist / "og" / "default.png").exists()
+    assert (dist / "favicon.svg").exists() and (dist / "apple-touch-icon.png").exists()
+    post = (dist / "rejuran" / "index.html").read_text()
+    assert '<meta property="og:image" content="https://skinbound.example/og/rejuran.png">' in post
+    assert 'twitter:card" content="summary_large_image"' in post and 'rel="icon" href="/favicon.svg"' in post
+    first = (dist / "og" / "rejuran.png").read_bytes()
+    site_mod.build()
+    assert (dist / "og" / "rejuran.png").read_bytes() == first          # 같은 입력 → 같은 이미지 (변경 없으면 배포 안 함)
