@@ -8,6 +8,9 @@ Propose exactly {{count}} topics for this week, spread across these content axes
 Channel formats:
 {{channels}}
 
+Audience demand by procedure (higher = more interest from our English-speaking audience, based on our own page views and clinic-search clicks plus prior research). Weight your picks toward high-demand procedures, but keep the content-axis variety and include at most 2 topics about the same procedure:
+{{demand}}
+
 Do NOT repeat or closely overlap these recent topics:
 {{recent_titles}}
 

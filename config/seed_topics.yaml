@@ -354,3 +354,32 @@ topics:
     keywords: [jeju after laser, swimming after skin treatment, busan trip after botox]
     hook: "Beach in Jeju right after your laser? Plan this first."
     has_price: false
+
+  # ---------- 영어권 관심 보강 (2026-09-28 조사: 미국 환자 써마지 선호, 서양 방문객 후기의 엑셀V·아쿠아필) ----------
+  - id: thermage-explained
+    wave: 2
+    axis: procedure
+    title: "Thermage in Korea: how monopolar RF tightening works"
+    angle: "What monopolar radiofrequency does to skin, how it differs from HIFU (Ulthera, Shurink), shot counts, pain, downtime and how long results are reported to last."
+    why_now: "Reported as a preferred lifting treatment among US visitors in 2025 foreign-patient data coverage."
+    keywords: [thermage korea, thermage flx, monopolar rf skin tightening, thermage vs ulthera]
+    hook: "Thermage vs Ulthera — what's actually different?"
+    has_price: false
+  - id: redness-vascular-laser
+    wave: 2
+    axis: procedure
+    title: "Redness and rosacea: how vascular lasers like Excel V are used"
+    angle: "What vascular lasers target (visible vessels, persistent redness), what they can and can't do for rosacea, session counts, downtime and why a doctor's diagnosis comes first."
+    why_now: "Vascular laser sessions appear often in Western visitors' Seoul treatment itineraries; redness is a common concern for fair skin."
+    keywords: [excel v laser korea, rosacea laser, redness treatment korea, vascular laser]
+    hook: "Can a laser actually calm constant redness?"
+    has_price: false
+  - id: aqua-peel-hydrafacial
+    wave: 2
+    axis: procedure
+    title: "Aqua peel and hydrafacial in Korea: the entry-level clinic facial"
+    angle: "What happens in an aqua peel / hydrafacial, how it differs from a spa facial, who it suits as a first clinic visit, and how it's often paired with other treatments."
+    why_now: "Listed among the most common first treatments for foreign visitors to Seoul skin clinics in 2026 guides."
+    keywords: [aqua peel korea, hydrafacial seoul, korean clinic facial, glass skin facial]
+    hook: "The 'glass skin' facial — what's in it?"
+    has_price: false
