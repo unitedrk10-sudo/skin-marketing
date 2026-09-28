@@ -1,0 +1,232 @@
+# 초기 주제 목록 (2026-09-28 조사) — 첫 몇 주는 Gemini 주제 조사 대신 여기서 순서대로 꺼내 쓴다.
+#   python -m pipeline.01_topics --from-seed 6     # 아직 안 쓴 주제 중 wave 순으로 6개 → 텔레그램 주제 선택
+# 규칙: 병원·의사명 없음, 최상급 표현 없음 (기획서 7장). 가격은 범위만. 사실은 02_draft 가 출처와 함께 다시 수집한다.
+# wave: 1 = 첫 2주 (검색 수요 확실·시의성), 2 = 3~4주, 3 = 이후
+# 조사 근거 (why_now): 2026 외국인 피부과 수요·트렌드 기사, VAT 환급 종료(2026-01-01), K-ETA 면제 연장(~2026-12-31)
+
+topics:
+  # ---------- wave 1 ----------
+  - id: vat-refund-ended-2026
+    wave: 1
+    axis: price_guide
+    title: "Korea's cosmetic VAT refund ended in 2026: what it means for you"
+    angle: "The 10% VAT refund on cosmetic and dermatology procedures for foreigners ended on Jan 1, 2026 — how that changes the real cost and what older guides get wrong."
+    why_now: "Refund lapsed 2026-01-01; many 2024-2025 guides still promise it."
+    keywords: [korea vat refund cosmetic procedure, korea tax refund dermatology 2026, korea skin treatment cost]
+    hook: "Still counting on a 10% tax refund for your Korea skin trip?"
+    has_price: true
+    sources:
+      - https://www.koreabiomed.com/news/articleView.html?idxno=28501
+  - id: rejuran-explained
+    wave: 1
+    axis: procedure
+    title: "What is Rejuran? The salmon-DNA skin booster explained"
+    angle: "How polynucleotide (PN) injections work, who they suit, pain, downtime and how many sessions are usually recommended."
+    why_now: "Rejuran is a flagship Korean skin booster; Rejuran + exosome combinations are spreading in 2026."
+    keywords: [rejuran, rejuran healer, salmon dna facial, polynucleotide injection]
+    hook: "Salmon DNA… injected into your face?"
+    has_price: false
+  - id: juvelook-explained
+    wave: 1
+    axis: procedure
+    title: "Juvelook explained: the PDLLA collagen booster everyone asks about"
+    angle: "What PDLLA is, how it differs from hyaluronic acid fillers, timeline of results, side effects and session count."
+    why_now: "Reported as the most-requested skin booster among foreign visitors in 2026."
+    keywords: [juvelook, pdlla, collagen stimulator korea, juvelook side effects]
+    hook: "Why is everyone flying to Korea for 'Juvelook'?"
+    has_price: false
+  - id: flying-after-treatment
+    wave: 1
+    axis: procedure_travel
+    title: "Flying home after a skin treatment in Korea: timing guide"
+    angle: "How many days to leave between lasers, injectables or boosters and your flight, and what cabin air and sun exposure mean for healing skin."
+    why_now: "The most common planning question for short trips; downtime varies from none to 5-10 days."
+    keywords: [flying after laser treatment, fly after skin booster, korea skin treatment itinerary]
+    hook: "Laser on day 5, flight on day 6 — good idea?"
+    has_price: false
+  - id: skin-booster-price-ranges
+    wave: 1
+    axis: price_guide
+    title: "Skin booster price ranges: Korea vs the US and Southeast Asia"
+    angle: "Typical price ranges for common skin boosters by country, what drives the gap, and what a quoted price usually includes or leaves out."
+    why_now: "Price is the top reason foreigners consider Korea; VAT refund end changed the math."
+    keywords: [skin booster price korea, rejuran price korea vs us, korea dermatology cost]
+    hook: "Is it really cheaper to get skin boosters in Korea?"
+    has_price: true
+  - id: how-many-days
+    wave: 1
+    axis: how_to
+    title: "How many days do you need in Korea for skin treatments?"
+    angle: "Planning a trip around consultation, treatment, visible downtime and follow-up for common procedures."
+    why_now: "Trip length decides which procedures are realistic; frequent pre-trip question."
+    keywords: [korea skin treatment trip length, how long stay korea dermatology, korea glow up trip itinerary]
+    hook: "3 days or 7 days — how long should your Korea skin trip be?"
+    has_price: false
+
+  # ---------- wave 2 ----------
+  - id: pico-toning-melasma
+    wave: 2
+    axis: procedure
+    title: "Pico toning for pigmentation and melasma: what to expect"
+    angle: "How picosecond lasers target pigment, why melasma usually needs multiple sessions, rebound risks and aftercare."
+    why_now: "Pico toning is among the most requested pigmentation treatments for visitors."
+    keywords: [pico toning korea, pico laser melasma, laser toning sessions]
+    hook: "Can one laser session really fix melasma?"
+    has_price: false
+  - id: hifu-ulthera-shurink
+    wave: 2
+    axis: procedure
+    title: "Ulthera vs Shurink: how HIFU lifting works"
+    angle: "What high-intensity focused ultrasound does, differences between common devices, pain, results timeline and risks such as fat loss concerns."
+    why_now: "HIFU lifting is a top-tier request, often sold in multi-session packages."
+    keywords: [ulthera korea, shurink, hifu lifting korea, ultherapy vs shurink]
+    hook: "Same 'ultrasound lift' — why the big price difference?"
+    has_price: false
+  - id: titanium-lifting
+    wave: 2
+    axis: trend
+    title: "Titanium lifting: the Korean trend explained"
+    angle: "What the diode-laser-based 'titanium' lifting is, what evidence exists, how it compares with HIFU and RF, and realistic expectations."
+    why_now: "Viral on TikTok in 2025-2026 as a no-downtime lifting option."
+    keywords: [titanium lifting korea, titanium laser, no downtime lifting]
+    hook: "The 'no-downtime lift' Korean celebs talk about — what is it?"
+    has_price: false
+  - id: rf-microneedling-potenza
+    wave: 2
+    axis: procedure
+    title: "RF microneedling (Potenza and similar): scars, pores and downtime"
+    angle: "How radiofrequency microneedling works for acne scars and pores, typical downtime of 3-5 days, and aftercare while traveling."
+    why_now: "Popular for acne scars; downtime makes trip timing important."
+    keywords: [potenza korea, rf microneedling acne scars, microneedling downtime]
+    hook: "Acne scars + a one-week trip: is RF microneedling realistic?"
+    has_price: false
+  - id: sauna-jjimjilbang-after
+    wave: 2
+    axis: procedure_travel
+    title: "Jjimjilbang, sauna and hot yoga after skin treatments"
+    angle: "Why heat, sweating and public baths are usually restricted after injectables and lasers, and how long to wait."
+    why_now: "Korean bathhouses are a must-do for tourists; commonly restricted for about a week after some procedures."
+    keywords: [jjimjilbang after laser, sauna after botox, heat after skin booster]
+    hook: "Planned a jjimjilbang day after your treatment? Read this first."
+    has_price: false
+  - id: consultation-for-foreigners
+    wave: 2
+    axis: how_to
+    title: "Your first skin clinic consultation in Korea: how it works"
+    angle: "What happens at a consultation, language support, consent forms, questions to ask, and why a same-day treatment isn't always wise."
+    why_now: "First-timers are unsure what to expect; reduces anxiety and bad decisions."
+    keywords: [korea dermatology consultation, korean skin clinic first visit, questions to ask dermatologist]
+    hook: "Walking into a Korean skin clinic for the first time?"
+    has_price: false
+  - id: reading-a-quote
+    wave: 2
+    axis: price_guide
+    title: "How to read a Korean skin clinic quote: shots, lines, cc and sessions"
+    angle: "What units like shots, lines, cc and sessions mean for different procedures, so quotes can be compared fairly."
+    why_now: "Quotes use units unfamiliar to foreigners; a practical price-literacy piece without naming clinics."
+    keywords: [ulthera shots meaning, skin booster cc, korea clinic price list explained]
+    hook: "300 shots? 2cc? Here's what your quote actually means."
+    has_price: true
+  - id: k-eta-2026
+    wave: 2
+    axis: how_to
+    title: "K-ETA in 2026: do you still need it for a Korea trip?"
+    angle: "Which travelers are temporarily exempt through Dec 31, 2026, when applying may still help (e-Arrival card), and where to verify."
+    why_now: "Temporary exemption extended to 2026-12-31 for eligible nationalities (incl. US)."
+    keywords: [k-eta 2026, korea travel authorization exemption, korea entry requirements]
+    hook: "Do you still need a K-ETA for Korea this year?"
+    has_price: false
+    sources:
+      - https://atlanta.mofa.go.kr/us-atlanta-en/brd/m_24389/view.do?seq=28
+
+  # ---------- wave 3 ----------
+  - id: pdrn-exosome-evidence
+    wave: 3
+    axis: trend
+    title: "PDRN and exosomes: what the evidence says so far"
+    angle: "What PDRN and exosome treatments are, how clinic injections differ from skincare products, and where research is still limited."
+    why_now: "Bio-regenerative ingredients are 2026's dominant K-beauty trend."
+    keywords: [pdrn injection, exosome facial korea, pdrn vs exosome]
+    hook: "PDRN, exosomes… science or hype?"
+    has_price: false
+  - id: skin-boosters-compared
+    wave: 3
+    axis: procedure
+    title: "Rejuran, Juvelook, Profhilo: how common skin boosters differ"
+    angle: "Ingredients, mechanism, session count and downtime of common boosters side by side — no ranking, just differences."
+    why_now: "Visitors struggle to choose among boosters; comparison of products, not clinics."
+    keywords: [rejuran vs juvelook, skin booster types, profhilo vs rejuran]
+    hook: "Three boosters, three very different ingredients."
+    has_price: false
+  - id: laser-toning-basics
+    wave: 3
+    axis: procedure
+    title: "Laser toning basics: why it's a Korean clinic staple"
+    angle: "What low-fluence laser toning targets, why it usually needs repeated sessions, and what a single-session trip can achieve."
+    why_now: "Near-universal menu item; frequent 'is one session worth it' question."
+    keywords: [laser toning korea, laser toning sessions, one session laser toning]
+    hook: "One laser toning session on vacation — worth it?"
+    has_price: false
+  - id: sunscreen-sightseeing
+    wave: 3
+    axis: procedure_travel
+    title: "Sightseeing after a laser: sun protection that actually works"
+    angle: "Why treated skin is more sun-sensitive, SPF and reapplication basics, and planning outdoor days around treatment."
+    why_now: "Treatment plus outdoor sightseeing is the standard itinerary conflict."
+    keywords: [sunscreen after laser, sun exposure after skin treatment, korea sunscreen after procedure]
+    hook: "Palace tour the day after your laser?"
+    has_price: false
+  - id: alcohol-after-injectables
+    wave: 3
+    axis: procedure_travel
+    title: "Soju, Korean BBQ and skin treatments: alcohol and aftercare"
+    angle: "What is generally advised about alcohol, spicy food and swelling after injectables and lasers, and how long to wait."
+    why_now: "Food and nightlife are core to Korea trips; common aftercare question."
+    keywords: [alcohol after botox, drinking after skin booster, korean bbq after laser]
+    hook: "Soju night after your treatment — how long should you wait?"
+    has_price: false
+  - id: complications-after-returning
+    wave: 3
+    axis: how_to
+    title: "What if something goes wrong after you fly home?"
+    angle: "Common post-procedure reactions vs warning signs, what records to bring home, and how to seek care in your country."
+    why_now: "Top worry of medical travelers; responsible, trust-building content."
+    keywords: [complications after cosmetic procedure abroad, side effects after returning home, medical tourism aftercare]
+    hook: "Home again — and your skin looks wrong. Now what?"
+    has_price: false
+  - id: onda-lifting
+    wave: 3
+    axis: trend
+    title: "Onda lifting explained: microwave energy for contouring"
+    angle: "How the Onda device works, what it is marketed for, evidence status, and how it differs from HIFU and RF."
+    why_now: "Onda and Onda + titanium combinations are trending in creator content."
+    keywords: [onda lifting, onda korea, microwave skin tightening]
+    hook: "Lifting with… microwaves?"
+    has_price: false
+  - id: checking-a-doctor
+    wave: 3
+    axis: how_to
+    title: "Dermatologist or not? Understanding doctor credentials in Korea"
+    angle: "The difference between a dermatology specialist and other doctors offering skin treatments in Korea, and how to check a medical license using official sources. Use the wording 'dermatology specialist', never claim any credential for this channel."
+    why_now: "Safety question foreigners ask; purely informational, uses government sources."
+    keywords: [korean dermatologist certification, check doctor license korea, dermatology specialist korea]
+    hook: "Not every 'skin clinic' doctor in Korea is a dermatologist."
+    has_price: false
+  - id: botox-in-korea
+    wave: 3
+    axis: procedure
+    title: "Botox in Korea for first-timers: units, brands and aftercare"
+    angle: "Common botulinum toxin products used in Korea, what units mean, how long results last, and aftercare during travel."
+    why_now: "Frequently bundled into trips; confusion about local brands and dosing."
+    keywords: [botox korea, korean botox brands, botox units korea]
+    hook: "Different botox brands in Korea — does it matter?"
+    has_price: false
+  - id: public-review-themes
+    wave: 3
+    axis: review_curation
+    title: "What public reviews say about Rejuran pain and downtime"
+    angle: "Themes from public reviews about pain, swelling and bumps after Rejuran, compared with what clinical sources report — no clinic names."
+    why_now: "People search reviews before booking; curation adds value without endorsing clinics."
+    keywords: [rejuran pain reviews, rejuran bumps how long, rejuran review]
+    hook: "Everyone says Rejuran hurts. How much, really?"
+    has_price: false

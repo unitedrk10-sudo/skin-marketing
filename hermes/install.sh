@@ -60,7 +60,7 @@ EOF
 # 주간 주제: 먼저 코드 업데이트 (law_sync 가 갱신한 legal/ 은 버리고 받음 — 다음 동기화 때 다시 생성됨)
 write_script skin-topics.sh "git checkout -q -- legal/ 2>/dev/null || true
 git pull -q --ff-only >&2 || echo '(코드 업데이트 실패 — 기존 코드로 진행)' >&2
-exec \"$PYTHON\" -m pipeline.01_topics"
+exec \"$PYTHON\" -m pipeline.01_topics --from-seed 6"  # 초기 주제 목록 소진 후 자동으로 Gemini 조사
 
 write_script skin-worker.sh "exec \"$PYTHON\" -m pipeline.worker run"
 
