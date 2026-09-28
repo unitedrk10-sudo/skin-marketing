@@ -22,13 +22,13 @@ import argparse
 import csv
 import importlib
 import re
-import shutil
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
 from pipeline.common import (
     draft_hash,
+    move_draft,
     content_dir,
     draft_dirs,
     get_logger,
@@ -162,22 +162,7 @@ def sponsor_confirmed(path: Path) -> bool:
 
 
 def move(draft_id: str, src: str, dst: str) -> Path:
-    if (src, dst) not in ALLOWED_MOVES:
-        raise ValueError(f"허용되지 않은 이동: {src} → {dst}")
-    source = content_dir(src) / draft_id
-    target = content_dir(dst) / draft_id
-    if not (source / "draft.json").exists():
-        raise FileNotFoundError(f"{src}/{draft_id} 없음")
-    if target.exists():
-        raise FileExistsError(f"{dst}/{draft_id} 이미 있음")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(source), str(target))
-    history = target / "history.json"
-    events = load_json(history) if history.exists() else []
-    events.append({"at": now_iso(), "from": src, "to": dst})
-    save_json(history, events)
-    log.info("이동: %s %s → %s", draft_id, src, dst)
-    return target
+    return move_draft(draft_id, src, dst, ALLOWED_MOVES)
 
 
 def record_agreement(draft_id: str, auto_grade: str | None, decision: str) -> None:

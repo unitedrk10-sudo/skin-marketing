@@ -185,3 +185,25 @@ def blog_text(draft: dict) -> str:
 
 def facts_text(facts: list[dict]) -> str:
     return "\n".join(f"[{f['id']}] {f['text']} (source: {f.get('url', '')})" for f in facts)
+
+
+def move_draft(draft_id: str, src: str, dst: str, allowed: set[tuple[str, str]]) -> Path:
+    """상태 폴더 이동 + history.json 기록. 스크립트마다 자기에게 허용된 이동만 넘긴다
+    (03_review: 사람 검수 이동, 04_render_video: approved→rendered, 06_publish: ready_to_publish→published)."""
+    import shutil
+    if (src, dst) not in allowed:
+        raise ValueError(f"허용되지 않은 이동: {src} → {dst}")
+    source = content_dir(src) / draft_id
+    target = content_dir(dst) / draft_id
+    if not (source / "draft.json").exists():
+        raise FileNotFoundError(f"{src}/{draft_id} 없음")
+    if target.exists():
+        raise FileExistsError(f"{dst}/{draft_id} 이미 있음")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    history = target / "history.json"
+    events = load_json(history) if history.exists() else []
+    events.append({"at": now_iso(), "from": src, "to": dst})
+    save_json(history, events)
+    get_logger("state").info("이동: %s %s → %s", draft_id, src, dst)
+    return target

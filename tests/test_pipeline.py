@@ -1365,3 +1365,53 @@ def test_trend_scan_survives_malformed_model_output(env):
     assert data["attractions"]["ddp"]["trend"] == 90 and data["attractions"]["ddp"]["sources"] == ["https://s.example"]
     assert [e["name"] for e in data["emerging"]] == ["Fest"] and data["emerging"][0]["topic"]["keywords"] == []
     assert data["food"][0]["kind"] == "dish" and data["food"][0]["attraction"] == ""
+
+
+# ---- 04 영상 렌더링 ----
+
+render_mod = importlib.import_module("pipeline.04_render_video")
+
+
+def test_ass_and_srt_timings():
+    timeline = [{"start": 0, "end": 2.5, "voice": "Hello there.", "caption": "Hello {bold}"},
+                {"start": 2.75, "end": 61.2, "voice": "Second.", "caption": "Second"}]
+    ass = render_mod.build_ass(timeline, 61.45, "Sponsored by Glow Skin Clinic · Advertisement · AI-generated content", "skinboundkorea.com")
+    assert "Dialogue: 0,0:00:00.00,0:00:02.50,Caption,,0,0,0,,Hello (bold)" in ass            # ASS 태그 무력화
+    assert "0:01:01.20" in ass and ",Disclosure,,0,0,0,,Sponsored by Glow Skin Clinic" in ass
+    srt = render_mod.build_srt(timeline)
+    assert "00:00:02,750 --> 00:01:01,200\nSecond." in srt
+
+
+def test_render_moves_to_rendered_with_outputs(env, monkeypatch):
+    monkeypatch.setattr(render_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(render_mod, "duration", lambda path: 2.0)
+    cmds = []
+    monkeypatch.setattr(render_mod, "_run", lambda cmd: cmds.append(cmd) or "")
+
+    def fake_run_in(cwd, cmd):
+        cmds.append(cmd)
+        (cwd / "video.mp4").write_bytes(b"mp4")
+        return ""
+    monkeypatch.setattr(render_mod, "_run_in", fake_run_in)
+    render_mod.set_tts(lambda text, voice: b"mp3")
+    try:
+        draft_id = make_draft(env)
+        review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
+        _approve(env, draft_id)
+        monkeypatch.setenv("GOOGLE_TTS_API_KEY", "k")
+        assert render_mod.main([]) == 0
+    finally:
+        render_mod.set_tts(None)
+    out = common.content_dir("rendered") / draft_id
+    assert (out / "video.mp4").exists() and (out / "captions.srt").exists() and not (out / "render").exists()
+    meta = common.load_json(out / "render.json")
+    assert meta["timeline"][0]["start"] == 0 and meta["voice"] == common.load_yaml("voice.yaml")["voice"]
+    assert "AI-generated content" in (out / "captions.ass").read_text()
+    assert any("ass=captions.ass" in c for c in cmds[-1]) and "1080x1920" in " ".join(cmds[-1])
+    assert common.load_json(out / "history.json")[-1] == {**common.load_json(out / "history.json")[-1], "from": "approved", "to": "rendered"}
+    assert not list(common.draft_dirs("approved"))
+
+
+def test_render_is_silent_without_tts_key(env, monkeypatch, capsys):
+    monkeypatch.delenv("GOOGLE_TTS_API_KEY", raising=False)
+    assert render_mod.main([]) == 0 and capsys.readouterr().out == ""
