@@ -66,4 +66,6 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 - Claude Code 검수가 실패하면 알림 후 다음 워커 실행 때 자동 재요청. 로그: `logs/claude_review_<id>.log`.
 - 실패한 요청은 `content/requests/failed/` 로 옮겨져 반복 실행되지 않는다.
 - 게시·삭제(06_publish) 등 되돌릴 수 없는 작업은 명령 승인(approval) 대상으로 등록한다 (구현 후).
-- 미구현: `04_render_video`, `05_preview`, `06_publish`, `07_report` (TTS·합성·예약 게시 도구 선정 후).
+- 영상: 승인된 초안은 워커가 `04_render_video` 로 렌더링(`GOOGLE_TTS_API_KEY` + ffmpeg 필요, 없으면 조용히 건너뜀) → "게시 전 확인" 메시지 → "게시 OK" → 워커가 `06_publish kits` 로 채널별 게시 키트 → 직접 올린 뒤 "N 게시 완료 <채널> <URL>" → 모두 올리면 published.
+- 05_preview 는 따로 없다: `03_review list --stage rendered` 메시지 + 스킬이 영상 파일을 첨부한다.
+- 예약 게시 도구·플랫폼 API 연결은 아직 (지금은 키트로 수동 게시).

@@ -1415,3 +1415,55 @@ def test_render_moves_to_rendered_with_outputs(env, monkeypatch):
 def test_render_is_silent_without_tts_key(env, monkeypatch, capsys):
     monkeypatch.delenv("GOOGLE_TTS_API_KEY", raising=False)
     assert render_mod.main([]) == 0 and capsys.readouterr().out == ""
+
+
+# ---- 06 게시 키트 ----
+
+publish_mod = importlib.import_module("pipeline.06_publish")
+
+
+def _ready(draft_id, sponsor=None):
+    draft = {"id": draft_id, "content_type": "sponsored" if sponsor else "procedure",
+             "blog": {"title": "What is Rejuran?", "slug": "what-is-rejuran", "markdown": "x"},
+             "shortform": {"title": "What is Rejuran? 45s", "hook": "Salmon DNA on your face?", "hashtags": ["#rejuran", "kbeauty"],
+                           "lines": [], "on_screen_disclosure": "AI-generated content"}}
+    if sponsor:
+        draft["sponsor"] = sponsor
+    path = common.content_dir("ready_to_publish") / draft_id
+    common.save_json(path / "draft.json", draft)
+    return path
+
+
+def test_publish_kits_and_done_flow(env):
+    _ready("2026-W40-01-what-is-rejuran")
+    msg = publish_mod.main(["kits"])
+    kit = common.load_json(common.content_dir("ready_to_publish") / "2026-W40-01-what-is-rejuran" / "kit.json")
+    assert set(kit["channels"]) == {"tiktok", "instagram", "youtube"} and kit["skipped"] == {}
+    assert "link in bio" in kit["channels"]["tiktok"]["caption"] and "#kbeauty" in kit["channels"]["tiktok"]["caption"]
+    assert "https://skinboundkorea.com/what-is-rejuran/" in kit["channels"]["youtube"]["caption"]
+    assert "#ad" not in kit["channels"]["tiktok"]["caption"] and len(kit["channels"]["youtube"]["title"]) <= 100
+    assert any("AI" in c for c in kit["channels"]["tiktok"]["checklist"])
+    with pytest.raises(ValueError, match="게시물 주소"):
+        publish_mod.done("2026-W40-01-what-is-rejuran", "tiktok", "https://evil.example/tiktok.com")
+    assert "남은 채널" in publish_mod.done("2026-W40-01-what-is-rejuran", "tiktok", "https://www.tiktok.com/@skinboundkorea/video/1")
+    publish_mod.done("2026-W40-01-what-is-rejuran", "instagram", "https://www.instagram.com/reel/abc/")
+    assert "published" in publish_mod.done("2026-W40-01-what-is-rejuran", "youtube", "https://youtube.com/shorts/xyz")
+    assert (common.content_dir("published") / "2026-W40-01-what-is-rejuran" / "publish_log.json").exists()
+
+
+def test_sponsored_kit_skips_tiktok_and_lists_platform_settings(env, tmp_path):
+    _ready("sp-glow-1", sponsors_mod.validate(SPONSOR))
+    kit = publish_mod.kit(common.content_dir("ready_to_publish") / "sp-glow-1")
+    assert "tiktok" in kit["skipped"] and set(kit["channels"]) == {"instagram", "youtube"}
+    assert kit["channels"]["instagram"]["caption"].startswith("#ad Sponsored by Glow Skin Clinic")
+    assert any("브랜디드" in c for c in kit["channels"]["instagram"]["checklist"])
+    with pytest.raises(ValueError, match="게시 채널이 아닙니다"):
+        publish_mod.done("sp-glow-1", "tiktok", "https://www.tiktok.com/@x/video/1")
+
+
+def test_publish_only_touches_ready_to_publish(env):
+    path = common.content_dir("approved") / "x"
+    common.save_json(path / "draft.json", {"id": "x"})
+    with pytest.raises(ValueError, match="ready_to_publish"):
+        publish_mod.kit(path)
+    assert publish_mod.kits_message() == "" and publish_mod.status_message() == "게시 대기 없음"

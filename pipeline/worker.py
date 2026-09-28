@@ -129,6 +129,14 @@ def run(review_runner=None) -> tuple[str, list[str]]:
         failures += [f"렌더링 실패 {f}" for f in render_failures]
         if done:
             message = (message + "\n\n" if message else "") + human_mod.list_message("rendered")
+    publish_mod = importlib.import_module("pipeline.06_publish")
+    try:
+        kits = publish_mod.kits_message()  # 게시 OK 된 영상 → 채널별 게시 키트
+    except Exception as e:  # noqa: BLE001
+        failures.append(f"게시 키트 생성 실패: {e}")
+        kits = ""
+    if kits:
+        message = (message + "\n\n" if message else "") + kits
     if failures:
         message = (message + "\n\n" if message else "") + "\n".join(f"⚠️ {f}" for f in failures)
     return message, failures
