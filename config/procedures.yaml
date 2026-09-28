@@ -1,21 +1,30 @@
-# 시술·주제 분류 — pipeline.analytics 가 추적 링크(글 제목·키워드·slug)를 시술별로 묶을 때 쓴다.
-# 키워드는 소문자, 단어 단위로 찾는다. 한 글이 여러 시술에 걸리면 모두에 센다. 안 걸리면 "other".
-# 새 시술 글을 쓰기 시작하면 여기에 추가한다 (영업 자료의 "시술별 관심도" 표 기준).
+# 시술·주제 분류 + 수요 사전값 — pipeline.analytics(시술별 집계), pipeline.demand(주제 추천 점수)가 쓴다.
+# keywords: 소문자, 단어 단위로 찾는다 (글 제목·키워드·slug). 한 글이 여러 시술에 걸리면 모두에 센다. 안 걸리면 "other".
+# demand: 우리 트래픽 데이터가 쌓이기 전에 쓰는 영어권(미국·캐나다 중심) 관심도 사전값 1~5.
+#   데이터가 쌓이면 pipeline.demand 가 실제 조회수·클릭 비중을 점점 더 크게 반영한다 (사전값 비중 최소 30% 유지).
+# 근거 (2026-09-28 조사):
+#   - 2025 외국인 환자 201만 명 중 피부과 62.9%, 미국인 17.3만 명(+70.4%) — 보건복지부·KHIDI 발표 (Korea Times 2026-04-24)
+#   - 미국·홍콩 환자는 써마지(리프팅) 선호 — 같은 발표 보도
+#   - 미국에서 "salmon sperm facial"(PDRN·리쥬란) 검색 관심 급증, 리쥬란 주사는 미국 FDA 미승인 → 한국 방문 수요 (Bloomberg 2025-09-11, NBC 2025)
+#   - 외국인 인기 시술: 아쿠아필·하이드라페이셜, 스킨부스터(리쥬란·쥬베룩), 리프팅(슈링크·인모드·써마지), 보톡스·필러 (Creatrip 2026)
+#   - 서양 방문객 후기에 자주 나오는 것: 리쥬란·써마지·엑셀V(홍조·혈관) (AOL/Travel+Leisure 2026)
 
 procedures:
-  rejuran:        {name: "Rejuran (PN skin booster)", keywords: [rejuran, polynucleotide, pn]}
-  juvelook:       {name: "Juvelook", keywords: [juvelook]}
-  re2o:           {name: "Re2O (Lituo)", keywords: [re2o, lituo, "리투오"]}
-  skin_booster:   {name: "Skin boosters (general)", keywords: [skin booster, skinbooster, profhilo, hyaluronic acid injection]}
-  pdrn_exosome:   {name: "PDRN / exosome", keywords: [pdrn, exosome, salmon dna]}
-  botox:          {name: "Botulinum toxin", keywords: [botox, botulinum, toxin, jaw reduction, masseter]}
-  filler:         {name: "Dermal fillers", keywords: [filler]}
-  ulthera:        {name: "Ultherapy / HIFU", keywords: [ulthera, ultherapy, hifu]}
-  shurink:        {name: "Shurink", keywords: [shurink, shrink universe]}
-  thermage_rf:    {name: "Thermage / monopolar RF", keywords: [thermage, onda, monopolar]}
-  rf_microneedling: {name: "RF microneedling", keywords: [potenza, microneedling, sylfirm, genius rf]}
-  titanium:       {name: "Titanium lifting", keywords: [titanium lifting, titanium lift]}
-  laser_toning:   {name: "Laser toning / pigment", keywords: [laser toning, pico, picosecond, melasma, pigmentation]}
-  acne_scar:      {name: "Acne & acne scars", keywords: [acne, scar]}
-  skincare:       {name: "Skincare & recovery products", keywords: [skincare, cica, panthenol, sunscreen, serum, cream, aftercare]}
-  travel:         {name: "Trip planning & logistics", keywords: [itinerary, trip, travel, k-eta, visa, tax refund, airport, flight]}
+  rejuran:          {name: "Rejuran (PN skin booster)", demand: 5, keywords: [rejuran, polynucleotide, pn, salmon dna, salmon sperm]}
+  juvelook:         {name: "Juvelook", demand: 4, keywords: [juvelook, pdlla]}
+  re2o:             {name: "Re2O (Lituo)", demand: 2, keywords: [re2o, lituo, "리투오"]}
+  skin_booster:     {name: "Skin boosters (general)", demand: 4, keywords: [skin booster, skinbooster, profhilo, hyaluronic acid injection]}
+  pdrn_exosome:     {name: "PDRN / exosome", demand: 4, keywords: [pdrn, exosome]}
+  botox:            {name: "Botulinum toxin", demand: 4, keywords: [botox, botulinum, toxin, jaw reduction, masseter]}
+  filler:           {name: "Dermal fillers", demand: 3, keywords: [filler]}
+  ulthera:          {name: "Ultherapy / HIFU", demand: 4, keywords: [ulthera, ultherapy, hifu]}
+  shurink:          {name: "Shurink", demand: 3, keywords: [shurink, shrink universe]}
+  thermage_rf:      {name: "Thermage / monopolar RF", demand: 5, keywords: [thermage, onda, monopolar]}
+  rf_microneedling: {name: "RF microneedling", demand: 3, keywords: [potenza, microneedling, sylfirm, genius rf]}
+  titanium:         {name: "Titanium lifting", demand: 3, keywords: [titanium lifting, titanium lift, titanium]}
+  laser_toning:     {name: "Laser toning / pigment", demand: 3, keywords: [laser toning, pico, picosecond, melasma, pigmentation]}
+  vascular:         {name: "Redness / vascular laser (Excel V)", demand: 3, keywords: [excel v, redness, rosacea, vascular laser, broken capillaries]}
+  facial:           {name: "Aqua peel / hydrafacial", demand: 3, keywords: [aqua peel, aquapeel, hydrafacial, hydra facial, glass skin facial]}
+  acne_scar:        {name: "Acne & acne scars", demand: 3, keywords: [acne, scar]}
+  skincare:         {name: "Skincare & recovery products", demand: 3, keywords: [skincare, cica, panthenol, sunscreen, serum, cream, aftercare]}
+  travel:           {name: "Trip planning & logistics", demand: 4, keywords: [itinerary, trip, travel, k-eta, visa, tax refund, vat refund, airport, flight, flying]}

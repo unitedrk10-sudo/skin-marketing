@@ -1,18 +1,20 @@
 """1. 주간 주제 선정 — Hermes 크론 (월 09:00, 에이전트 모드).
 
+추천 순서는 시술별 수요 점수(pipeline.demand: 영어권 관심도 사전값 + 우리 블로그 조회수·링크 클릭) 기준.
 Gemini 검색 연동으로 주제 후보를 조사해 content/topics/<주차>.json 에 저장하고,
 텔레그램으로 보낼 메시지를 stdout 에 출력한다. 사람이 번호를 고르면 02_draft 를 실행한다.
 
     python -m pipeline.01_topics [--week 2026-W40] [--count 6]
-    python -m pipeline.01_topics --from-seed 6     # config/seed_topics.yaml 에서 안 쓴 주제를 wave 순으로 (Gemini 호출 없음)
+    python -m pipeline.01_topics --from-seed 6     # config/seed_topics.yaml 에서 안 쓴 주제를 수요 점수 순으로 (Gemini 호출 없음)
 """
 
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from datetime import date
 
-from pipeline import llm
+from pipeline import demand, llm
 from pipeline.common import (
     STATES,
     content_dir,
@@ -30,6 +32,8 @@ from pipeline.common import (
 
 log = get_logger("01_topics")
 RECENT_LIMIT = 60
+WAVE_BONUS = {1: 0.3, 2: 0.1}   # seed 의 wave(시의성·기초 주제)는 가산점으로만 — 순서는 수요 점수가 정한다
+MAX_PER_PROCEDURE = 2           # 한 주에 같은 시술 주제는 최대 2개 (다양성)
 
 
 def recent_titles() -> list[str]:
@@ -69,28 +73,52 @@ def used_seed_ids() -> set[str]:
     return {i for i in drafted if i} | {i for i, n in offered.items() if n >= 2}
 
 
-def from_seed(week: str, count: int) -> dict | None:
-    """조사해 둔 초기 주제 목록에서 아직 안 쓴 것을 wave·순서대로 꺼낸다. 다 썼으면 None."""
+def annotate(topics: list[dict], table: dict[str, dict], bonus: dict[int, float] | None = None) -> list[dict]:
+    """주제마다 수요 점수·근거를 붙이고 점수 순으로 정렬한다 (bonus: 주제 index → 가산점)."""
+    for i, t in enumerate(topics):
+        score, pid, why = demand.topic_score(t, table)
+        t["demand"] = {"score": round(score + (bonus or {}).get(i, 0), 3), "procedure": pid, "reason": why}
+    return sorted(topics, key=lambda t: -t["demand"]["score"])  # 동점은 원래 순서
+
+
+def diverse(topics: list[dict], count: int) -> list[dict]:
+    """점수 순으로 고르되 같은 시술은 MAX_PER_PROCEDURE 개까지 — 모자라면 나머지로 채운다."""
+    picked, per = [], Counter()
+    for t in topics:
+        if per[t["demand"]["procedure"]] < MAX_PER_PROCEDURE or t["demand"]["procedure"] == "other":
+            picked.append(t)
+            per[t["demand"]["procedure"]] += 1
+    rest = [t for t in topics if t not in picked]
+    return (picked + rest)[:count]
+
+
+def from_seed(week: str, count: int, table: dict[str, dict] | None = None) -> dict | None:
+    """조사해 둔 초기 주제 목록에서 아직 안 쓴 것을 수요 점수(+wave 가산점) 순으로 꺼낸다. 다 썼으면 None."""
     axes = load_yaml("channels.yaml")["content_axes"]
     seeds = load_yaml("seed_topics.yaml").get("topics", [])
     used = used_seed_ids()
-    fresh = sorted((s for s in seeds if s["id"] not in used), key=lambda s: s.get("wave", 9))  # 같은 wave 는 파일 순서
+    fresh = [s for s in seeds if s["id"] not in used]
     if not fresh:
         return None
-    picked = []
-    for s in fresh[:count]:
+    candidates = []
+    for s in fresh:
         topic = {k: v for k, v in s.items() if k not in ("id", "wave")}
         topic["sources"] = [x if isinstance(x, dict) else {"url": x, "title": ""} for x in s.get("sources", [])]
         topic["seed_id"] = s["id"]
-        picked.append(topic)
-    return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [], "topics": validate(picked, axes)}
+        candidates.append(topic)
+    table = table or demand.scores()
+    ranked = annotate(candidates, table, {i: WAVE_BONUS.get(s.get("wave", 9), 0) for i, s in enumerate(fresh)})
+    return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [],
+            "topics": validate(diverse(ranked, count), axes)}
 
 
 def telegram_message(week: str, topics: list[dict]) -> str:
-    lines = [f"[{week} 주제 후보 {len(topics)}건] 번호로 골라주세요 (예: 1,3,4)"]
+    lines = [f"[{week} 주제 후보 {len(topics)}건 — 수요 높은 순] 번호로 골라주세요 (예: 1,3,4)"]
     for i, t in enumerate(topics, 1):
         price = " 💲가격" if t["has_price"] else ""
-        lines.append(f"{i}. {t['title']} ({t['axis']}){price}\n   └ {t['angle']}\n   └ 근거: {t.get('why_now', '')}")
+        d = t.get("demand")
+        score = f"\n   └ 📈 수요 {d['score']:.2f} ({d['reason']})" if d else ""
+        lines.append(f"{i}. {t['title']} ({t['axis']}){price}\n   └ {t['angle']}\n   └ 근거: {t.get('why_now', '')}{score}")
     return "\n".join(lines)
 
 
@@ -98,6 +126,7 @@ def build(week: str, count: int) -> dict:
     channels = load_yaml("channels.yaml")
     axes = channels["content_axes"]
     recent = recent_titles()
+    table = demand.scores()
     text = prompt(
         "topic_research",
         today=date.today().isoformat(),
@@ -106,6 +135,7 @@ def build(week: str, count: int) -> dict:
         axes="\n".join(f"- {a}" for a in axes),
         channels=str({k: channels[k] for k in ("audience", "shortform", "blog")}),
         recent_titles="\n".join(f"- {t}" for t in recent) or "(none yet)",
+        demand=demand.prompt_block(table),
     )
     data, result = llm.generate_json("topics", text)
     topics = validate(data.get("topics", []) if isinstance(data, dict) else data, axes)
@@ -116,7 +146,7 @@ def build(week: str, count: int) -> dict:
         "created_at": now_iso(),
         "model": result.model,
         "grounding_urls": result.grounding_urls,
-        "topics": topics,
+        "topics": annotate(topics, table),
     }
 
 

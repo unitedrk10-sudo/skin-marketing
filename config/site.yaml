@@ -12,4 +12,5 @@ byline: Skinbound Editorial Team  # 사람 의사·전문의 명의 금지 (자�
 contact_email: ""                 # 브랜드 이메일 생기면 입력 (소개·개인정보 페이지에 표시)
 cloudflare_project: skin-site     # Cloudflare Pages 프로젝트명 (wrangler pages deploy)
 posts_on_home: 30
+analytics_site_tag: ""         # Web Analytics 사이트 태그(site tag) — 주제 추천이 글별 조회수를 읽을 때 사용 (.env CF_API_TOKEN, CF_ACCOUNT_ID)
 analytics_token: ""             # Cloudflare Web Analytics 토큰 (대시보드 → Web Analytics → 사이트 추가) — 방문·AI 유입 집계

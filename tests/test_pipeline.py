@@ -721,6 +721,7 @@ def test_tracker_sponsor_link_is_blog_only(env, tmp_path, monkeypatch, capsys):
 # ---- 블로그 사이트 ----
 
 site_mod = importlib.import_module("pipeline.site")
+demand_mod = importlib.import_module("pipeline.demand")
 FAQ_BLOG = (f"# Rejuran explained\n\nIt uses polynucleotides [F1]. Evil <script>alert(1)</script> and "
             f"[bad](javascript:alert(1)).\n\n## FAQ\n\n### Does it hurt\n\nMost people feel mild discomfort [F1].\n\n"
             f"### How long is downtime?\n\nUsually 1-3 days.\n\n## Next\n\nText.\n\n{DISCLOSURE}")
@@ -815,15 +816,48 @@ def test_seed_topics_are_valid_and_compliant():
 
 def test_from_seed_order_and_reuse(env):
     week1 = topics_mod.from_seed("2026-W40", 3)
-    assert [t["seed_id"] for t in week1["topics"]] == ["vat-refund-ended-2026", "rejuran-explained", "juvelook-explained"]
-    assert week1["topics"][0]["sources"][0]["url"].startswith("https://")
+    ids = [t["seed_id"] for t in week1["topics"]]
+    assert ids[0] == "rejuran-explained"                                   # 수요 점수 높은 순 (관심도 5 + wave 1)
+    scores = [t["demand"]["score"] for t in week1["topics"]]
+    assert scores == sorted(scores, reverse=True) and "관심도" in week1["topics"][0]["demand"]["reason"]
+    assert "📈 수요" in topics_mod.telegram_message("2026-W40", week1["topics"])
     common.save_json(common.content_dir("topics") / "2026-W40.json", week1)
-    draft_mod.create("2026-W40", 2, week1["topics"][1])           # rejuran 만 초안으로
+    rejuran = next(t for t in week1["topics"] if t["seed_id"] == "rejuran-explained")
+    draft_mod.create("2026-W40", 1, rejuran)                                # rejuran 만 초안으로
     week2 = topics_mod.from_seed("2026-W41", 3)
-    assert [t["seed_id"] for t in week2["topics"]] == ["vat-refund-ended-2026", "juvelook-explained", "flying-after-treatment"]
+    assert "rejuran-explained" not in [t["seed_id"] for t in week2["topics"]]
     common.save_json(common.content_dir("topics") / "2026-W41.json", week2)
-    week3 = topics_mod.from_seed("2026-W42", 2)                   # 두 번 제안하고 안 고른 주제는 제외
-    assert "vat-refund-ended-2026" not in [t["seed_id"] for t in week3["topics"]]
+    twice = set(ids[1:]) & {t["seed_id"] for t in week2["topics"]}
+    week3 = topics_mod.from_seed("2026-W42", 5)                             # 두 번 제안하고 안 고른 주제는 제외
+    assert twice and not twice & {t["seed_id"] for t in week3["topics"]}
+
+
+def test_seed_week_limits_same_procedure():
+    topics = [{"title": f"Rejuran {i}", "keywords": [], "axis": "procedure", "angle": "a"} for i in range(4)]
+    topics.append({"title": "Botox basics", "keywords": [], "axis": "procedure", "angle": "a"})
+    table = demand_mod.scores()
+    picked = topics_mod.diverse(topics_mod.annotate(topics, table), 3)
+    assert [t["title"] for t in picked] == ["Rejuran 0", "Rejuran 1", "Botox basics"]
+
+
+def test_demand_blends_our_traffic(site_env, monkeypatch):
+    approved = make_draft(site_env)                                        # rejuran 글 게시
+    review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
+    _approve(site_env, approved)
+    prior = demand_mod.scores()
+    assert prior["rejuran"]["data_weight"] == 0 and prior["thermage_rf"]["score"] == 1.0
+    assert prior["rejuran"]["score"] < 1.0                                 # 최근에 쓴 시술은 조금 낮춤
+    monkeypatch.setattr(demand_mod, "page_views", lambda s, e: {"/rejuran/": 3000})
+    data = demand_mod.scores()
+    assert data["rejuran"]["views"] == 3000 and data["rejuran"]["data_weight"] == 0.7
+    assert data["thermage_rf"]["data_weight"] == 0                         # 글 없는 시술은 사전값 유지
+    assert "조회 3000" in demand_mod.reason(data["rejuran"])
+    assert "Rejuran" in demand_mod.prompt_block(data)
+
+
+def test_topic_research_prompt_includes_demand(env):
+    topics_mod.build("2026-W40", 3)
+    assert "Audience demand by procedure" in env.calls[0][1] and "Thermage" in env.calls[0][1]
 
 
 def test_sponsored_post_always_links_official_site(sponsored, tmp_path, monkeypatch):
