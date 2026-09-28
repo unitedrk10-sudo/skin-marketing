@@ -69,7 +69,8 @@ def validate(s: dict) -> dict:
         if hits:
             raise SponsorError(f"스폰서 {s['id']}: route_ad.tagline 에 금지 표현 {hits} (의료법 §56②)")
     if ad:
-        s = {**s, "route_ad": {**ad, "confirmed": _as_date(ad["confirmed"]).isoformat(), "tagline": str(ad.get("tagline") or "")}}
+        s = {**s, "route_ad": {**ad, "confirmed": _as_date(ad["confirmed"]).isoformat(), "tagline": str(ad.get("tagline") or ""),
+                               "exclusive": bool(ad.get("exclusive"))}}
     return {**s, "contract": {**contract, "start": start.isoformat(), "end": end.isoformat()},
             "ad_review_required": bool(s.get("ad_review_required")), "review_no": str(s.get("review_no") or "")}
 
@@ -92,7 +93,23 @@ def load() -> dict[str, dict]:
         if v["id"] in out:
             raise SponsorError(f"스폰서 id 중복: {v['id']}")
         out[v["id"]] = v
+    check_exclusive(list(out.values()))
     return out
+
+
+def _overlaps(a: dict, b: dict) -> bool:
+    return a["contract"]["start"] <= b["contract"]["end"] and b["contract"]["start"] <= a["contract"]["end"]
+
+
+def check_exclusive(items: list[dict]) -> None:
+    """권역 독점(route_ad.exclusive): 계약 기간이 겹치는 같은 권역의 다른 코스 광고주가 있으면 오류."""
+    ads = [s for s in items if s.get("route_ad")]
+    for a in ads:
+        if not a["route_ad"]["exclusive"]:
+            continue
+        for b in ads:
+            if b is not a and b.get("zone") == a.get("zone") and _overlaps(a, b):
+                raise SponsorError(f"권역 독점 겹침: {a['id']} 가 {a['zone']} 독점인데 {b['id']} 도 같은 기간 코스 광고")
 
 
 def get(sponsor_id: str) -> dict:

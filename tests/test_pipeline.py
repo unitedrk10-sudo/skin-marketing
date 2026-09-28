@@ -1320,3 +1320,33 @@ def test_route_ad_tracked_link_and_expired_contract(site_env, tmp_path, monkeypa
     assert analytics_mod.published_counts(links, date(2099, 1, 1))["sponsor"] == 0    # 광고 자리는 글 수에 안 셈
     write_sponsors(tmp_path, {**ROUTE_AD, "contract": {"type": "monthly", "start": "2020-01-01", "end": "2020-12-31"}})
     assert site_mod.route_ad_sponsor(post) is None                                     # 계약 끝나면 자동으로 빠짐
+
+
+def test_route_ad_one_advertiser_per_post_and_assignment_is_stable(sponsored, tmp_path):
+    write_sponsors(tmp_path, ROUTE_AD)
+    post = _travel_post(sponsored)
+    assert site_mod.route_ad_sponsor(post)["id"] == "glow"
+    shine = {**ROUTE_AD, "id": "shine", "name_en": "Shine Skin Clinic", "name_ko": "샤인피부과의원",
+             "official_url": "https://www.shine.example"}
+    write_sponsors(tmp_path, ROUTE_AD, shine)
+    assert site_mod.route_ad_sponsor(post)["id"] == "glow"                  # 새 광고주가 와도 기존 글은 그대로
+    other = {**post, "draft": {**post["draft"], "id": "2026-W40-09-coex-2"}}
+    assert site_mod.route_ad_sponsor(other)["id"] == "shine"                # 새 글은 배정 적은 광고주에게
+    html_out = site_mod.render_post({**common.load_yaml("site.yaml"), "domain": ""}, post)
+    assert html_out.count('<aside class="adcard"') == 1                     # 글 하나에 광고 카드 하나
+    write_sponsors(tmp_path, shine)                                         # glow 계약 종료 → 그 글은 다음 광고주로
+    assert site_mod.route_ad_sponsor(post)["id"] == "shine"
+
+
+def test_route_ad_zone_exclusive(sponsored, tmp_path):
+    exclusive = {**ROUTE_AD, "route_ad": {**ROUTE_AD["route_ad"], "exclusive": True}}
+    shine = {**ROUTE_AD, "id": "shine", "name_en": "Shine Skin Clinic", "name_ko": "샤인피부과의원",
+             "official_url": "https://www.shine.example"}
+    write_sponsors(tmp_path, exclusive, shine)
+    with pytest.raises(sponsors_mod.SponsorError, match="독점"):
+        sponsors_mod.load()
+    later = {**shine, "contract": {"type": "monthly", "start": "2100-01-01", "end": "2100-12-31"}}
+    write_sponsors(tmp_path, exclusive, later)                              # 기간이 안 겹치면 가능
+    assert set(sponsors_mod.load()) == {"glow", "shine"}
+    post = _travel_post(sponsored)
+    assert site_mod.route_ad_sponsor(post)["id"] == "glow"

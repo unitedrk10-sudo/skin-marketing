@@ -287,9 +287,15 @@ def clinic_directory_html(post: dict) -> str:
             f'Check a clinic\'s status on the official registry before booking.</p>{"".join(parts)}</section>')
 
 
+def route_ads_file() -> Path:
+    return content_dir() / "site" / "route_ads.json"
+
+
 def route_ad_sponsor(post: dict) -> dict | None:
-    """중립 여행 글의 코스 광고 카드에 들어갈 광고주 1곳 (없으면 None).
-    조건: route_ad 계약·광고 문구 병원 확인·계약 기간·코스 정류장과 같은 권역. 여러 곳이면 글마다 돌아가며 (글 id 해시)."""
+    """중립 여행 글의 코스 광고 카드에 들어갈 광고주 1곳 (없으면 None). 글 하나 = 광고주 하나 (독점 지면).
+    조건: route_ad 계약·광고 문구 병원 확인·계약 기간·코스 정류장과 같은 권역.
+    배정은 content/site/route_ads.json 에 고정 — 계약 기간 동안 그 글은 그 광고주 것 (새 광고주가 와도 안 바뀜).
+    새 글은 같은 권역 광고주 중 배정된 글이 가장 적은 곳에. 권역 독점(route_ad.exclusive) 광고주는 그 권역 글 전부."""
     draft = post["draft"]
     if draft.get("sponsor") or draft.get("content_type") not in CLINIC_LIST_AXES:
         return None
@@ -304,9 +310,20 @@ def route_ad_sponsor(post: dict) -> dict | None:
     zones = {catalog[a]["zone"] for a in clinics.stops_for(text)}
     candidates = sorted((s for s in registered if s.get("route_ad") and s.get("zone") in zones
                          and not sponsors.problems(s)), key=lambda s: s["id"])
+    exclusive = [s for s in candidates if s["route_ad"]["exclusive"]]
+    candidates = exclusive or candidates
     if not candidates:
         return None
-    return candidates[int(hashlib.sha1(draft["id"].encode()).hexdigest(), 16) % len(candidates)]
+    assigned = load_json(route_ads_file()) if route_ads_file().exists() else {}
+    current = assigned.get(draft["id"])
+    by_id = {s["id"]: s for s in candidates}
+    if current in by_id:
+        return by_id[current]
+    load = {s["id"]: sum(1 for v in assigned.values() if v == s["id"]) for s in candidates}
+    chosen = min(candidates, key=lambda s: (load[s["id"]], s["id"]))
+    assigned[draft["id"]] = chosen["id"]
+    save_json(route_ads_file(), assigned)
+    return chosen
 
 
 def route_ad_html(cfg: dict, sponsor: dict | None, tracked_url: str | None) -> str:
