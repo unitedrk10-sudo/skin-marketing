@@ -364,6 +364,8 @@ Hermes → 텔레그램 메시지 예시:
 
 ## 13. 미결 사항
 
+> 예산·정보 제공 기간 로드맵(12개월 가정): `docs/budget.md` (2026-09-28)
+
 - TTS 서비스·목소리 최종 선택
 - 영상 합성 방식: ffmpeg 스크립트 vs Remotion vs 캡컷 템플릿
 - 예약 게시 도구 선택 (Buffer / Later / Metricool)
