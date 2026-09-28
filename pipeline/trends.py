@@ -35,7 +35,9 @@ def trends_dir():
 
 
 def _sources(item: dict) -> list[str]:
-    return [u for u in (item.get("sources") or []) if isinstance(u, str) and u.startswith("http")]
+    value = item.get("sources")
+    value = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    return [u for u in value if isinstance(u, str) and u.startswith("http")]
 
 
 def _trend(value) -> int:
@@ -48,41 +50,51 @@ def _trend(value) -> int:
 def _topic(topic) -> dict | None:
     if not isinstance(topic, dict) or not (topic.get("title") and topic.get("angle")):
         return None
-    return {"title": str(topic["title"])[:80], "angle": topic["angle"], "keywords": list(topic.get("keywords") or [])[:6],
-            "hook": topic.get("hook", "")}
+    keywords = topic.get("keywords")
+    keywords = [k for k in keywords if isinstance(k, str)][:6] if isinstance(keywords, list) else []
+    return {"title": str(topic["title"])[:80], "angle": str(topic["angle"]), "keywords": keywords,
+            "hook": _str(topic.get("hook"))}
+
+
+def _items(data: dict, key: str) -> list[dict]:
+    value = data.get(key)
+    return [x for x in value if isinstance(x, dict)] if isinstance(value, list) else []
+
+
+def _str(value) -> str:
+    return value if isinstance(value, str) else ""
 
 
 def validate(data: dict, known: set[str], today: date) -> dict:
-    """출처 없는 항목·알 수 없는 id·끝난 행사를 버린다."""
+    """출처 없는 항목·알 수 없는 id·끝난 행사를 버린다. 모델 출력 형식이 틀려도 스캔 전체가 죽지 않게 항목별로 거른다."""
     attractions, emerging, food = {}, [], []
-    for a in data.get("attractions") or []:
-        if a.get("id") in known and _sources(a) and _trend(a.get("trend")):
-            prev = attractions.get(a["id"])
+    for a in _items(data, "attractions"):
+        aid = _str(a.get("id"))
+        if aid in known and _sources(a) and _trend(a.get("trend")):
+            prev = attractions.get(aid)
             if not prev or _trend(a["trend"]) > prev["trend"]:
-                attractions[a["id"]] = {"trend": _trend(a["trend"]), "why": str(a.get("why", ""))[:300], "sources": _sources(a)}
-    for e in data.get("emerging") or []:
-        topic = e.get("topic") or {}
-        until = str(e.get("until") or "")
+                attractions[aid] = {"trend": _trend(a["trend"]), "why": str(a.get("why", ""))[:300], "sources": _sources(a)}
+    for e in _items(data, "emerging"):
+        topic = _topic(e.get("topic"))
+        until = _str(e.get("until"))
         if until:
             try:
                 if date.fromisoformat(until) < today:
                     continue
             except ValueError:
                 until = ""
-        if not (e.get("name") and _sources(e) and topic.get("title") and topic.get("angle")):
+        if not (_str(e.get("name")) and _sources(e) and topic):
             continue
-        emerging.append({"id": f"trend-{slugify(e['name'], 40)}", "name": e["name"], "area": e.get("area", ""),
+        emerging.append({"id": f"trend-{slugify(e['name'], 40)}", "name": e["name"], "area": _str(e.get("area")),
                          "trend": _trend(e.get("trend")), "why": str(e.get("why", ""))[:300], "sources": _sources(e),
-                         "until": until, "topic": {"title": str(topic["title"])[:80], "angle": topic["angle"],
-                                                   "keywords": list(topic.get("keywords") or [])[:6],
-                                                   "hook": topic.get("hook", "")}})
+                         "until": until, "topic": topic})
     emerging.sort(key=lambda e: -e["trend"])
-    for f in data.get("food") or []:
-        if not (f.get("name") and _sources(f) and _trend(f.get("trend"))):
+    for f in _items(data, "food"):
+        if not (_str(f.get("name")) and _sources(f) and _trend(f.get("trend"))):
             continue
-        kind = f.get("kind") if f.get("kind") in FOOD_KINDS else "dish"
-        food.append({"id": f"trend-food-{slugify(f['name'], 40)}", "name": f["name"], "kind": kind, "area": f.get("area", ""),
-                     "attraction": f.get("attraction") if f.get("attraction") in known else "",
+        kind = _str(f.get("kind")) if _str(f.get("kind")) in FOOD_KINDS else "dish"
+        food.append({"id": f"trend-food-{slugify(f['name'], 40)}", "name": f["name"], "kind": kind, "area": _str(f.get("area")),
+                     "attraction": _str(f.get("attraction")) if _str(f.get("attraction")) in known else "",
                      "trend": _trend(f["trend"]), "why": str(f.get("why", ""))[:300], "sources": _sources(f),
                      "topic": _topic(f.get("topic"))})
     food.sort(key=lambda f: -f["trend"])

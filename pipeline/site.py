@@ -181,7 +181,8 @@ main,header,footer{max-width:720px;margin:0 auto;padding:0 20px}header{padding-t
 .tagline{color:var(--muted);font-size:.95em;margin:.2em 0 1.5em}a{color:var(--accent)}h1{line-height:1.25;font-size:1.9em}
 .meta{color:var(--muted);font-size:.9em}.badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:4px;padding:0 6px;font-size:.8em;font-weight:600}
 blockquote{margin:1em 0;padding:.6em 1em;border-left:4px solid var(--ad);background:var(--adbg)}sup.ref a{text-decoration:none;font-size:.8em}
-.box{margin:1.5em 0;padding:.8em 1em;border:1px solid var(--line);border-radius:6px}
+.box{margin:1.5em 0;padding:.8em 1em;border:1px solid var(--line);border-radius:6px}.box h2{margin:.3em 0 .5em;font-size:1.25em}
+.clinics ol{font-size:.95em;padding-left:1.4em}
 .adcard{margin:1em 0;padding:.5em .8em;border:1px dashed var(--line);border-radius:6px;font-size:.9em}
 .sources{font-size:.9em;border-top:1px solid var(--line);margin-top:2em}.sources li{word-break:break-word}
 .posts{list-style:none;padding:0}.posts li{padding:.8em 0;border-bottom:1px solid var(--line)}.posts a{font-weight:600;text-decoration:none}

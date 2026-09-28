@@ -1350,3 +1350,18 @@ def test_route_ad_zone_exclusive(sponsored, tmp_path):
     assert set(sponsors_mod.load()) == {"glow", "shine"}
     post = _travel_post(sponsored)
     assert site_mod.route_ad_sponsor(post)["id"] == "glow"
+
+
+def test_trend_scan_survives_malformed_model_output(env):
+    env.responses["trends"] = {
+        "attractions": ["ddp", {"id": ["x"], "trend": 50, "sources": "https://a.example"},
+                       {"id": "ddp", "trend": "90", "why": "ok", "sources": "https://s.example"}],
+        "emerging": [{"name": "Pop-up", "sources": ["https://p.example"], "topic": "just a string"},
+                     {"name": "Fest", "trend": 70, "sources": ["https://f.example"], "until": "not-a-date",
+                      "topic": {"title": "Fest guide", "angle": "a", "keywords": "x"}}],
+        "food": [{"name": "Cookie", "kind": ["dessert"], "attraction": ["seongsu"], "trend": 60, "sources": ["https://c.example"]}],
+    }
+    data = trends_mod.scan("2026-W40")
+    assert data["attractions"]["ddp"]["trend"] == 90 and data["attractions"]["ddp"]["sources"] == ["https://s.example"]
+    assert [e["name"] for e in data["emerging"]] == ["Fest"] and data["emerging"][0]["topic"]["keywords"] == []
+    assert data["food"][0]["kind"] == "dish" and data["food"][0]["attraction"] == ""
