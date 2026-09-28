@@ -4,6 +4,7 @@ Gemini 검색 연동으로 주제 후보를 조사해 content/topics/<주차>.js
 텔레그램으로 보낼 메시지를 stdout 에 출력한다. 사람이 번호를 고르면 02_draft 를 실행한다.
 
     python -m pipeline.01_topics [--week 2026-W40] [--count 6]
+    python -m pipeline.01_topics --from-seed 6     # config/seed_topics.yaml 에서 안 쓴 주제를 wave 순으로 (Gemini 호출 없음)
 """
 
 from __future__ import annotations
@@ -57,6 +58,34 @@ def validate(topics: list[dict], axes: list[str]) -> list[dict]:
     return out
 
 
+def used_seed_ids() -> set[str]:
+    """초안까지 만든 주제, 또는 두 번 제안했는데 안 고른 주제는 다시 내지 않는다."""
+    drafted = {load_draft(d)["topic"].get("seed_id") for state in STATES[1:] for d in draft_dirs(state)}
+    offered: dict[str, int] = {}
+    for f in content_dir("topics").glob("*.json"):
+        for t in load_json(f).get("topics", []):
+            if t.get("seed_id"):
+                offered[t["seed_id"]] = offered.get(t["seed_id"], 0) + 1
+    return {i for i in drafted if i} | {i for i, n in offered.items() if n >= 2}
+
+
+def from_seed(week: str, count: int) -> dict | None:
+    """조사해 둔 초기 주제 목록에서 아직 안 쓴 것을 wave·순서대로 꺼낸다. 다 썼으면 None."""
+    axes = load_yaml("channels.yaml")["content_axes"]
+    seeds = load_yaml("seed_topics.yaml").get("topics", [])
+    used = used_seed_ids()
+    fresh = sorted((s for s in seeds if s["id"] not in used), key=lambda s: s.get("wave", 9))  # 같은 wave 는 파일 순서
+    if not fresh:
+        return None
+    picked = []
+    for s in fresh[:count]:
+        topic = {k: v for k, v in s.items() if k not in ("id", "wave")}
+        topic["sources"] = [x if isinstance(x, dict) else {"url": x, "title": ""} for x in s.get("sources", [])]
+        topic["seed_id"] = s["id"]
+        picked.append(topic)
+    return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [], "topics": validate(picked, axes)}
+
+
 def telegram_message(week: str, topics: list[dict]) -> str:
     lines = [f"[{week} 주제 후보 {len(topics)}건] 번호로 골라주세요 (예: 1,3,4)"]
     for i, t in enumerate(topics, 1):
@@ -95,9 +124,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="주간 주제 후보 생성")
     parser.add_argument("--week", default=iso_week())
     parser.add_argument("--count", type=int, default=load_yaml("channels.yaml").get("topics_per_week", 6))
+    parser.add_argument("--from-seed", type=int, metavar="N", help="조사해 둔 초기 주제 N개 사용 (Gemini 호출 없음)")
     args = parser.parse_args(argv)
 
-    data = build(args.week, args.count)
+    data = from_seed(args.week, args.from_seed) if args.from_seed else None
+    if data is None:
+        if args.from_seed:
+            log.info("초기 주제 목록을 모두 써서 Gemini 조사로 전환")
+        data = build(args.week, args.count)
     path = content_dir("topics") / f"{args.week}.json"
     save_json(path, data)
     log.info("주제 %d건 저장: %s", len(data["topics"]), path)

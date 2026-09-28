@@ -1,5 +1,9 @@
 # Hermes 운영 설정
 
+## 사전 준비
+- Python 3.11+, git, Claude Code (로그인) — 설치돼 있음
+- **Node.js 20 이상** (Cloudflare 배포 도구 `npx wrangler` 용): https://nodejs.org 에서 LTS 설치 → 새 터미널에서 `node -v` 확인
+
 ## 설치 (Hermes 머신에서 한 번)
 ```bash
 git clone https://github.com/unitedrk10-sudo/skin-marketing.git && cd skin-marketing

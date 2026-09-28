@@ -793,3 +793,34 @@ def test_site_deploy_only_when_changed(site_env, monkeypatch):
     assert "새 글: https://skinbound.example/rejuran/" in msg and len(calls) == 1
     assert "pages" in calls[0] and "deploy" in calls[0]
     assert site_mod.deploy() == "" and len(calls) == 1  # 바뀐 것 없음 → 배포·알림 없음
+
+
+# ---- 초기 주제 목록 (seed) ----
+
+def test_seed_topics_are_valid_and_compliant():
+    seeds = common.load_yaml("seed_topics.yaml")["topics"]
+    axes = common.load_yaml("channels.yaml")["content_axes"]
+    banned = review_mod.load_banned()
+    ids = [s["id"] for s in seeds]
+    assert len(ids) == len(set(ids)) and len(seeds) >= 20
+    for s in seeds:
+        assert s["axis"] in axes and s["title"] and s["angle"] and s["hook"], s["id"]
+        text = f"{s['title']}\n{s['hook']}\n{s['angle']}"
+        hits = [term for term, pat in banned if pat.search(text)]
+        assert not hits, (s["id"], hits)
+        patterns = [label for kind, label, pat in review_mod.RULE_PATTERNS if pat.search(text)
+                    and kind in ("clinic_name", "doctor_name", "phone", "booking", "credential", "testimonial")]
+        assert not patterns, (s["id"], patterns)
+
+
+def test_from_seed_order_and_reuse(env):
+    week1 = topics_mod.from_seed("2026-W40", 3)
+    assert [t["seed_id"] for t in week1["topics"]] == ["vat-refund-ended-2026", "rejuran-explained", "juvelook-explained"]
+    assert week1["topics"][0]["sources"][0]["url"].startswith("https://")
+    common.save_json(common.content_dir("topics") / "2026-W40.json", week1)
+    draft_mod.create("2026-W40", 2, week1["topics"][1])           # rejuran 만 초안으로
+    week2 = topics_mod.from_seed("2026-W41", 3)
+    assert [t["seed_id"] for t in week2["topics"]] == ["vat-refund-ended-2026", "juvelook-explained", "flying-after-treatment"]
+    common.save_json(common.content_dir("topics") / "2026-W41.json", week2)
+    week3 = topics_mod.from_seed("2026-W42", 2)                   # 두 번 제안하고 안 고른 주제는 제외
+    assert "vat-refund-ended-2026" not in [t["seed_id"] for t in week3["topics"]]
