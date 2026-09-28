@@ -39,7 +39,7 @@ topics:
     wave: 1
     axis: procedure_travel
     title: "Flying home after a skin treatment in Korea: timing guide"
-    angle: "How many days to leave between lasers, injectables or boosters and your flight, and what cabin air and sun exposure mean for healing skin."
+    angle: "How many days to leave between lasers, injectables or boosters and your flight (never the day after — keep it for observation), and what cabin air and sun exposure mean for healing skin."
     why_now: "The most common planning question for short trips; downtime varies from none to 5-10 days."
     keywords: [flying after laser treatment, fly after skin booster, korea skin treatment itinerary]
     hook: "Laser on day 5, flight on day 6 — good idea?"
@@ -57,7 +57,7 @@ topics:
     wave: 1
     axis: how_to
     title: "How many days do you need in Korea for skin treatments?"
-    angle: "Planning a trip around consultation, treatment, visible downtime and follow-up for common procedures."
+    angle: "Planning a trip around consultation, treatment, a next-day observation day, visible downtime and follow-up for common procedures."
     why_now: "Trip length decides which procedures are realistic; frequent pre-trip question."
     keywords: [korea skin treatment trip length, how long stay korea dermatology, korea glow up trip itinerary]
     hook: "3 days or 7 days — how long should your Korea skin trip be?"
@@ -67,7 +67,7 @@ topics:
     wave: 1
     axis: procedure_travel
     title: "A 5-day Seoul itinerary built around a skin booster"
-    angle: "Day-by-day plan that puts consultation and treatment early, keeps sun-heavy and sauna days away from treatment, and leaves buffer before the flight. Areas only, no clinics."
+    angle: "Day-by-day plan: consultation and treatment early, the next day kept as a light observation day near the treatment area (possible follow-up check), sun-heavy and sauna days later, and buffer before the flight. Areas only, no clinics."
     why_now: "Itinerary content is heavily searched ('Korea glow-up trip itinerary') and shows the channel's travel angle."
     keywords: [seoul itinerary skin treatment, korea glow up trip itinerary, 5 days seoul beauty trip]
     hook: "5 days in Seoul, one skin booster — here's how to plan it."
@@ -164,7 +164,7 @@ topics:
     wave: 2
     axis: procedure_travel
     title: "A 3-day Seoul trip with low-downtime treatments"
-    angle: "Which kinds of treatments usually fit a short trip, how to order the days, and what to leave for a longer visit."
+    angle: "Which kinds of treatments usually fit a short trip, why treatment should be on day 1 so day 2 can be an observation day, and what to leave for a longer visit."
     why_now: "Short stopover and weekend trips from Southeast Asia are common."
     keywords: [3 days seoul skin treatment, short trip korea dermatology, weekend seoul beauty trip]
     hook: "Only 3 days in Seoul? What's realistic for your skin."
@@ -214,6 +214,18 @@ topics:
     keywords: [olive young aftercare, korean cosmetic label, functional cosmetics korea]
     hook: "Standing in Olive Young, lost in Korean labels?"
     has_price: false
+
+  - id: check-registered-clinic
+    wave: 2
+    axis: how_to
+    title: "How to check a Korean clinic on the official foreign-patient registry"
+    angle: "Using the government-run Medical Korea registry of medical institutions registered for foreign patients, what registration does and doesn't tell you, and other official checks — no clinic recommendations."
+    why_now: "Safety is the top worry of first-time visitors; points to an official source instead of rankings."
+    keywords: [registered clinic korea foreigners, medical korea registered hospitals, how to verify clinic korea]
+    hook: "Before you book: check this official Korean list."
+    has_price: false
+    sources:
+      - https://www.medicalkorea.or.kr/en/registeredhospitals
 
   # ---------- wave 3 ----------
   - id: pdrn-exosome-evidence
@@ -337,7 +349,7 @@ topics:
     wave: 3
     axis: procedure_travel
     title: "Adding Jeju or Busan after a skin treatment: sun, sea and sauna"
-    angle: "How beach sun, seawater swimming and spa culture interact with healing skin, and how to order a Seoul-then-coast trip."
+    angle: "How beach sun, seawater swimming and spa culture interact with healing skin, and how to order a Seoul-then-coast trip with an observation day in Seoul before flying or taking the KTX."
     why_now: "Multi-city trips are common; beaches and spas are classic aftercare conflicts."
     keywords: [jeju after laser, swimming after skin treatment, busan trip after botox]
     hook: "Beach in Jeju right after your laser? Plan this first."
