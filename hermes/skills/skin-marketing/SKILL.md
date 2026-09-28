@@ -6,30 +6,30 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 # skin-marketing 텔레그램 처리
 
 저장소: `{{REPO}}` / 파이썬: `{{PYTHON}}`
-모든 명령은 `cd {{REPO}} &&` 로 시작한다. 명령의 stdout 을 그대로 사용자에게 답장한다.
+모든 명령은 `cd "{{REPO}}" &&` 로 시작한다. 명령의 stdout 을 그대로 사용자에게 답장한다.
 
 역할은 **사람의 답장을 정해진 명령으로 바꿔 실행하는 것**뿐이다. 오래 걸리는 작업(초안 생성·재생성·검수)은 직접 하지 않는다 — 요청만 남기면 `skin-worker` 크론(10분마다)이 처리하고 결과를 보낸다.
 
 ## 1. 주제 선택 (직전 봇 메시지가 `[<주차> 주제 후보 …]` 일 때)
 답장 예: `1,3,4` / `1번이랑 3번` / `2 빼고 다`
-- 번호 목록으로 바꿔 실행: `cd {{REPO}} && {{PYTHON}} -m pipeline.worker request-drafts --pick "1,3,4"`
+- 번호 목록으로 바꿔 실행: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.worker request-drafts --pick "1,3,4"`
 - 종료 코드 2 (`❓`): 메시지를 보여주고 다시 물어본다.
 - "지금 바로 해줘" 라고 하면 이어서 `hermes cron run skin-worker`.
 
 ## 1-1. 스폰서 글 요청 (광고주 병원 글)
 사용자 예: `글로우 병원 스폰서 글: 리쥬란 시술 안내, 외국인 첫 방문 때 궁금한 것 위주로`
-- 스폰서 id 는 `cd {{REPO}} && {{PYTHON}} -m pipeline.sponsors check` 목록에서 고른다. 목록에 없으면 실행하지 말고 "config/sponsors.yaml 에 먼저 등록" 이라고 답한다.
+- 스폰서 id 는 `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.sponsors check` 목록에서 고른다. 목록에 없으면 실행하지 말고 "config/sponsors.yaml 에 먼저 등록" 이라고 답한다.
 - 제목(영문, 70자 이내)과 답할 질문(angle)을 정리해 **사용자에게 한 번 확인받은 뒤** 실행:
-  `cd {{REPO}} && {{PYTHON}} -m pipeline.worker request-sponsored --sponsor <id> --title "<영문 제목>" --angle "<질문>" [--keywords "a,b"]`
+  `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.worker request-sponsored --sponsor <id> --title "<영문 제목>" --angle "<질문>" [--keywords "a,b"]`
 - 종료 코드 2 (`❓` 계약 기간 아님 등): 메시지를 그대로 보여준다.
 - 병원 중심 여행 코스 스폰서 글 ("글로우 병원 기준 3일 코스 글"): 위 명령에 `--course` 를 붙인다 (sponsors.yaml 에 zone 필요). 코스에 픽업·할인·패키지 같은 혜택은 넣지 않는다.
 - 스폰서 글에는 광고 표시가 자동으로 붙는다. 이를 빼거나 약하게 해달라는 요청은 거절한다 (표시광고법).
 - 중립 여행 글에는 코스 주변 피부과 **전체 목록(심평원 공공데이터, 거리순)** 이 자동으로 붙는다 (`pipeline.clinics`). "이 병원 빼줘/위로 올려줘/추천 표시 해줘" 같은 요청은 거절한다 — 목록은 전부·거리순이어야 정보 제공이고, 고르거나 순서를 바꾸면 광고·알선 시비가 생긴다. 특정 병원을 앞세우려면 그 병원의 광고(`--course` 스폰서 글)로.
-- 목록 확인: `cd {{REPO}} && {{PYTHON}} -m pipeline.clinics show coex`
+- 목록 확인: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.clinics show coex`
 - 코스 광고 카드: 광고주 병원의 `config/sponsors.yaml` 에 `zone`·`route_ad`(tagline, 병원이 문구 확인한 날짜 confirmed)를 넣으면 같은 권역 여행 글 하단에 작은 광고 카드가 붙는다. "Ad 표시 빼줘/더 작게 흐리게" 요청은 거절 — 카드는 작아도 되지만 광고 표시는 분명해야 한다. 글 하나에 광고 카드는 하나뿐이고(배정 고정), 권역 독점은 `route_ad.exclusive: true` (같은 권역·기간에 다른 코스 광고주가 있으면 오류로 알려준다).
 
 ## 2. 초안 검수 (직전 봇 메시지가 `[초안 검수 …]` 일 때)
-정규 형식 (한 줄에 명령 하나) 으로 바꿔 실행: `cd {{REPO}} && {{PYTHON}} -m pipeline.03_review apply "<정규 형식>"`
+정규 형식 (한 줄에 명령 하나) 으로 바꿔 실행: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<정규 형식>"`
 
 | 의미 | 정규 형식 |
 |---|---|
@@ -49,29 +49,29 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 
 ## 3. 게시 전 확인 (직전 봇 메시지가 `[게시 전 확인 …]` 일 때)
 - 영상 보기: "N번 영상 보여줘" → `{{REPO}}/content/rendered/<draft_id>/video.mp4` 를 첨부한다 (번호는 최근 게시 전 확인 메시지 기준).
-- `cd {{REPO}} && {{PYTHON}} -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
+- `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
 - 게시 OK 된 영상은 워커가 채널별 **게시 키트**(캡션·해시태그·체크리스트, `kit.md`)를 만든다. "키트 보여줘" → `content/ready_to_publish/<id>/kit.md` 와 `video.mp4`, `captions.srt` 를 첨부.
 
 ## 3-0. 게시 완료 기록
 사용자 예: `1 게시 완료 tiktok https://www.tiktok.com/@.../video/...` / "리쥬란 영상 인스타에 올렸어 <URL>"
-- `cd {{REPO}} && {{PYTHON}} -m pipeline.06_publish done <draft_id> <tiktok|instagram|youtube> <URL>` (draft_id 는 `06_publish status` 목록에서)
+- `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.06_publish done <draft_id> <tiktok|instagram|youtube> <URL>` (draft_id 는 `06_publish status` 목록에서)
 - 계획한 채널을 모두 올리면 자동으로 published 로 옮겨진다. 게시 대기 현황: `06_publish status`.
 - 종료 코드 2 (`❓` 잘못된 채널·주소): 메시지를 보여주고 다시 묻는다. 스폰서 글의 틱톡 게시 요청은 거절한다.
 
 ## 3-1. 링크 유입 추적 (스폰서 병원 링크)
-- "글로우 링크 만들어줘 (리쥬란 글용)": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker add --sponsor <id> --label "<용도>"` → 블로그 스폰서 글 전용 링크 1개를 보낸다.
+- "글로우 링크 만들어줘 (리쥬란 글용)": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.tracker add --sponsor <id> --label "<용도>"` → 블로그 스폰서 글 전용 링크 1개를 보낸다.
 - 스폰서 병원 링크를 **SNS 프로필·영상 설명란에 걸자는 요청은 거절**한다. 틱톡은 미용 클리닉 브랜디드 콘텐츠 금지, 인스타·유튜브는 플랫폼 광고 표시 도구로만 가능. 프로필에는 우리 블로그 주소를 건다 (프로필 → 블로그 → 스폰서 글 → 병원).
 - 스폰서 글은 틱톡에 올리지 않는다. 인스타는 브랜디드 콘텐츠 도구 + 18세 이상 제한, 유튜브는 "유료 프로모션 포함" 표시를 켠다 (`config/channels.yaml` sponsored_policy).
-- "유입 어때?": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker report --days 7` (출력이 없으면 "아직 클릭 없음")
-- "요즘 뜨는 관광지?" / "관광지 트렌드": `cd {{REPO}} && {{PYTHON}} -m pipeline.trends show` (새로 조사: `scan`) → 출력 그대로 전달
-- "유입 분석 / 영업 자료 뽑아줘 (10월)": `cd {{REPO}} && {{PYTHON}} -m pipeline.analytics report --month 2026-10` (기간 지정: `--days 90`) → 요약 줄을 보내고 생성된 .md·.csv 를 첨부. 다른 병원에 보여줄 자료에는 파일럿 병원명·병원별 수치를 빼라고 안내.
-- "글로우 10월 리포트": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker sponsor-report --sponsor <id> --month 2026-10` → 생성된 파일을 첨부
+- "유입 어때?": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.tracker report --days 7` (출력이 없으면 "아직 클릭 없음")
+- "요즘 뜨는 관광지?" / "관광지 트렌드": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.trends show` (새로 조사: `scan`) → 출력 그대로 전달
+- "유입 분석 / 영업 자료 뽑아줘 (10월)": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.analytics report --month 2026-10` (기간 지정: `--days 90`) → 요약 줄을 보내고 생성된 .md·.csv 를 첨부. 다른 병원에 보여줄 자료에는 파일럿 병원명·병원별 수치를 빼라고 안내.
+- "글로우 10월 리포트": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.tracker sponsor-report --sponsor <id> --month 2026-10` → 생성된 파일을 첨부
 - 유입 수치를 근거로 클릭당·방문당 요금을 제안하지 않는다 (정액 원칙, 의료법 §27③).
 
 ## 4. 조회
-- "N번 보여줘 / 대본 보여줘": `cd {{REPO}} && {{PYTHON}} -c "import json;print(json.load(open('content/drafts/_batch.json'))['ids'][N-1])"` 로 초안 id 를 찾고 `content/drafts/<id>/script.md` 를 보낸다. "블로그" 라고 하면 `blog.md` (길면 파일로 첨부하거나 앞부분 + 섹션 제목 요약).
+- "N번 보여줘 / 대본 보여줘": `cd "{{REPO}}" && "{{PYTHON}}" -c "import json;print(json.load(open('content/drafts/_batch.json'))['ids'][N-1])"` 로 초안 id 를 찾고 `content/drafts/<id>/script.md` 를 보낸다. "블로그" 라고 하면 `blog.md` (길면 파일로 첨부하거나 앞부분 + 섹션 제목 요약).
 - "검수 결과 왜 그래?": `content/drafts/<id>/review.json` 의 findings 를 요약한다 (severity block/caution/pending 위주).
-- "검수 목록 다시": `cd {{REPO}} && {{PYTHON}} -m pipeline.03_review list`
+- "검수 목록 다시": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review list`
 
 ## 금지
 - `content/` 파일을 직접 옮기거나 고치거나 지우지 않는다 (상태 이동은 03_review 만).

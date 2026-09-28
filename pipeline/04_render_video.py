@@ -72,7 +72,7 @@ def set_tts(fn) -> None:
 # ---------------- ffmpeg ----------------
 
 def _run(cmd: list[str]) -> str:
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600, check=False)
     if proc.returncode != 0:
         raise RenderError(f"{cmd[0]} 실패: {(proc.stderr or proc.stdout)[-400:]}")
     return proc.stdout
@@ -175,7 +175,8 @@ def render(path: Path) -> Path:
 
 
 def _run_in(cwd: Path, cmd: list[str]) -> str:
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=900, check=False)
+    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=900, check=False)
     if proc.returncode != 0:
         raise RenderError(f"{cmd[0]} 실패: {(proc.stderr or proc.stdout)[-400:]}")
     return proc.stdout

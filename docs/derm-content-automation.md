@@ -143,7 +143,7 @@ derm-content/
 │   └── law_sync.py               # 추적 법령 조회·스냅샷·변경 감지
 ├── hermes/
 │   ├── README.md                 # 설치·크론·대화 흐름
-│   ├── install.sh                # 크론 스크립트·스킬 설치, hermes cron 등록
+│   ├── install.py                # 크론 스크립트(.py)·스킬 설치, hermes cron 등록 (install.sh 는 호환용)
 │   └── skills/skin-marketing/SKILL.md  # 텔레그램 답장 처리 스킬
 ├── content/
 │   ├── topics/                   # 주간 주제 후보
@@ -295,8 +295,8 @@ Hermes → 텔레그램 메시지 예시:
    - [x] 게시 → `06_publish.py` 채널별 게시 키트 + 게시 기록 (예약 게시 도구·플랫폼 API 연결은 이후)
    - [x] 주간 리포트 → `07_report.py`, 블로그 공유 이미지·아이콘 (`og.py`)
 3. **Hermes에 운영 등록**
-   - [ ] `bash hermes/install.sh` 로 크론 + 텔레그램 스킬 등록 — PC 작업 순서: `docs/pc-setup-checklist.md`
-   - [ ] `.env` 키 입력, `skin-check.sh` 로 점검
+   - [ ] `hermes/install.py` 로 크론 + 텔레그램 스킬 등록 — PC 작업 순서: `docs/pc-setup-checklist.md`
+   - [ ] `.env` 키 입력, `skin-check.py` 로 점검
    - [ ] 실패 알림 확인
 4. **시험 운영 1주** (게시는 비공개/테스트 계정)
 5. **본격 게시 시작**

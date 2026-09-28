@@ -17,10 +17,11 @@ no-agent 크론이 주기적으로 실행한다 (stdout 이 그대로 텔레그�
 from __future__ import annotations
 
 import argparse
-import fcntl
 import importlib
+import sys
 import time
 from pathlib import Path
+from typing import IO
 
 from pipeline import llm
 from pipeline.common import content_dir, get_logger, load_json, now_iso, run_cli, save_json
@@ -30,6 +31,20 @@ log = get_logger("worker")
 
 def requests_dir() -> Path:
     return content_dir() / "requests"
+
+
+def try_lock(f: IO) -> bool:
+    """배타 잠금을 비차단으로 시도. 다른 프로세스가 잡고 있으면 False. 파일을 닫으면 풀린다."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:  # BlockingIOError(fcntl) / PermissionError(msvcrt)
+        return False
+    return True
 
 
 def enqueue(kind: str, **data) -> Path:
@@ -176,9 +191,7 @@ def main(argv: list[str] | None = None) -> int:
 
     requests_dir().mkdir(parents=True, exist_ok=True)
     with (requests_dir() / ".lock").open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not try_lock(lock):
             log.info("이전 실행이 진행 중 — 건너뜀")
             return 0
         message, failures = run()

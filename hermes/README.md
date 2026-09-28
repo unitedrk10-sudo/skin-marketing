@@ -7,14 +7,16 @@
 ## 설치 (Hermes 머신에서 한 번)
 ```bash
 git clone https://github.com/unitedrk10-sudo/skin-marketing.git && cd skin-marketing
-bash hermes/install.sh
-# .env 에 GEMINI_API_KEY, LAW_API_OC 입력 후
-bash ~/.hermes/scripts/skin-check.sh      # 키·모델·Claude Code 로그인 점검
+python -m venv .venv                       # 저장소 전용 파이썬 (Hermes 자체 venv 와 분리)
+.venv/bin/python hermes/install.py         # Windows: .venv\Scripts\python hermes\install.py
+# .env 에 GEMINI_API_KEY, LAW_API_OC 입력 후 — 설치 끝에 출력되는 skin-check 명령으로 키·모델·Claude Code 로그인 점검
 hermes cron run skin-weekly-topics         # 바로 주제 후보 받아보기
 ```
+- 크론 스크립트는 `<HERMES_HOME>/scripts/<크론 이름>.py` 로 생긴다 (Windows `%LOCALAPPDATA%\hermes`, 그 외 `~/.hermes`). `.sh` 가 아닌 `.py` 인 이유: Hermes 는 `.sh` 를 PATH 의 bash 로 실행하는데 Windows 에서는 그게 WSL 이라 실패한다. `.py` 는 Hermes 자신의 Python 이 실행하고, 스크립트가 저장소 `.venv` 파이썬으로 파이프라인을 돌린다.
+- `.venv` 가 있으면 자동으로 그 파이썬을 쓴다. 다른 파이썬: `--python <경로>` (또는 `PYTHON` 환경변수). `bash hermes/install.sh` 도 같은 설치를 한다.
 - Hermes 에 등록한 Gemini 키는 크론 스크립트에 전달되지 않는다 (Hermes 관리 자격 증명). 그래서 저장소 `.env`(git 제외, 권한 600)에 따로 넣는다.
 - Claude Code 가 같은 머신에 설치·로그인돼 있어야 한다 (`claude -p` 로 검수). Anthropic API 키는 필요 없다.
-- `install.sh` 는 다시 실행해도 안전하다 (이미 있는 크론은 건너뜀). 스크립트 내용을 바꾸려면 저장소의 `install.sh` 를 고치고 다시 실행.
+- `install.py` 는 다시 실행해도 안전하다 (이미 있는 크론은 건너뜀, 스크립트·스킬은 덮어씀). 스크립트 내용을 바꾸려면 `install.py` 의 `JOBS` 를 고치고 다시 실행.
 
 ## 스폰서(광고주 병원) 등록
 ```bash
@@ -42,19 +44,19 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 ## 크론 (no-agent — stdout 이 그대로 텔레그램, 출력 없으면 조용, 실패 시 에러 알림)
 | 이름 | 스케줄 | 스크립트 | 하는 일 |
 |---|---|---|---|
-| skin-law-sync | 월 08:00 | `skin-law-sync.sh` | 추적 법령 변경 감지 → 변경 있을 때만 알림 |
-| skin-weekly-topics | 월 09:00 | `skin-topics.sh` | 코드 업데이트(`git pull`) → 관광지 트렌드 스캔(주 1회) → 주간 주제 후보 전송 (수요·트렌드·계절 순) |
-| skin-worker | 10분마다 | `skin-worker.sh` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
-| skin-traffic-report | 월 10:00 | `skin-traffic.sh` | 스폰서 링크 유입 주간 요약 (추적기 배포 전·클릭 없으면 조용) |
-| skin-weekly-report | 일 20:00 | `skin-weekly-report.sh` | 주간 리포트 (초안·검수 등급·승인·렌더링·게시·대기·자동/사람 일치율·블로그·유입·수요 상위) |
-| skin-clinics | 월 07:00 | `skin-clinics.sh` | 코스 관광지 주변 피부과 목록 갱신 (심평원 공공데이터, `DATA_GO_KR_KEY` 없으면 조용) |
-| skin-analytics | 매월 1일 11:00 | `skin-analytics.sh` | 지난달 유입 분석 → `reports/analytics/<월>.md·.csv` (시술별 의도·도착, 영업 벤치마크) |
-| skin-site | 매시 | `skin-site.sh` | 승인된 블로그 글이 바뀌었을 때만 사이트 빌드·배포 → "새 글" 알림 |
+| skin-law-sync | 월 08:00 | `skin-law-sync.py` | 추적 법령 변경 감지 → 변경 있을 때만 알림 |
+| skin-weekly-topics | 월 09:00 | `skin-weekly-topics.py` | 코드 업데이트(`git pull`) → 관광지 트렌드 스캔(주 1회) → 주간 주제 후보 전송 (수요·트렌드·계절 순) |
+| skin-worker | 10분마다 | `skin-worker.py` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
+| skin-traffic-report | 월 10:00 | `skin-traffic-report.py` | 스폰서 링크 유입 주간 요약 (추적기 배포 전·클릭 없으면 조용) |
+| skin-weekly-report | 일 20:00 | `skin-weekly-report.py` | 주간 리포트 (초안·검수 등급·승인·렌더링·게시·대기·자동/사람 일치율·블로그·유입·수요 상위) |
+| skin-clinics | 월 07:00 | `skin-clinics.py` | 코스 관광지 주변 피부과 목록 갱신 (심평원 공공데이터, `DATA_GO_KR_KEY` 없으면 조용) |
+| skin-analytics | 매월 1일 11:00 | `skin-analytics.py` | 지난달 유입 분석 → `reports/analytics/<월>.md·.csv` (시술별 의도·도착, 영업 벤치마크) |
+| skin-site | 매시 | `skin-site.py` | 승인된 블로그 글이 바뀌었을 때만 사이트 빌드·배포 → "새 글" 알림 |
 
-스크립트는 `~/.hermes/scripts/` 에 생성된다. 수동 실행: `hermes cron run <이름>`.
+스크립트는 `<HERMES_HOME>/scripts/` 에 생성된다. 수동 실행: `hermes cron run <이름>`.
 
 ## 텔레그램 대화 (에이전트 + `skin-marketing` 스킬)
-`~/.hermes/skills/skin-marketing/SKILL.md` 가 답장을 명령으로 바꾼다.
+`<HERMES_HOME>/skills/skin-marketing/SKILL.md` 가 답장을 명령으로 바꾼다.
 
 ```
 월 09:00  [주제 후보 6건]            ← skin-weekly-topics

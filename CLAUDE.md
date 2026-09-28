@@ -30,7 +30,7 @@
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
 - 영상: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered, `GOOGLE_TTS_API_KEY` + ffmpeg) / 게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
-- Hermes 설치·운영: `hermes/README.md` (`bash hermes/install.sh`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
+- Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 
 ## 구조 메모
 - 초안 = `content/<상태>/<draft_id>/` 폴더 (`draft.json`, `script.md`, `blog.md`, `review.json`, `history.json`). `content/` 는 운영 데이터라 git 에 올리지 않는다.
