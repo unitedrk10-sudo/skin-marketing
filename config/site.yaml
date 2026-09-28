@@ -1,8 +1,8 @@
 # 블로그 사이트 설정 — pipeline/site.py
-# 브랜드 Skinbound 확정 (2026-09-28). 도메인 구매 후 domain 을 넣고 다시 빌드·배포.
+# 브랜드 Skinbound, 도메인 skinboundkorea.com (2026-09-28). 도메인이 바뀌면 domain 만 고치고 다시 빌드·배포.
 
 name: Skinbound
-domain: ""                      # 예: skinbound.com — 비어 있으면 sitemap·canonical 이 빠진다 (배포 전 필수)
+domain: skinboundkorea.com      # 2026-09-28 결정 (skinbound.com 은 도메인 판매업체 보유). 비우면 sitemap·canonical 이 빠진다
 tagline: Source-backed guides to dermatology procedures in Korea
 description: >-
   Plain-English guides to Korean dermatology procedures for international visitors —
