@@ -48,7 +48,15 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - 종료 코드 2 (`❓`): 메시지를 보여주고 다시 물어본다.
 
 ## 3. 게시 전 확인 (직전 봇 메시지가 `[게시 전 확인 …]` 일 때)
-`cd {{REPO}} && {{PYTHON}} -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
+- 영상 보기: "N번 영상 보여줘" → `{{REPO}}/content/rendered/<draft_id>/video.mp4` 를 첨부한다 (번호는 최근 게시 전 확인 메시지 기준).
+- `cd {{REPO}} && {{PYTHON}} -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
+- 게시 OK 된 영상은 워커가 채널별 **게시 키트**(캡션·해시태그·체크리스트, `kit.md`)를 만든다. "키트 보여줘" → `content/ready_to_publish/<id>/kit.md` 와 `video.mp4`, `captions.srt` 를 첨부.
+
+## 3-0. 게시 완료 기록
+사용자 예: `1 게시 완료 tiktok https://www.tiktok.com/@.../video/...` / "리쥬란 영상 인스타에 올렸어 <URL>"
+- `cd {{REPO}} && {{PYTHON}} -m pipeline.06_publish done <draft_id> <tiktok|instagram|youtube> <URL>` (draft_id 는 `06_publish status` 목록에서)
+- 계획한 채널을 모두 올리면 자동으로 published 로 옮겨진다. 게시 대기 현황: `06_publish status`.
+- 종료 코드 2 (`❓` 잘못된 채널·주소): 메시지를 보여주고 다시 묻는다. 스폰서 글의 틱톡 게시 요청은 거절한다.
 
 ## 3-1. 링크 유입 추적 (스폰서 병원 링크)
 - "글로우 링크 만들어줘 (리쥬란 글용)": `cd {{REPO}} && {{PYTHON}} -m pipeline.tracker add --sponsor <id> --label "<용도>"` → 블로그 스폰서 글 전용 링크 1개를 보낸다.

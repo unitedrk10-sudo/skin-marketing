@@ -291,10 +291,11 @@ Hermes → 텔레그램 메시지 예시:
    - [x] 폴더 구조 생성, `CLAUDE.md` 작성
    - [x] `llm.py` → `01_topics.py` → `02_draft.py` 순으로 구현 (+ `02b_auto_review.py`, `03_review.py`) — 가짜 LLM 테스트 완료, 실제 키로 단독 실행 테스트 남음
    - [ ] 프롬프트 작성 완료(`prompts/`, 공통 규칙 `_rules.md`) → 샘플 3편으로 품질 확인 남음 (`weekly_report.md` 는 07 구현 시)
-   - [ ] TTS·영상 합성 도구 선정 → `04_render_video.py`
-   - [ ] 예약 게시 도구 선정 → `06_publish.py`
+   - [x] TTS·영상 합성 → `04_render_video.py` (Google TTS Chirp3 + ffmpeg 자막 영상, b-roll 은 수동 편집) — 실제 키로 1편 확인 남음
+   - [x] 게시 → `06_publish.py` 채널별 게시 키트 + 게시 기록 (예약 게시 도구·플랫폼 API 연결은 이후)
+   - [x] 주간 리포트 → `07_report.py`, 블로그 공유 이미지·아이콘 (`og.py`)
 3. **Hermes에 운영 등록**
-   - [ ] `bash hermes/install.sh` 로 크론 3개(법령·주제·워커) + 텔레그램 스킬 등록 (`hermes/README.md`)
+   - [ ] `bash hermes/install.sh` 로 크론 + 텔레그램 스킬 등록 — PC 작업 순서: `docs/pc-setup-checklist.md`
    - [ ] `.env` 키 입력, `skin-check.sh` 로 점검
    - [ ] 실패 알림 확인
 4. **시험 운영 1주** (게시는 비공개/테스트 계정)
@@ -362,6 +363,7 @@ Hermes → 텔레그램 메시지 예시:
   - §56②12(외국인환자 유치 목적 국내광고 금지) 대응: 영어·해외 대상 광고로 운영하고, 한국 방문자에게는 카드를 숨긴다(`route_ads.hide_in_countries: [KR]`, 국가 확인 실패 시 숨김). 해외 대상 온라인 광고는 국내광고가 아니라는 해석이 일반적이지만 명문 규정이 없어 변호사 확인 항목 유지. 광고주는 외국인환자 유치의료기관 등록 병원을 권장.
 - **병원 중심 코스 글 (2026-09-29)**: 스폰서(광고) 글 한정으로 병원 권역(`zone`, `area`) 기준 여행 코스를 붙일 수 있다 (`--course`) — 시술 당일·관찰일을 병원 근처 실내 장소로. 광고 표시·병원 확인 동일, 코스에 픽업·할인·패키지 등 혜택 금지(§27③). 중립 글·주제 추천에서 "코스에 가장 맞는 병원"을 추천·매칭하는 기능은 두지 않는다 (§27③ 알선, 표시 없는 병원 광고, 12-3 시스템의 선).
 - **무상 파일럿 (2026-09-28)**: 인맥 병원 1~2곳에 `contract.type: pilot` 으로 무료 게재 (최대 183일, 이후 정액 전환 또는 종료). 대가가 없어도 병원 명의 광고이므로 광고 표시·병원 확인·트랙 분리·플랫폼 정책은 유료와 똑같이 적용. 표시 문구만 사실대로: "Partner content — this is an advertisement by <병원> (unpaid pilot partnership, no fee paid)" / 영상 "Partner content with <병원> · Advertisement (unpaid pilot)", 블로그 배지 "Partner · Ad". 파일럿 조건으로 할인·무료 시술·환자 소개를 주고받지 않는다.
+- 계약서 초안: `docs/templates/pilot-agreement.md`(무상 파일럿), `docs/templates/ad-placement-terms.md`(유료 정액 약관) — 변호사 검토 후 사용
 - [ ] 병원 영업 전 변호사 확인: 표시된 병원 명의 광고를 우리 채널이 정액으로 게재·제작 대행하는 구조의 §56① 적합성, 채널 규모별 사전심의 대상 여부
 
 ### 12-2. 3단계: 유치사업자 + 여행업 풀 패키지

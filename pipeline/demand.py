@@ -83,7 +83,7 @@ def link_clicks(start: date, end: date, catalog: str = "procedures") -> Counter:
     try:
         rows = analytics.enrich(analytics.fetch(start, end), load_tracked_links(), analytics.load_procedures(),
                                 analytics.load_catalog("attractions"))
-    except tracker.TrackerError as e:
+    except (tracker.TrackerError, KeyError, TypeError) as e:
         log.warning("추적기 클릭 가져오기 실패 — 사전값·조회수만 사용: %s", e)
         return Counter()
     clicks: Counter = Counter()

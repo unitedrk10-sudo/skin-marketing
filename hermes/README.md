@@ -46,6 +46,7 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 | skin-weekly-topics | 월 09:00 | `skin-topics.sh` | 코드 업데이트(`git pull`) → 관광지 트렌드 스캔(주 1회) → 주간 주제 후보 전송 (수요·트렌드·계절 순) |
 | skin-worker | 10분마다 | `skin-worker.sh` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
 | skin-traffic-report | 월 10:00 | `skin-traffic.sh` | 스폰서 링크 유입 주간 요약 (추적기 배포 전·클릭 없으면 조용) |
+| skin-weekly-report | 일 20:00 | `skin-weekly-report.sh` | 주간 리포트 (초안·검수 등급·승인·렌더링·게시·대기·자동/사람 일치율·블로그·유입·수요 상위) |
 | skin-clinics | 월 07:00 | `skin-clinics.sh` | 코스 관광지 주변 피부과 목록 갱신 (심평원 공공데이터, `DATA_GO_KR_KEY` 없으면 조용) |
 | skin-analytics | 매월 1일 11:00 | `skin-analytics.sh` | 지난달 유입 분석 → `reports/analytics/<월>.md·.csv` (시술별 의도·도착, 영업 벤치마크) |
 | skin-site | 매시 | `skin-site.sh` | 승인된 블로그 글이 바뀌었을 때만 사이트 빌드·배포 → "새 글" 알림 |
@@ -66,4 +67,6 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 - Claude Code 검수가 실패하면 알림 후 다음 워커 실행 때 자동 재요청. 로그: `logs/claude_review_<id>.log`.
 - 실패한 요청은 `content/requests/failed/` 로 옮겨져 반복 실행되지 않는다.
 - 게시·삭제(06_publish) 등 되돌릴 수 없는 작업은 명령 승인(approval) 대상으로 등록한다 (구현 후).
-- 미구현: `04_render_video`, `05_preview`, `06_publish`, `07_report` (TTS·합성·예약 게시 도구 선정 후).
+- 영상: 승인된 초안은 워커가 `04_render_video` 로 렌더링(`GOOGLE_TTS_API_KEY` + ffmpeg 필요, 없으면 조용히 건너뜀) → "게시 전 확인" 메시지 → "게시 OK" → 워커가 `06_publish kits` 로 채널별 게시 키트 → 직접 올린 뒤 "N 게시 완료 <채널> <URL>" → 모두 올리면 published.
+- 05_preview 는 따로 없다: `03_review list --stage rendered` 메시지 + 스킬이 영상 파일을 첨부한다.
+- 예약 게시 도구·플랫폼 API 연결은 아직 (지금은 키트로 수동 게시).

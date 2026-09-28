@@ -122,6 +122,21 @@ def run(review_runner=None) -> tuple[str, list[str]]:
             changed = True  # ⏳ 상태라도 알려준다
 
     message = human_mod.list_message("drafts") if changed else ""
+
+    render_mod = importlib.import_module("pipeline.04_render_video")
+    if render_mod.tts_configured() and render_mod.pending():  # 승인된 초안 → 영상 (한 번에 2건, TTS 비용·시간 제한)
+        done, render_failures = render_mod.render_pending(limit=2)
+        failures += [f"렌더링 실패 {f}" for f in render_failures]
+        if done:
+            message = (message + "\n\n" if message else "") + human_mod.list_message("rendered")
+    publish_mod = importlib.import_module("pipeline.06_publish")
+    try:
+        kits = publish_mod.kits_message()  # 게시 OK 된 영상 → 채널별 게시 키트
+    except Exception as e:  # noqa: BLE001
+        failures.append(f"게시 키트 생성 실패: {e}")
+        kits = ""
+    if kits:
+        message = (message + "\n\n" if message else "") + kits
     if failures:
         message = (message + "\n\n" if message else "") + "\n".join(f"⚠️ {f}" for f in failures)
     return message, failures

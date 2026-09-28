@@ -72,6 +72,9 @@ write_script skin-site.sh "exec \"$PYTHON\" -m pipeline.site deploy"
 # 링크 유입 주간 요약 (TRACKER_URL 미설정이면 조용히 끝남)
 write_script skin-traffic.sh "exec \"$PYTHON\" -m pipeline.tracker report --days 7"
 
+# 주간 리포트 (일요일 저녁 — 초안·검수·렌더링·게시·유입·수요 요약)
+write_script skin-weekly-report.sh "exec \"$PYTHON\" -m pipeline.07_report"
+
 # 코스 주변 피부과 목록 갱신 (심평원 공공데이터, 30일 지난 것만, 키 없으면 조용)
 write_script skin-clinics.sh "exec \"$PYTHON\" -m pipeline.clinics refresh"
 
@@ -108,6 +111,7 @@ add_job skin-weekly-topics "every monday 9am" skin-topics.sh
 add_job skin-worker "every 10m" skin-worker.sh
 add_job skin-traffic-report "every monday 10am" skin-traffic.sh
 add_job skin-site "every 1h" skin-site.sh
+add_job skin-weekly-report "every sunday 8pm" skin-weekly-report.sh
 add_job skin-clinics "every monday 7am" skin-clinics.sh
 add_job skin-analytics "0 11 1 * *" skin-analytics.sh   # 매월 1일 11:00 (지난달)
 

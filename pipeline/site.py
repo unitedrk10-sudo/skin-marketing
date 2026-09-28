@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 import markdown
 
-from pipeline import clinics, sponsors, tracker
+from pipeline import clinics, og, sponsors, tracker
 from pipeline.common import ROOT, content_dir, draft_dirs, get_logger, load_draft, load_json, load_yaml, run_cli, save_json, slugify
 
 log = get_logger("site")
@@ -181,7 +181,8 @@ main,header,footer{max-width:720px;margin:0 auto;padding:0 20px}header{padding-t
 .tagline{color:var(--muted);font-size:.95em;margin:.2em 0 1.5em}a{color:var(--accent)}h1{line-height:1.25;font-size:1.9em}
 .meta{color:var(--muted);font-size:.9em}.badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:4px;padding:0 6px;font-size:.8em;font-weight:600}
 blockquote{margin:1em 0;padding:.6em 1em;border-left:4px solid var(--ad);background:var(--adbg)}sup.ref a{text-decoration:none;font-size:.8em}
-.box{margin:1.5em 0;padding:.8em 1em;border:1px solid var(--line);border-radius:6px}
+.box{margin:1.5em 0;padding:.8em 1em;border:1px solid var(--line);border-radius:6px}.box h2{margin:.3em 0 .5em;font-size:1.25em}
+.clinics ol{font-size:.95em;padding-left:1.4em}
 .adcard{margin:1em 0;padding:.5em .8em;border:1px dashed var(--line);border-radius:6px;font-size:.9em}
 .sources{font-size:.9em;border-top:1px solid var(--line);margin-top:2em}.sources li{word-break:break-word}
 .posts{list-style:none;padding:0}.posts li{padding:.8em 0;border-bottom:1px solid var(--line)}.posts a{font-weight:600;text-decoration:none}
@@ -190,16 +191,26 @@ footer{color:var(--muted);font-size:.85em;border-top:1px solid var(--line);margi
 
 
 def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", jsonld: list[dict] | None = None,
-         noindex: bool = False) -> str:
+         noindex: bool = False, image: str | None = None) -> str:
     base = base_url(cfg)
     esc = html.escape
+    image = image or ("/og/default.png" if cfg.get("_og_images") else None)
     head = [
         '<meta charset="utf-8">', '<meta name="viewport" content="width=device-width,initial-scale=1">',
         f"<title>{esc(title)}</title>", f'<meta name="description" content="{esc(description or cfg["description"])}">',
         f'<meta property="og:title" content="{esc(title)}">', f'<meta property="og:site_name" content="{esc(cfg["name"])}">',
+        f'<meta property="og:description" content="{esc(description or cfg["description"])}">',
+        f'<meta property="og:type" content="{"article" if path.count("/") == 2 and path not in ("/about/", "/privacy/") else "website"}">',
+        '<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png">',
         f'<link rel="alternate" type="application/rss+xml" title="{esc(cfg["name"])}" href="/rss.xml">',
         f"<style>{CSS}</style>",
     ]
+    if image:  # 링크 미리보기 카드 (SNS·메신저·검색)
+        src = f"{base}{image}" if base else image
+        head += [f'<meta property="og:image" content="{esc(src)}">', '<meta property="og:image:width" content="1200">',
+                 '<meta property="og:image:height" content="630">', '<meta name="twitter:card" content="summary_large_image">']
+    if base:
+        head.append(f'<meta property="og:url" content="{base}{path}">')
     if base:
         head.append(f'<link rel="canonical" href="{base}{path}">')
     if cfg.get("analytics_token"):  # Cloudflare Web Analytics — 쿠키 없음, 방문·유입 경로(AI 검색 포함) 집계
@@ -372,7 +383,8 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
 <section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article>{geo_ad_script(cfg) if ad_sponsor else ""}"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
     return page(cfg, f"{blog.get('title', '')} | {cfg['name']}", body, path=f"/{post['slug']}/",
-                description=blog.get("meta_description", ""), jsonld=post_jsonld(cfg, post, sources, faq))
+                description=blog.get("meta_description", ""), jsonld=post_jsonld(cfg, post, sources, faq),
+                image=f"/og/{post['slug']}.png" if cfg.get("_og_images") else None)
 
 
 def render_index(cfg: dict, posts: list[dict]) -> str:
@@ -560,6 +572,17 @@ def build(out: Path | None = None) -> dict:
         f = out / rel
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(text, encoding="utf-8")
+
+    og.icons(out)
+    if og.available():  # 링크 미리보기 카드 이미지 (글마다 + 기본)
+        cfg = {**cfg, "_og_images": True}
+        og.card(cfg["tagline"], cfg["name"], cfg.get("domain") or "", out / "og" / "default.png")
+        for p in posts:
+            s = p["draft"].get("sponsor")
+            og.card(p["draft"]["blog"].get("title", ""), cfg["name"], cfg.get("domain") or cfg["tagline"],
+                    out / "og" / f"{p['slug']}.png", ad_label=f"{sponsors.label(s)} · Ad" if s else "")
+    else:
+        log.warning("Pillow 가 없어 공유 이미지(og:image)를 만들지 않았습니다 (pip install -r requirements.txt)")
 
     for p in posts:
         own = links.get(p["draft"]["id"], {}).get("url")
