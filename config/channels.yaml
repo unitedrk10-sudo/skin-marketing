@@ -25,3 +25,20 @@ content_axes:             # 기획서 3장
   - procedure_travel     # 시술 × 여행 (정보만)
 
 topics_per_week: 6
+
+# 스폰서(병원 광고) 콘텐츠를 올릴 수 있는 채널 — 플랫폼 정책 (2026-09 확인, 기획서 12-1-1)
+# 06_publish 는 allowed: false 채널에 스폰서 콘텐츠를 올리지 않고, requires 설정을 켠 채로만 게시한다.
+sponsored_policy:
+  tiktok:
+    allowed: false
+    why: "TikTok Branded Content Policy — 미용 클리닉·미용 시술 홍보 금지 (2026-03 완화는 미국·캐나다 병원의 유료 광고만 해당)"
+  instagram:
+    allowed: true
+    requires: ["브랜디드 콘텐츠 도구(유료 파트너십 라벨)로 병원 태그", "18세 이상 연령 제한"]
+  youtube:
+    allowed: true
+    requires: ["'유료 프로모션 포함' 표시"]
+  blog:
+    allowed: true
+    requires: ["상단 광고 표시(자동)", "병원 링크 rel=sponsored(자동)"]
+# SNS 프로필 링크에는 스폰서 병원 링크를 걸지 않는다 (대가 관계 링크 = 브랜디드 콘텐츠로 볼 여지). 프로필 → 우리 블로그 → 스폰서 글 → 병원.

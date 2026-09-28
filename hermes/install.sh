@@ -66,6 +66,9 @@ write_script skin-worker.sh "exec \"$PYTHON\" -m pipeline.worker run"
 
 write_script skin-law-sync.sh "exec \"$PYTHON\" -m pipeline.law_sync"
 
+# 블로그: 승인된 글이 바뀌었을 때만 Cloudflare Pages 배포 (없으면 조용)
+write_script skin-site.sh "exec \"$PYTHON\" -m pipeline.site deploy"
+
 # 링크 유입 주간 요약 (TRACKER_URL 미설정이면 조용히 끝남)
 write_script skin-traffic.sh "exec \"$PYTHON\" -m pipeline.tracker report --days 7"
 
@@ -98,6 +101,7 @@ add_job skin-law-sync "every monday 8am" skin-law-sync.sh
 add_job skin-weekly-topics "every monday 9am" skin-topics.sh
 add_job skin-worker "every 10m" skin-worker.sh
 add_job skin-traffic-report "every monday 10am" skin-traffic.sh
+add_job skin-site "every 1h" skin-site.sh
 
 cat <<EOF
 

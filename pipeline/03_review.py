@@ -135,6 +135,9 @@ def list_message(stage: str) -> str:
         line = f"{head} {GRADE_ICON[grade]}"
         if draft.get("sponsor"):
             line += f" 💼{draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}"
+            blocked = (draft.get("platforms") or {}).get("blocked") or {}
+            if blocked:
+                line += " · " + ", ".join(blocked) + " 게시 불가"
         if review:
             issues = [f for f in review["findings"] if f["severity"] in ("block", "caution", "pending")]
             if issues:

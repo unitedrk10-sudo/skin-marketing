@@ -186,8 +186,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "add":
         link = add_link(args.sponsor, args.target, args.label)
         print(f"추적 링크 {link['code']} ({args.label})")
-        for key, name in CHANNELS.items():
-            print(f"- {name}: {link['url']}?s={key}")
+        if args.sponsor:
+            # 스폰서 병원 링크는 블로그 스폰서 글 안에만 건다 (SNS 프로필 링크 = 브랜디드 콘텐츠로 볼 여지, 틱톡은 금지)
+            print(f"- 블로그 스폰서 글 전용: {link['url']}?s=blog")
+            print("  (SNS 프로필·설명란에는 걸지 마세요 — 프로필에는 우리 블로그 주소를 겁니다)")
+        else:
+            for key, name in CHANNELS.items():
+                print(f"- {name}: {link['url']}?s={key}")
         return 0
     if args.cmd == "list":
         for link in _request("GET", "/api/links")["links"]:

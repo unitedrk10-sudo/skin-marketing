@@ -105,6 +105,17 @@ def rules_text(sponsor: dict) -> str:
                   official_url=sponsor["official_url"])
 
 
+def platform_policy() -> dict:
+    """채널별 스폰서 콘텐츠 게시 가능 여부 (config/channels.yaml sponsored_policy)."""
+    from pipeline.common import load_yaml
+    policy = load_yaml("channels.yaml").get("sponsored_policy") or {}
+    return {
+        "allowed": [c for c, v in policy.items() if v.get("allowed")],
+        "blocked": {c: v.get("why", "") for c, v in policy.items() if not v.get("allowed")},
+        "requires": {c: v.get("requires", []) for c, v in policy.items() if v.get("allowed")},
+    }
+
+
 def official_host(sponsor: dict) -> str:
     return urlparse(sponsor["official_url"]).netloc.lower().removeprefix("www.")
 

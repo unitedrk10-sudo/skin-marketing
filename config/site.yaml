@@ -1,0 +1,14 @@
+# 블로그 사이트 설정 — pipeline/site.py
+# 브랜드 확정 전 임시값 (docs/brand-candidates.md). 확정되면 name, domain 을 바꾸고 다시 빌드·배포.
+
+name: Skinbound
+domain: ""                      # 예: skinbound.com — 비어 있으면 sitemap·canonical 이 빠진다 (배포 전 필수)
+tagline: Source-backed guides to dermatology procedures in Korea
+description: >-
+  Plain-English guides to Korean dermatology procedures for international visitors —
+  how they work, downtime, typical price ranges and trip planning, with a source for every fact.
+language: en
+byline: Skinbound Editorial Team  # 사람 의사·전문의 명의 금지 (자격 오인)
+contact_email: ""                 # 브랜드 이메일 생기면 입력 (소개·개인정보 페이지에 표시)
+cloudflare_project: skin-site     # Cloudflare Pages 프로젝트명 (wrangler pages deploy)
+posts_on_home: 30
