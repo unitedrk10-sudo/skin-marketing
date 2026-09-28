@@ -63,6 +63,16 @@ topics:
     hook: "3 days or 7 days — how long should your Korea skin trip be?"
     has_price: false
 
+  - id: seoul-5day-itinerary
+    wave: 1
+    axis: procedure_travel
+    title: "A 5-day Seoul itinerary built around a skin booster"
+    angle: "Day-by-day plan that puts consultation and treatment early, keeps sun-heavy and sauna days away from treatment, and leaves buffer before the flight. Areas only, no clinics."
+    why_now: "Itinerary content is heavily searched ('Korea glow-up trip itinerary') and shows the channel's travel angle."
+    keywords: [seoul itinerary skin treatment, korea glow up trip itinerary, 5 days seoul beauty trip]
+    hook: "5 days in Seoul, one skin booster — here's how to plan it."
+    has_price: false
+
   # ---------- wave 2 ----------
   - id: pico-toning-melasma
     wave: 2
@@ -138,6 +148,72 @@ topics:
     has_price: false
     sources:
       - https://atlanta.mofa.go.kr/us-atlanta-en/brd/m_24389/view.do?seq=28
+
+  - id: re2o-explained
+    wave: 2
+    axis: procedure
+    title: "Re2O explained: the ECM skin booster made from donated human tissue"
+    angle: "What Re2O is (micronized acellular human dermal matrix, hADM/ECM), how it differs from PN and PDLLA boosters, what it is used for, evidence status and questions to ask."
+    why_now: "New Korean ECM-based skin booster (L&C Bio) expanding abroad in 2026 (Myanmar, Thailand); foreigners will see it on menus."
+    keywords: [re2o skin booster, ecm skin booster, hadm skin booster korea, 리투오]
+    hook: "A skin booster made from donated human tissue?"
+    has_price: false
+    sources:
+      - http://www.lncbio.co.kr/bbs/board.php?bo_table=products1&wr_id=14
+  - id: seoul-3day-low-downtime
+    wave: 2
+    axis: procedure_travel
+    title: "A 3-day Seoul trip with low-downtime treatments"
+    angle: "Which kinds of treatments usually fit a short trip, how to order the days, and what to leave for a longer visit."
+    why_now: "Short stopover and weekend trips from Southeast Asia are common."
+    keywords: [3 days seoul skin treatment, short trip korea dermatology, weekend seoul beauty trip]
+    hook: "Only 3 days in Seoul? What's realistic for your skin."
+    has_price: false
+  - id: indoor-seoul-downtime
+    wave: 2
+    axis: procedure_travel
+    title: "Indoor Seoul: things to do while your skin recovers"
+    angle: "Museums, covered markets, cafes, shopping malls and night activities that avoid strong sun, heat and sweat during downtime."
+    why_now: "Downtime days are a planning gap; practical travel value beyond procedures."
+    keywords: [indoor things to do seoul, seoul rainy day activities, what to do after laser seoul]
+    hook: "Stuck avoiding the sun after treatment? Seoul has you covered."
+    has_price: false
+  - id: gangnam-area-guide
+    wave: 2
+    axis: procedure_travel
+    title: "Gangnam, Sinsa and Apgujeong: an area guide for skin-trip visitors"
+    angle: "Getting around the areas where many skin clinics cluster — subway lines, where to stay, food and recovery-friendly spots. No clinic names or recommendations."
+    why_now: "Most visitors base themselves here; area info without naming clinics."
+    keywords: [where to stay gangnam, apgujeong area guide, sinsa garosu-gil guide]
+    hook: "Why do skin-trip visitors all end up in Gangnam?"
+    has_price: false
+  - id: aftercare-skincare-basics
+    wave: 2
+    axis: skincare
+    title: "Skincare after a laser or skin booster: what to use and what to skip"
+    angle: "Gentle cleansing, moisturizing and sun protection basics, ingredients commonly advised to pause (retinoids, acids, scrubs), and how long — cosmetics only, no treatment claims."
+    why_now: "Every treatment ends with an aftercare question; natural bridge to K-beauty shopping."
+    keywords: [skincare after laser, what to avoid after skin booster, aftercare routine korea]
+    hook: "Just had a laser — can you use your usual serum tonight?"
+    has_price: false
+  - id: barrier-ingredients
+    wave: 2
+    axis: skincare
+    title: "Cica, panthenol, ceramides: barrier-support ingredients in K-beauty"
+    angle: "What these common soothing and barrier-support ingredients are, what the research says, and how to read Korean labels for them."
+    why_now: "Barrier care and 'regenerating' skincare dominate 2026 K-beauty shelves."
+    keywords: [cica cream, panthenol skincare, ceramide korean skincare, centella asiatica]
+    hook: "Why is every Korean aftercare cream 'cica'?"
+    has_price: false
+  - id: olive-young-label-guide
+    wave: 2
+    axis: skincare
+    title: "Shopping for aftercare at Olive Young: a label-reading guide"
+    angle: "How to read Korean cosmetic labels (functional cosmetic marks, SPF/PA, key ingredients) to pick gentle aftercare products — examples, not rankings."
+    why_now: "Olive Young is on nearly every visitor's itinerary; label literacy helps after treatments."
+    keywords: [olive young aftercare, korean cosmetic label, functional cosmetics korea]
+    hook: "Standing in Olive Young, lost in Korean labels?"
+    has_price: false
 
   # ---------- wave 3 ----------
   - id: pdrn-exosome-evidence
@@ -229,4 +305,40 @@ topics:
     why_now: "People search reviews before booking; curation adds value without endorsing clinics."
     keywords: [rejuran pain reviews, rejuran bumps how long, rejuran review]
     hook: "Everyone says Rejuran hurts. How much, really?"
+    has_price: false
+  - id: pdrn-exosome-cosmetics
+    wave: 3
+    axis: skincare
+    title: "PDRN and exosome creams: what cosmetics can and can't claim"
+    angle: "How PDRN/exosome cosmetics differ from clinic injections, what the ingredient research covers, and why cosmetics can't legally claim to treat skin."
+    why_now: "Bio-regenerative ingredients moved from clinics into mainstream cosmetics in 2026."
+    keywords: [pdrn serum, exosome cream, salmon dna skincare]
+    hook: "Salmon DNA serum vs salmon DNA injection — same thing?"
+    has_price: false
+  - id: sunscreen-types-korea
+    wave: 3
+    axis: skincare
+    title: "Korean sunscreens explained: SPF, PA and textures for sensitive skin"
+    angle: "What SPF and PA ratings mean, mineral vs chemical filters, and what to look for when skin is freshly treated."
+    why_now: "Sun protection is the most repeated aftercare instruction; Korean sunscreens are a top purchase."
+    keywords: [korean sunscreen pa rating, sunscreen sensitive skin after laser, mineral vs chemical sunscreen]
+    hook: "PA++++? Here's what Korean sunscreen labels mean."
+    has_price: false
+  - id: regenerative-marketing-terms
+    wave: 3
+    axis: skincare
+    title: "'Regenerating', 'repair', 'recovery': decoding K-beauty marketing words"
+    angle: "What these words can legally mean on cosmetics in Korea, what they don't mean, and how to judge product claims."
+    why_now: "'Regenerative' is the 2026 K-beauty buzzword; helps readers avoid overclaiming products."
+    keywords: [regenerating cream meaning, k-beauty marketing terms, repair cream korea]
+    hook: "Can a cream really 'regenerate' your skin?"
+    has_price: false
+  - id: jeju-busan-after-treatment
+    wave: 3
+    axis: procedure_travel
+    title: "Adding Jeju or Busan after a skin treatment: sun, sea and sauna"
+    angle: "How beach sun, seawater swimming and spa culture interact with healing skin, and how to order a Seoul-then-coast trip."
+    why_now: "Multi-city trips are common; beaches and spas are classic aftercare conflicts."
+    keywords: [jeju after laser, swimming after skin treatment, busan trip after botox]
+    hook: "Beach in Jeju right after your laser? Plan this first."
     has_price: false

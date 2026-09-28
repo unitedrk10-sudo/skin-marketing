@@ -89,6 +89,14 @@ GENERIC_WORDS = {
 }
 INSTITUTION = re.compile(r"\b(?:Academy|Association|Society|Journal|College|Institute|Ministry|Agency|Administration|Board)\b", re.I)
 
+# 화장품 글(content_type: skincare) 전용 — 의약품으로 오인될 표현 (화장품법 §13①1)
+COSMETIC_PATTERNS = re.compile(
+    r"\b(?:heal(?:s|ing)?|cures?|treats?|treating|repairs?\s+(?:wounds?|scars?|damaged\s+skin)|regenerat(?:es|ing)\s+(?:cells|skin)"
+    r"|medical[- ]grade|prescription[- ]strength|clinically\s+proven|like\s+(?:botox|a\s+laser|an\s+injection|a\s+skin\s+booster))\b"
+    r"|치료|재생시켜|의약품\s?수준", re.I)
+
+NEGATION = re.compile(r"\b(?:not|never|no|can't|cannot|can not|don't|doesn't|isn't|aren't|won't)\b[^.]*$", re.I)
+
 PRICE = re.compile(r"[$₩฿]|\b(?:USD|KRW|SGD|THB|CAD|won|dollars?)\b|\bprice|\bcost", re.I)
 
 
@@ -172,6 +180,12 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
         findings.append(Finding("rules", "block", "[blog] AI 활용·출처 기반 고지 문장 없음"))
 
     findings += check_sponsor(draft, texts, human) if sponsor else check_no_sponsor_names(texts)
+    if draft.get("content_type") == "skincare":
+        for where, text in texts.items():
+            for m in COSMETIC_PATTERNS.finditer(text):
+                if NEGATION.search(text[max(0, m.start() - 30):m.start()]):
+                    continue  # "cosmetics can't claim to treat..." 같은 설명은 허용
+                findings.append(Finding("rules", "block", f"[{where}] 화장품을 의약품처럼 표현 (화장품법 §13)", _snippet(text, m)))
 
     # 출처 연결: 모든 사실 참조가 실제 사실 목록에 있어야 한다
     known = {f["id"] for f in draft.get("facts", [])}
