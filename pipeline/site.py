@@ -32,6 +32,10 @@ from pipeline.common import ROOT, content_dir, draft_dirs, get_logger, load_draf
 log = get_logger("site")
 
 PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
+# 중립 글의 "병원 찾기" 안내 — 개별 병원 대신 정부 공식 명단. 클릭 수 = 병원을 찾으러 나간 독자 수 (영업 근거)
+REGISTRY_URL = "https://www.medicalkorea.or.kr/en/registeredhospitals"
+REGISTRY_AXES = {"procedure", "price_guide", "how_to", "procedure_travel", "review_curation", "trend"}
+REGISTRY_KEY = "_registry"
 FACT_REF = re.compile(r"\s?\[(F\d+)\]")
 FAQ_HEADING = re.compile(r"^##\s+.*\b(FAQ|Frequently Asked Questions)\b", re.I | re.M)
 SAFE_HREF = re.compile(r"^(https?://|/|#|mailto:)", re.I)
@@ -175,6 +179,7 @@ main,header,footer{max-width:720px;margin:0 auto;padding:0 20px}header{padding-t
 .tagline{color:var(--muted);font-size:.95em;margin:.2em 0 1.5em}a{color:var(--accent)}h1{line-height:1.25;font-size:1.9em}
 .meta{color:var(--muted);font-size:.9em}.badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:4px;padding:0 6px;font-size:.8em;font-weight:600}
 blockquote{margin:1em 0;padding:.6em 1em;border-left:4px solid var(--ad);background:var(--adbg)}sup.ref a{text-decoration:none;font-size:.8em}
+.box{margin:1.5em 0;padding:.8em 1em;border:1px solid var(--line);border-radius:6px}
 .sources{font-size:.9em;border-top:1px solid var(--line);margin-top:2em}.sources li{word-break:break-word}
 .posts{list-style:none;padding:0}.posts li{padding:.8em 0;border-bottom:1px solid var(--line)}.posts a{font-weight:600;text-decoration:none}
 footer{color:var(--muted);font-size:.85em;border-top:1px solid var(--line);margin-top:3em;padding-bottom:40px}table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8px}
@@ -194,6 +199,9 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     ]
     if base:
         head.append(f'<link rel="canonical" href="{base}{path}">')
+    if cfg.get("analytics_token"):  # Cloudflare Web Analytics — 쿠키 없음, 방문·유입 경로(AI 검색 포함) 집계
+        beacon = html.escape(json.dumps({"token": cfg["analytics_token"]}))
+        head.append(f'<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon="{beacon}"></script>')
     if noindex:
         head.append('<meta name="robots" content="noindex">')
     for data in jsonld or []:
@@ -238,7 +246,14 @@ def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> 
     return out
 
 
-def render_post(cfg: dict, post: dict, tracked_url: str | None = None) -> str:
+def registry_box(registry_url: str | None) -> str:
+    href = html.escape(registry_url or REGISTRY_URL)
+    return (f'<aside class="box"><strong>Looking for a clinic?</strong> Check whether a clinic is registered for '
+            f'international patients on the government-run <a href="{href}" rel="noopener" target="_blank">Medical Korea '
+            f'registry</a>. We don\'t recommend or rank individual clinics.</aside>')
+
+
+def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None) -> str:
     draft = post["draft"]
     blog = draft["blog"]
     sponsor = draft.get("sponsor")
@@ -252,6 +267,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None) -> str:
     body = f"""<article><h1>{esc(blog.get('title', ''))}</h1>
 <p class="meta">{badge}{esc(post['date'][:10])} · {esc(cfg['byline'])} · Based on publicly available sources</p>
 {body_html}
+{registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
 <section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article>"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
     return page(cfg, f"{blog.get('title', '')} | {cfg['name']}", body, path=f"/{post['slug']}/",
@@ -301,7 +317,10 @@ def render_privacy(cfg: dict) -> str:
 <p>This site does not use advertising cookies or ask you to log in.</p>
 <ul><li><strong>Hosting logs:</strong> our host (Cloudflare) processes standard request data such as IP address and browser
 type to deliver and protect the site.</li>
-<li><strong>Outbound link counts:</strong> some links to clinic websites in sponsored posts go through our link counter. It records
+<li><strong>Visit statistics:</strong> we use Cloudflare Web Analytics, which counts page views and referring sites without
+cookies or tracking you across sites.</li>
+<li><strong>Outbound link counts:</strong> some outbound links (clinic websites in sponsored posts and the official clinic registry)
+go through our link counter. It records
 the date, which post and channel the click came from, the country, and whether it looks automated. We do not store your IP
 address; a one-way code that changes every day is used only to count unique visits per day. The clinic's page receives
 standard campaign tags (utm_source, utm_medium, utm_campaign) so the clinic can see the visit came from us.</li>
@@ -370,6 +389,10 @@ def tracked_links(posts: list[dict]) -> dict[str, str]:
             link = tracker.add_link(draft["sponsor"]["id"], None, f"blog: {draft['blog'].get('title', '')}"[:120])
             mapping[draft["id"]] = f"{link['url']}?s=blog"
             changed = True
+    if REGISTRY_KEY not in mapping and any(not p["draft"].get("sponsor") for p in posts):
+        link = tracker.add_link(None, REGISTRY_URL, "blog: find a registered clinic (Medical Korea)")
+        mapping[REGISTRY_KEY] = f"{link['url']}?s=blog"
+        changed = True
     if changed:
         save_json(path, mapping)
     return mapping
@@ -392,7 +415,7 @@ def build(out: Path | None = None) -> dict:
         f.write_text(text, encoding="utf-8")
 
     for p in posts:
-        write(f"{p['slug']}/index.html", render_post(cfg, p, links.get(p["draft"]["id"])))
+        write(f"{p['slug']}/index.html", render_post(cfg, p, links.get(p["draft"]["id"]), links.get(REGISTRY_KEY)))
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))
