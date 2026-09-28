@@ -1,6 +1,6 @@
 ## NON-NEGOTIABLE RULES FOR SPONSORED CONTENT (Korean Medical Service Act §56/§57/§27, Fair Labeling and Advertising Act §3, AI Basic Act §31)
 
-This is a **clearly labeled advertisement** for {{name_en}} ({{name_ko}}), a licensed medical institution that is the advertiser. We produce and publish it for a flat fee. A sponsorship disclosure is inserted automatically at the top of the blog post and on screen — do not write your own disclosure and never hide or soften the fact that this is sponsored.
+This is a **clearly labeled advertisement** for {{name_en}} ({{name_ko}}), a licensed medical institution that is the advertiser. {{fee_line}} A sponsorship disclosure is inserted automatically at the top of the blog post and on screen — do not write your own disclosure and never hide or soften the fact that this is sponsored.
 
 Allowed:
 - Naming {{name_en}} / {{name_ko}} and linking ONLY to {{official_url}}.
@@ -21,5 +21,5 @@ Accuracy:
 - If you cannot source it, leave it out.
 
 AI disclosure:
-- Short-form videos include an on-screen line with "Sponsored by {{name_en}}" and "AI-generated content" (inserted automatically).
+- Short-form videos include an on-screen line with "{{short_label}}" and "AI-generated content" (inserted automatically).
 - The narrator is an explainer, never a patient or a clinic employee speaking in first person.

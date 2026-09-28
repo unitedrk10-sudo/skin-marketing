@@ -113,3 +113,19 @@ test("없는 코드·꺼진 링크는 404", async () => {
 test("통계 날짜 형식 검증", async () => {
   assert.equal((await admin("/api/stats?from=2026-1-1&to=x")).status, 400);
 });
+
+test("분석용 내보내기: 집계만, 방문자 해시 없음", async () => {
+  const { code } = await newLink();
+  const hit = (qs, ip) => call(`/${code}${qs}`, { headers: { "user-agent": HUMAN, "cf-connecting-ip": ip }, redirect: "manual" });
+  await hit("?s=blog", "1.1.1.1");
+  await hit("?s=blog", "2.2.2.2");
+  await hit("?s=blog", "2.2.2.2");
+  const day = new Date().toISOString().slice(0, 10);
+  const res = await (await admin(`/api/export?from=${day}&to=${day}`)).json();
+  assert.equal(res.rows.length, 1);
+  assert.equal(res.rows[0].clicks, 3);
+  assert.equal(res.rows[0].unique_visitors, 2);
+  assert.equal(res.rows[0].source, "blog");
+  assert.ok(!("visitor" in res.rows[0]));
+  assert.equal((await call(`/api/export?from=${day}&to=${day}`)).status, 401);
+});

@@ -26,6 +26,7 @@
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` / 목록 점검 `python -m pipeline.sponsors check`
 - 블로그 사이트: `python -m pipeline.site build|deploy` (site/dist → Cloudflare Pages)
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
+- 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
 - Hermes 설치·운영: `hermes/README.md` (`bash hermes/install.sh`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 
 ## 구조 메모
@@ -35,6 +36,9 @@
 - 스폰서 글 끝에는 병원 공식 사이트 링크가 코드로 항상 붙는다(`sponsors.official_link_line`) → 블로그 빌드 시 추적 링크로 치환.
 - 스폰서 트랙(기획서 12-1-1): 광고주 병원 = 광고 주체, 우리는 매체+제작 대행, 정액만. `config/sponsors.yaml`(git 제외). 스폰서 글은 `_sponsored_rules.md` 로 생성하고 광고 표시를 코드로 넣는다(`02_draft.add_disclosures`). 02b 는 광고 표시·계약·심의번호를 ⛔ 로 검사하고, 중립 글에 스폰서 병원이 나오면 ⛔. 03_review 는 현재 내용 기준 `병원확인` 없이는 승인하지 않는다 (--confirm 으로도 불가). 이 분리를 약화하는 변경은 하지 않는다.
 - 블로그(`pipeline/site.py`): approved 이후 상태의 글만 게시(블로그는 초안 승인 = 게시 승인, 06_publish 의 ready_to_publish 제약은 영상용). LLM 출력의 원시 HTML·javascript: 링크 차단, [F#] → 각주·출처 목록, JSON-LD·llms.txt·sitemap. 스폰서 글은 광고 배지 + 병원 링크 rel=sponsored + 추적 링크.
+- **시스템의 선 (기획서 12-3)**: 이 시스템의 일은 독자를 병원 공식 사이트에 도착시키는 것까지. 상담 연결·예약 대행·환자 알선·전환(예약·결제) 추적은 만들지 않는다 (유치사업자 등록 후 별도 사업).
+- 무상 파일럿: `contract.type: pilot` (최대 183일). 광고 표시·병원확인·트랙 분리는 유료와 동일, 문구만 "Partner content … (unpaid pilot)" (`sponsors.label`/`short_disclosure`).
+- 추적 링크 메타: `content/site/tracked_links.json` — 키 = 스폰서 글 draft_id / 중립 글 `_registry:<draft_id>`, 값 = {url, code, kind, title, axis, keywords, sponsor_id, contract}. `pipeline/analytics.py` 가 이것과 `config/procedures.yaml` 로 시술별 집계.
 - 링크 유입 추적기(`tracker/`, Cloudflare Worker + D1): 추적 링크 클릭 → 기록 → UTM 붙여 병원 사이트로 302. IP 원문 미저장. 스폰서 링크 대상은 공식 사이트(하위 도메인 포함)만. 유입 수치는 보고 자료일 뿐 요금은 정액.
 - 테스트는 `llm.set_backend()` 로 가짜 LLM 을 쓰고 `SKIN_CONTENT_DIR`/`SKIN_LOG_DIR` 로 임시 폴더를 쓴다.
 
