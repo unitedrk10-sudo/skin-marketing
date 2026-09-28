@@ -1,0 +1,9 @@
+# 영상 TTS 목소리 — 04_render_video 가 읽는다 (구현 예정). 채널 전체에 같은 목소리 고정 (기획서 4장).
+# 무료 기간: Google Cloud TTS 무료 한도 (월 100만 자 — 상업적 사용 가능)
+# 스폰서 유입 후: ElevenLabs 유료(Starter 이상, 상업적 사용 가능) 샘플 중 선택 — 후보: Matilda / Sarah / Alice
+# 무료 ElevenLabs 요금제는 상업적 사용 불가 → 쓰지 않는다.
+
+provider: google
+voice: en-US-Chirp3-HD-Aoede     # 미국식, 차분한 여성 설명형 (2026-09-28 결정)
+language: en-US
+speaking_rate: 1.0               # 대본 속도 (초당 약 2.3단어 기준으로 작성됨)

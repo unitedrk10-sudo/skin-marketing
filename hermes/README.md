@@ -33,6 +33,7 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 - 브랜드·도메인 확정 후 `config/site.yaml` 의 `name`, `domain` 을 바꾸고, Cloudflare Pages → Custom domains 에 도메인 연결.
 - 도메인을 넣어야 `sitemap.xml`·canonical 이 생긴다 → Google Search Console·Bing Webmaster 에 sitemap 등록 (Bing 은 ChatGPT 검색의 주요 데이터원).
 - 게시 대상은 사람이 승인한 글(approved 이후)만. SNS 프로필 링크에는 이 블로그 주소를 건다.
+- 방문 통계: Cloudflare 대시보드 → Analytics & Logs → Web Analytics → 사이트 추가 → 발급된 토큰을 `config/site.yaml` 의 `analytics_token` 에 넣고 다시 배포 (쿠키 없음, 유입 경로에서 ChatGPT·Perplexity 등 AI 검색 유입 확인 가능).
 
 ## 링크 유입 추적기
 `tracker/README.md` 대로 Cloudflare 에 배포하고 `.env` 에 `TRACKER_URL`, `TRACKER_TOKEN` 입력. 텔레그램에서 "글로우 링크 만들어줘" → 채널별 추적 링크.

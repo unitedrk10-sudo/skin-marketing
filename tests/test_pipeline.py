@@ -858,3 +858,30 @@ def test_cosmetic_claims_blocked_only_in_skincare(sentence, blocked):
     assert any("화장품법" in m for m in msgs) == blocked, msgs
     other = [f.message for f in review_mod.check_rules({**base, "content_type": "procedure"})[0]]
     assert not any("화장품법" in m for m in other)
+
+
+def test_registry_box_in_neutral_posts_with_tracking(site_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+    monkeypatch.setattr(tracker_mod, "_request",
+                        lambda m, p, body=None, query=None: made.append(body) or {"code": "reg234", "url": "https://go.example/reg234"})
+    approved = make_draft(site_env)
+    review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
+    _approve(site_env, approved)
+    site_mod.build()
+    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text()
+    assert "Looking for a clinic?" in post and 'href="https://go.example/reg234?s=blog"' in post
+    assert made[0]["target_url"] == site_mod.REGISTRY_URL and made[0]["sponsor_id"] is None
+    site_mod.build()
+    assert len(made) == 1  # 추적 링크는 한 번만 만든다
+
+
+def test_no_registry_box_in_sponsored_or_skincare(sponsored, tmp_path, monkeypatch):
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "", "analytics_token": "abc"})
+    post = {"draft": {**common.load_draft(common.content_dir("drafts") / make_sponsored(sponsored))}, "slug": "x", "date": "2026-10-01"}
+    assert "Looking for a clinic?" not in site_mod.render_post(site_mod.config(), post)
+    post["draft"] = {**post["draft"], "sponsor": None, "content_type": "skincare"}
+    html_out = site_mod.render_post(site_mod.config(), post)
+    assert "Looking for a clinic?" not in html_out
+    assert "static.cloudflareinsights.com/beacon.min.js" in html_out and "&quot;token&quot;: &quot;abc&quot;" in html_out
