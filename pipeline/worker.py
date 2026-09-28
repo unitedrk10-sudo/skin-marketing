@@ -57,13 +57,15 @@ def request_drafts(pick: str, week: str | None = None) -> str:
     return f"초안 생성 요청 접수 ({week}): {titles}\n생성·자동 검수·Claude 검수가 끝나면 검수 요청을 보냅니다."
 
 
-def request_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str] | None = None) -> str:
+def request_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str] | None = None, course: bool = False) -> str:
     """스폰서 등록·계약 기간을 바로 확인하고 요청을 남긴다."""
     sponsors = importlib.import_module("pipeline.sponsors")
     sponsor = sponsors.get(sponsor_id)
     if not sponsors.contract_active(sponsor):
         raise ValueError(f"{sponsor_id}: 계약 기간이 아닙니다 ({sponsor['contract']['start']} ~ {sponsor['contract']['end']})")
-    enqueue("sponsored", sponsor=sponsor_id, title=title, angle=angle, keywords=keywords or [])
+    if course and not sponsor.get("zone"):
+        raise ValueError(f"{sponsor_id}: 코스 글에는 sponsors.yaml 의 zone(병원 권역)이 필요합니다")
+    enqueue("sponsored", sponsor=sponsor_id, title=title, angle=angle, keywords=keywords or [], course=course)
     return (f"💼 스폰서 글 요청 접수: {sponsor['name_ko']} — {title}\n"
             "생성·검수가 끝나면 검수 요청을 보냅니다. 병원 확인(`N 병원확인`) 후에 승인할 수 있습니다.")
 
@@ -75,7 +77,7 @@ def _process(req: dict) -> None:
         for n in req["pick"]:
             draft_mod.create(req["week"], n, topics[n - 1])
     elif req["kind"] == "sponsored":
-        draft_mod.create_sponsored(req["sponsor"], req["title"], req["angle"], req.get("keywords"))
+        draft_mod.create_sponsored(req["sponsor"], req["title"], req["angle"], req.get("keywords"), req.get("course", False))
     elif req["kind"] == "revise":
         draft_mod.revise(req["draft_id"], req["note"])
     else:
@@ -136,13 +138,14 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("--title", required=True)
     rs.add_argument("--angle", required=True)
     rs.add_argument("--keywords", default="", help="쉼표로 구분")
+    rs.add_argument("--course", action="store_true", help="병원 권역 중심 여행 코스 글")
     sub.add_parser("run")
     args = parser.parse_args(argv)
 
     if args.cmd == "request-sponsored":
         try:
             keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
-            print(request_sponsored(args.sponsor, args.title, args.angle, keywords))
+            print(request_sponsored(args.sponsor, args.title, args.angle, keywords, args.course))
         except ValueError as e:  # SponsorError 포함
             print(f"❓ {e}")
             return 2

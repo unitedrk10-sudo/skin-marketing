@@ -19,13 +19,13 @@
 - LLM 설정 점검: `python -m pipeline.llm check`
 - 주간 주제: `python -m pipeline.01_topics` / 초기 주제 목록에서: `--from-seed 6` (`config/seed_topics.yaml`, 소진 시 Gemini 로 자동 전환). 추천 순서 = 수요 점수 (`python -m pipeline.demand`: `config/procedures.yaml`·`config/attractions.yaml` 관심도 사전값 + 글별 조회수·링크 클릭, 같은 시술·관광지 주 2개까지)
 - 관광지 소개·코스(축 `travel_guide`): `config/attractions.yaml` 속성으로 코스 규칙을 프롬프트에 넣는다 (`pipeline/attractions.py`, 관찰일 가능 목록 `python -m pipeline.attractions`)
-- 관광지 트렌드: `python -m pipeline.trends scan|show` — 주 1회 Gemini 검색 스캔(01_topics 가 자동 실행, `content/trends/`), 관광지 점수에 트렌드(+최대 0.4)·계절(`season`, 이번·다음 달 +0.15) 가산, 목록에 없는 신규 장소는 travel_guide 주제 후보로. 출처 없는 트렌드는 버리고 21일 지난 스캔은 무시
+- 관광지 트렌드: `python -m pipeline.trends scan|show` — 주 1회 Gemini 검색 스캔(01_topics 가 자동 실행, `content/trends/`), 관광지 점수에 트렌드(+최대 0.4)·계절(`season`, 이번·다음 달 +0.15) 가산, 목록에 없는 신규 장소는 travel_guide 주제 후보로. 맛집·카페 트렌드(food)도 같이 스캔 → 근처 관광지 점수(×0.75)·여행 글 프롬프트(출처 포함)·주제 후보. 출처 없는 트렌드는 버리고 21일 지난 스캔은 무시. 식당·카페 이름은 독립 출처가 있는 무상 편집 예시로만 (`_rules.md`)
 - 초안 생성: `python -m pipeline.02_draft --week 2026-W40 --pick 1,3` / 수정: `--revise <draft_id> --note "..."`
 - 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate`
 - Claude Code 검수 한 사이클: `python -m pipeline.02c_external_review review` (export → claude -p → import)
 - 워커(Hermes 크론): `python -m pipeline.worker run` / 주제 선택 요청: `python -m pipeline.worker request-drafts --pick 1,3`
 - 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
-- 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` / 목록 점검 `python -m pipeline.sponsors check`
+- 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` (병원 권역 중심 여행 코스 글: `--course`, sponsors.yaml `zone` 필요) / 목록 점검 `python -m pipeline.sponsors check`
 - 블로그 사이트: `python -m pipeline.site build|deploy` (site/dist → Cloudflare Pages)
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
@@ -38,6 +38,7 @@
 - 스폰서 글 끝에는 병원 공식 사이트 링크가 코드로 항상 붙는다(`sponsors.official_link_line`) → 블로그 빌드 시 추적 링크로 치환.
 - 스폰서 트랙(기획서 12-1-1): 광고주 병원 = 광고 주체, 우리는 매체+제작 대행, 정액만. `config/sponsors.yaml`(git 제외). 스폰서 글은 `_sponsored_rules.md` 로 생성하고 광고 표시를 코드로 넣는다(`02_draft.add_disclosures`). 02b 는 광고 표시·계약·심의번호를 ⛔ 로 검사하고, 중립 글에 스폰서 병원이 나오면 ⛔. 03_review 는 현재 내용 기준 `병원확인` 없이는 승인하지 않는다 (--confirm 으로도 불가). 이 분리를 약화하는 변경은 하지 않는다.
 - 블로그(`pipeline/site.py`): approved 이후 상태의 글만 게시(블로그는 초안 승인 = 게시 승인, 06_publish 의 ready_to_publish 제약은 영상용). LLM 출력의 원시 HTML·javascript: 링크 차단, [F#] → 각주·출처 목록, JSON-LD·llms.txt·sitemap. 스폰서 글은 광고 배지 + 병원 링크 rel=sponsored + 추적 링크.
+- 중립 글·주제 추천에서 "코스에 맞는 병원"을 추천·매칭하는 기능은 만들지 않는다 (의료법 §27③ 알선, 광고 표시 없는 병원 노출). 병원이 들어간 코스는 그 병원의 광고(스폰서 `--course`)로만.
 - **시스템의 선 (기획서 12-3)**: 이 시스템의 일은 독자를 병원 공식 사이트에 도착시키는 것까지. 상담 연결·예약 대행·환자 알선·전환(예약·결제) 추적은 만들지 않는다 (유치사업자 등록 후 별도 사업).
 - 무상 파일럿: `contract.type: pilot` (최대 183일). 광고 표시·병원확인·트랙 분리는 유료와 동일, 문구만 "Partner content … (unpaid pilot)" (`sponsors.label`/`short_disclosure`).
 - 추적 링크 메타: `content/site/tracked_links.json` — 키 = 스폰서 글 draft_id / 중립 글 `_registry:<draft_id>`, 값 = {url, code, kind, title, axis, keywords, sponsor_id, contract}. `pipeline/analytics.py` 가 이것과 `config/procedures.yaml` 로 시술별 집계.

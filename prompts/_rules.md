@@ -25,7 +25,9 @@ Trip planning around procedures:
 
 Place guides and routes (travel_guide, procedure_travel):
 - Describe attractions, neighborhoods and routes with sourced facts only — opening hours, fees, closures, access and events come from VisitKorea, Visit Seoul, another government tourism site or the venue's official website, stated "as of <month year>" because they change.
-- No rankings or "best/must-see" claims; "one of the most visited" only with a cited statistic. No paid placements: do not promote individual restaurants, cafes, shops or hotels.
+- No rankings or "best/must-see" claims; "one of the most visited" only with a cited statistic. No paid placements.
+- Food and cafes are welcome: dishes, desserts, food markets, cafe streets and current food trends. Name an individual restaurant, cafe or shop only as an unpaid editorial example that an independent source (news, official tourism site, food guide) reports on, and cite it. No "best"/rankings, no booking, delivery or affiliate links, no coupons or discount language, and never include a business that paid us or gave free food, drinks or products.
+- Any food or drink advice tied to recovery (alcohol, spicy food, hot soups, saunas) must be sourced and hedged; do not invent diet rules.
 - Keep the link to the topic of skin treatments practical (sun, heat, crowds, walking, when a place fits into a treatment trip), never as an invitation to a specific clinic.
 
 Skincare and cosmetic products (Korean Cosmetics Act §13):

@@ -178,12 +178,13 @@ def main(argv: list[str] | None = None) -> int:
     save_json(path, data)
     log.info("주제 %d건 저장: %s", len(data["topics"]), path)
     print(telegram_message(args.week, data["topics"]))
-    if scan and (scan["attractions"] or scan["emerging"]):
+    if scan and (scan["attractions"] or scan["emerging"] or scan.get("food")):
         hot = sorted(scan["attractions"].items(), key=lambda x: -x[1]["trend"])[:3]
         names = load_yaml("attractions.yaml").get("attractions") or {}
         line = ", ".join(f"{names.get(a, {}).get('name', a)} {t['trend']}" for a, t in hot)
         new = ", ".join(e["name"] for e in scan["emerging"][:3])
-        print(f"🔥 관광지 트렌드: {line or '-'}" + (f" / 신규: {new}" if new else ""))
+        food = ", ".join(f["name"] for f in scan.get("food", [])[:3])
+        print(f"🔥 관광지 트렌드: {line or '-'}" + (f" / 신규: {new}" if new else "") + (f" / 🍜 {food}" if food else ""))
     return 0
 
 

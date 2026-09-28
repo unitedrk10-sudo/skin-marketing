@@ -12,6 +12,8 @@ sponsors:
     name_en: Example Dermatology Clinic  # 글에 표시될 영문 병원명 (이 이름만 본문에 허용)
     name_ko: 예시피부과의원
     official_url: https://www.example-clinic.com   # 본문에 허용되는 유일한 병원 링크
+    area: "Sinsa, Gangnam-gu"          # 선택: 지역명 (동·구까지, 주소 X) — 병원 중심 코스 글에 사용
+    zone: gangnam                      # 선택: gangnam | central | east | west | north (config/attractions.yaml 권역) — --course 글에 필요
     contract:
       type: monthly                    # monthly | per_post | pilot (무상 파일럿, 최대 183일 — 광고 표시는 동일)
       start: 2026-10-01

@@ -53,6 +53,9 @@ def validate(s: dict) -> dict:
         raise SponsorError(f"스폰서 {s['id']}: 계약 종료일이 시작일보다 빠름")
     if contract["type"] == "pilot" and (end - start).days > PILOT_MAX_DAYS:
         raise SponsorError(f"스폰서 {s['id']}: 무상 파일럿은 최대 {PILOT_MAX_DAYS}일 (이후 정액 계약으로 전환)")
+    zones = {"gangnam", "central", "east", "west", "north"}
+    if s.get("zone") and s["zone"] not in zones:
+        raise SponsorError(f"스폰서 {s['id']}: zone 은 {sorted(zones)} 중 하나 (config/attractions.yaml 권역)")
     return {**s, "contract": {**contract, "start": start.isoformat(), "end": end.isoformat()},
             "ad_review_required": bool(s.get("ad_review_required")), "review_no": str(s.get("review_no") or "")}
 

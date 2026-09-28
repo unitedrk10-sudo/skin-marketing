@@ -1,7 +1,9 @@
-"""관광지 트렌드 — 지금 외국인 사이에서 뜨는 곳·행사(주 1회 Gemini 검색 스캔) + 계절 달력.
+"""관광지 트렌드 — 지금 외국인 사이에서 뜨는 곳·행사·맛집·카페(주 1회 Gemini 검색 스캔) + 계절 달력.
 
 관광지 수요 점수(pipeline.demand)에 더해지는 두 가지:
   1. 트렌드 스캔 (content/trends/<주차>.json): 알려진 관광지별 trend 0~100 + 목록에 없는 신규 장소·행사(emerging).
+     음식·카페 트렌드(food): 뜨는 메뉴·디저트·카페 거리·시장, 독립 출처가 보도한 식당·카페 — 근처 관광지 점수를 올리고,
+     여행 글 프롬프트에 출처와 함께 들어가며, 주제 아이디어가 있으면 travel_guide 후보가 된다.
      출처 URL 없는 항목은 버린다. 스캔이 21일보다 오래되면 반영하지 않는다 (지난 유행으로 추천하지 않게).
   2. 계절 (config/attractions.yaml season: 월 목록): 이번 달·다음 달이 시즌이면 가산점 (여행자는 1~2달 전에 검색·계획).
 신규 장소는 주제 후보(travel_guide)로 바로 올라간다 (01_topics). 반복해서 뜨면 attractions.yaml 에 정식 추가한다.
@@ -23,6 +25,9 @@ log = get_logger("trends")
 MAX_AGE_DAYS = 21       # 이보다 오래된 스캔은 무시
 SCAN_EVERY_DAYS = 6     # 01_topics 가 이 간격으로만 새로 스캔 (주 1회)
 MAX_EMERGING = 5
+MAX_FOOD = 8
+FOOD_KINDS = {"dish", "dessert", "drink", "cafe_street", "market", "restaurant", "cafe"}
+FOOD_TO_PLACE = 0.75    # 음식 트렌드가 근처 관광지 트렌드 점수에 반영되는 비율
 
 
 def trends_dir():
@@ -40,9 +45,16 @@ def _trend(value) -> int:
         return 0
 
 
+def _topic(topic) -> dict | None:
+    if not isinstance(topic, dict) or not (topic.get("title") and topic.get("angle")):
+        return None
+    return {"title": str(topic["title"])[:80], "angle": topic["angle"], "keywords": list(topic.get("keywords") or [])[:6],
+            "hook": topic.get("hook", "")}
+
+
 def validate(data: dict, known: set[str], today: date) -> dict:
     """출처 없는 항목·알 수 없는 id·끝난 행사를 버린다."""
-    attractions, emerging = {}, []
+    attractions, emerging, food = {}, [], []
     for a in data.get("attractions") or []:
         if a.get("id") in known and _sources(a) and _trend(a.get("trend")):
             prev = attractions.get(a["id"])
@@ -65,7 +77,33 @@ def validate(data: dict, known: set[str], today: date) -> dict:
                                                    "keywords": list(topic.get("keywords") or [])[:6],
                                                    "hook": topic.get("hook", "")}})
     emerging.sort(key=lambda e: -e["trend"])
-    return {"attractions": attractions, "emerging": emerging[:MAX_EMERGING]}
+    for f in data.get("food") or []:
+        if not (f.get("name") and _sources(f) and _trend(f.get("trend"))):
+            continue
+        kind = f.get("kind") if f.get("kind") in FOOD_KINDS else "dish"
+        food.append({"id": f"trend-food-{slugify(f['name'], 40)}", "name": f["name"], "kind": kind, "area": f.get("area", ""),
+                     "attraction": f.get("attraction") if f.get("attraction") in known else "",
+                     "trend": _trend(f["trend"]), "why": str(f.get("why", ""))[:300], "sources": _sources(f),
+                     "topic": _topic(f.get("topic"))})
+    food.sort(key=lambda f: -f["trend"])
+    return {"attractions": attractions, "emerging": emerging[:MAX_EMERGING], "food": food[:MAX_FOOD]}
+
+
+def place_trends(data: dict | None) -> dict[str, dict]:
+    """관광지별 트렌드 = 관광지 자체 트렌드와 근처 음식·카페 트렌드(×0.75) 중 큰 값."""
+    out = {aid: dict(t) for aid, t in (data or {}).get("attractions", {}).items()}
+    for f in (data or {}).get("food", []):
+        if f["attraction"]:
+            value = round(f["trend"] * FOOD_TO_PLACE)
+            if value > out.get(f["attraction"], {}).get("trend", 0):
+                out[f["attraction"]] = {"trend": value, "why": f"food/cafe trend: {f['name']} — {f['why']}", "sources": f["sources"]}
+    return out
+
+
+def food_for(data: dict | None, attraction_ids: list[str]) -> list[dict]:
+    """여행 글용 — 해당 관광지 근처 음식·카페 트렌드 + 특정 장소에 안 묶인 전국 메뉴 트렌드."""
+    wanted = set(attraction_ids)
+    return [f for f in (data or {}).get("food", []) if f["attraction"] in wanted or not f["attraction"]]
 
 
 def scan(week: str | None = None, today: date | None = None) -> dict:
@@ -114,9 +152,10 @@ def in_season(attraction: dict, today: date | None = None) -> bool:
 
 
 def emerging_topics(data: dict | None) -> list[dict]:
-    """신규 트렌드 장소 → 01_topics 주제 후보 (travel_guide)."""
+    """신규 트렌드 장소·음식·카페 → 01_topics 주제 후보 (travel_guide)."""
     out = []
-    for e in (data or {}).get("emerging", []):
+    items = (data or {}).get("emerging", []) + [f for f in (data or {}).get("food", []) if f.get("topic")]
+    for e in items:
         t = e["topic"]
         out.append({"title": t["title"], "axis": "travel_guide", "angle": t["angle"], "keywords": t["keywords"],
                     "hook": t["hook"], "has_price": False, "why_now": f"Trending: {e['why']}",
@@ -134,6 +173,8 @@ def summary(data: dict | None, today: date | None = None) -> str:
             lines.append(f"- {catalog.get(aid, {}).get('name', aid)} {t['trend']}: {t['why']}")
         for e in data["emerging"]:
             lines.append(f"- 🆕 {e['name']} ({e['area']}) {e['trend']}: {e['why']}")
+        for f in data.get("food", []):
+            lines.append(f"- 🍜 {f['name']} ({f['kind']}, {f['area']}) {f['trend']}: {f['why']}")
     else:
         lines.append("[관광지 트렌드] 최근 스캔 없음")
     season = [a["name"] for a in catalog.values() if in_season(a, today)]
