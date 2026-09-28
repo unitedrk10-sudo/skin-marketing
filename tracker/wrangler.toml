@@ -4,7 +4,7 @@ main = "src/index.js"
 compatibility_date = "2026-09-01"
 
 [vars]
-BRAND = "skin-info"          # UTM utm_source 값 (브랜드명 정해지면 변경)
+BRAND = "skinbound"          # UTM utm_source 값 (브랜드 확정 2026-09-28)
 SITE_HOST = ""               # 블로그 도메인 (예: example.com) — 여기서 온 클릭은 blog 로 분류
 
 [[d1_databases]]
