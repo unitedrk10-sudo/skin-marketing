@@ -8,3 +8,4 @@ content/
 reports/
 review-queue/
 config/sponsors.yaml
+site/dist/

@@ -20,6 +20,16 @@ python -m pipeline.sponsors check
 ```
 텔레그램: "글로우 스폰서 글: 리쥬란 안내" → 초안(광고 표시 자동) → 검수 → 병원에 최종본 전달 → 병원 OK 후 `N 병원확인` → `N 승인`.
 
+## 블로그 사이트 (Cloudflare Pages)
+```bash
+npx wrangler login                                                    # 추적기와 같은 Cloudflare 계정
+npx wrangler pages project create skin-site --production-branch main  # 한 번만
+python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배포 → https://skin-site.pages.dev
+```
+- 브랜드·도메인 확정 후 `config/site.yaml` 의 `name`, `domain` 을 바꾸고, Cloudflare Pages → Custom domains 에 도메인 연결.
+- 도메인을 넣어야 `sitemap.xml`·canonical 이 생긴다 → Google Search Console·Bing Webmaster 에 sitemap 등록 (Bing 은 ChatGPT 검색의 주요 데이터원).
+- 게시 대상은 사람이 승인한 글(approved 이후)만. SNS 프로필 링크에는 이 블로그 주소를 건다.
+
 ## 링크 유입 추적기
 `tracker/README.md` 대로 Cloudflare 에 배포하고 `.env` 에 `TRACKER_URL`, `TRACKER_TOKEN` 입력. 텔레그램에서 "글로우 링크 만들어줘" → 채널별 추적 링크.
 
@@ -30,6 +40,7 @@ python -m pipeline.sponsors check
 | skin-weekly-topics | 월 09:00 | `skin-topics.sh` | 코드 업데이트(`git pull`) → 주간 주제 후보 전송 |
 | skin-worker | 10분마다 | `skin-worker.sh` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
 | skin-traffic-report | 월 10:00 | `skin-traffic.sh` | 스폰서 링크 유입 주간 요약 (추적기 배포 전·클릭 없으면 조용) |
+| skin-site | 매시 | `skin-site.sh` | 승인된 블로그 글이 바뀌었을 때만 사이트 빌드·배포 → "새 글" 알림 |
 
 스크립트는 `~/.hermes/scripts/` 에 생성된다. 수동 실행: `hermes cron run <이름>`.
 

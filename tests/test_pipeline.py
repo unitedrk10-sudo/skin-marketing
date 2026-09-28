@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import re
 
 import pytest
 
@@ -715,3 +716,80 @@ def test_tracker_sponsor_link_is_blog_only(env, tmp_path, monkeypatch, capsys):
     tracker_mod.main(["add", "--sponsor", "glow", "--label", "x"])
     out = capsys.readouterr().out
     assert "?s=blog" in out and "?s=tt" not in out and "?s=ig" not in out
+
+
+# ---- 블로그 사이트 ----
+
+site_mod = importlib.import_module("pipeline.site")
+FAQ_BLOG = (f"# Rejuran explained\n\nIt uses polynucleotides [F1]. Evil <script>alert(1)</script> and "
+            f"[bad](javascript:alert(1)).\n\n## FAQ\n\n### Does it hurt\n\nMost people feel mild discomfort [F1].\n\n"
+            f"### How long is downtime?\n\nUsually 1-3 days.\n\n## Next\n\nText.\n\n{DISCLOSURE}")
+
+
+def _approve(env, draft_id):
+    human_mod.list_message("drafts")
+    ids = common.load_json(common.content_dir("drafts") / "_batch.json")["ids"]
+    human_mod.apply(f"{ids.index(draft_id) + 1} 승인", confirm=True)
+
+
+@pytest.fixture
+def site_env(env, tmp_path, monkeypatch):
+    monkeypatch.setenv("SKIN_SITE_DIR", str(tmp_path / "dist"))
+    monkeypatch.delenv("TRACKER_URL", raising=False)
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example"})
+    return env
+
+
+def test_site_publishes_only_approved_posts(site_env, tmp_path):
+    site_env.responses["blog"] = blog(FAQ_BLOG)
+    approved = make_draft(site_env)
+    draft_mod.create("2026-W40", 2, TOPICS["topics"][1])  # 검수 대기 — 게시되면 안 됨
+    review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
+    _approve(site_env, approved)
+    result = site_mod.build()
+    assert result["posts"] == 1
+    dist = tmp_path / "dist"
+    post = (dist / "rejuran" / "index.html").read_text()
+    assert "<script>alert" not in post and "&lt;script&gt;" in post       # 원시 HTML 차단
+    assert "javascript:" not in post
+    assert 'href="#src-1"' in post and URL in post                        # 각주 + 출처 목록
+    assert post.count("<h1>") == 1
+    ld = [json.loads(m) for m in re.findall(r'<script type="application/ld\+json">(.*?)</script>', post)]
+    assert ld[0]["citation"] == [URL] and "MedicalWebPage" in ld[0]["@type"]
+    assert ld[1]["@type"] == "FAQPage" and ld[1]["mainEntity"][0]["name"] == "Does it hurt?"
+    assert "https://skinbound.example/rejuran/" in (dist / "sitemap.xml").read_text()
+    assert "rejuran" in (dist / "llms.txt").read_text()
+    assert "Allow: /" in (dist / "robots.txt").read_text()
+
+
+def test_site_sponsored_post_labels_and_tracked_link(sponsored, tmp_path, monkeypatch):
+    monkeypatch.setenv("SKIN_SITE_DIR", str(tmp_path / "dist"))
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": ""})
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    monkeypatch.setattr(tracker_mod, "_request", lambda *a, **k: {"code": "abc234", "url": "https://go.example/abc234"})
+    draft_id = make_sponsored(sponsored)
+    review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
+    human_mod.list_message("drafts")
+    human_mod.apply("1 병원확인\n1 승인", confirm=True)
+    site_mod.build()
+    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text()  # blog.slug
+    assert "Sponsored · Ad by Glow Skin Clinic" in post and "advertisement by Glow Skin Clinic" in post
+    assert 'href="https://go.example/abc234?s=blog" rel="sponsored noopener"' in post
+    assert '"sponsor": {"@type": "MedicalOrganization"' in post
+    assert not (tmp_path / "dist" / "sitemap.xml").exists()                # 도메인 없으면 sitemap 생략
+    assert "Sponsored" in (tmp_path / "dist" / "index.html").read_text()
+
+
+def test_site_deploy_only_when_changed(site_env, monkeypatch):
+    import subprocess
+    calls = []
+    monkeypatch.setattr(site_mod.subprocess, "run",
+                        lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    approved = make_draft(site_env)
+    review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
+    _approve(site_env, approved)
+    msg = site_mod.deploy()
+    assert "새 글: https://skinbound.example/rejuran/" in msg and len(calls) == 1
+    assert "pages" in calls[0] and "deploy" in calls[0]
+    assert site_mod.deploy() == "" and len(calls) == 1  # 바뀐 것 없음 → 배포·알림 없음

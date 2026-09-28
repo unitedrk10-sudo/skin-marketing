@@ -367,8 +367,8 @@ Hermes → 텔레그램 메시지 예시:
 - TTS 서비스·목소리 최종 선택
 - 영상 합성 방식: ffmpeg 스크립트 vs Remotion vs 캡컷 템플릿
 - 예약 게시 도구 선택 (Buffer / Later / Metricool)
-- 블로그 플랫폼: 자체 사이트(워드프레스 등) vs 서브스택/미디엄
-- 채널/브랜드명
+- ~~블로그 플랫폼~~ → **자체 정적 사이트 (Cloudflare Pages, `pipeline/site.py`)로 결정 (2026-09-28)**: AI 인용 자산 + 스폰서 트랙의 주 무대(틱톡 브랜디드 금지). 승인된 글 자동 게시
+- 채널/브랜드명 후보: `docs/brand-candidates.md` (1순위 Skinbound, 도메인·상표·핸들 확인 필요)
 - Gemini 단계별 모델 배분 (Flash vs 상위 모델)
 - 교차 검수 모델 선택 (Claude API / 기타) 및 API 키 발급
 - B롤·이미지 확보 방식 (스톡 라이선스 / AI 생성) — 7장 저작권 체크와 연동
