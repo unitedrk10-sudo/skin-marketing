@@ -155,7 +155,7 @@ def render(path: Path) -> Path:
     listing.write_text("".join(f"file '{p.name}'\nduration {timeline[i]['end'] - timeline[i]['start'] + GAP_SEC:.2f}\n"
                                for i, p in enumerate(parts)), encoding="utf-8")
     voice_mp3 = path / "voice.mp3"
-    _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-af", "apad",
+    _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-af", "aresample=async=1:first_pts=0,apad",
           "-t", f"{total:.2f}", str(voice_mp3)])
 
     site = load_yaml("site.yaml")
