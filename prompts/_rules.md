@@ -18,6 +18,11 @@ Accuracy:
 - Price information is always a range for the category (e.g., "typically ranges from ... in Seoul"), never a single clinic's price list.
 - Entry requirements (K-ETA, visas), tax refund rules and similar facts change often — only use sources from the last 12 months and say "as of <month year>".
 
+Skincare and cosmetic products (Korean Cosmetics Act §13):
+- Describe products as cosmetics. Never say a cosmetic treats, heals, cures, repairs wounds or scars, regenerates cells, or works like a procedure or medicine ("like Botox in a jar", "medical-grade", "prescription-strength").
+- Use the manufacturer's or an official description of what the product does ("moisturizing", "soothing", "helps support the skin barrier") and cite it; cite independent research for any ingredient claim.
+- Name products only as examples, never as a ranking; do not use affiliate or shop links. If a brand paid or gave free products, it must go through the sponsored track instead.
+
 AI disclosure:
 - Short-form videos must include an on-screen line: "AI-generated content".
 - Blog posts must end with: "This article was produced with AI assistance and is based on publicly available sources. It is not medical advice."

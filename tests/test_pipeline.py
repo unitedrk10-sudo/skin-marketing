@@ -824,3 +824,37 @@ def test_from_seed_order_and_reuse(env):
     common.save_json(common.content_dir("topics") / "2026-W41.json", week2)
     week3 = topics_mod.from_seed("2026-W42", 2)                   # 두 번 제안하고 안 고른 주제는 제외
     assert "vat-refund-ended-2026" not in [t["seed_id"] for t in week3["topics"]]
+
+
+def test_sponsored_post_always_links_official_site(sponsored, tmp_path, monkeypatch):
+    sponsored.responses["blog"] = blog(f"# Rejuran at Glow\n\nGlow Skin Clinic offers Rejuran [F1]. Results vary; consult a doctor.")
+    draft_id = make_sponsored(sponsored)
+    md = common.load_draft(common.content_dir("drafts") / draft_id)["blog"]["markdown"]
+    assert md.rstrip().endswith("(https://www.glow-clinic.example)")      # 모델이 빠뜨려도 코드가 추가
+    assert [f.message for f in review_mod.check_rules(common.load_draft(common.content_dir("drafts") / draft_id))[0]] == []
+    monkeypatch.setenv("SKIN_SITE_DIR", str(tmp_path / "dist"))
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": ""})
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    monkeypatch.setattr(tracker_mod, "_request", lambda *a, **k: {"code": "zz2345", "url": "https://go.example/zz2345"})
+    review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
+    human_mod.list_message("drafts")
+    human_mod.apply("1 병원확인\n1 승인", confirm=True)
+    site_mod.build()
+    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text()
+    assert 'href="https://go.example/zz2345?s=blog" rel="sponsored noopener"' in post
+
+
+@pytest.mark.parametrize("sentence,blocked", [
+    ("This cica cream heals acne scars.", True),
+    ("It works like Botox in a jar.", True),
+    ("A medical-grade serum for recovery.", True),
+    ("Cosmetics can't legally claim to treat skin conditions.", False),
+    ("Panthenol is described by makers as soothing and moisturizing.", False),
+])
+def test_cosmetic_claims_blocked_only_in_skincare(sentence, blocked):
+    base = {"facts": [{"id": "F1", "text": "x", "url": URL}], "shortform": script(voice=sentence), "blog": blog()}
+    msgs = [f.message for f in review_mod.check_rules({**base, "content_type": "skincare"})[0]]
+    assert any("화장품법" in m for m in msgs) == blocked, msgs
+    other = [f.message for f in review_mod.check_rules({**base, "content_type": "procedure"})[0]]
+    assert not any("화장품법" in m for m in other)

@@ -127,6 +127,9 @@ def add_disclosures(draft: dict, sponsor: dict) -> None:
     markdown = draft["blog"]["markdown"]
     if notice not in markdown:
         draft["blog"]["markdown"] = f"{notice}\n\n{markdown}"
+    link = sponsors.official_link_line(sponsor)
+    if link not in draft["blog"]["markdown"]:  # 모델이 링크를 빠뜨려도 병원 링크(→ 유입 추적)가 항상 있게
+        draft["blog"]["markdown"] = draft["blog"]["markdown"].rstrip() + f"\n\n{link}\n"
 
 
 def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -> dict:

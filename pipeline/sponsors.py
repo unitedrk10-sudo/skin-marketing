@@ -100,6 +100,11 @@ def blog_disclosure(sponsor: dict) -> str:
             "It is not medical advice; consult a licensed doctor.")
 
 
+def official_link_line(sponsor: dict) -> str:
+    """스폰서 글 끝에 항상 붙는 병원 공식 사이트 링크 (블로그 빌드 시 추적 링크 + rel=sponsored 로 바뀜)."""
+    return f"For details, see {sponsor['name_en']}'s official website: [{sponsor['official_url']}]({sponsor['official_url']})"
+
+
 def rules_text(sponsor: dict) -> str:
     return render(read_prompt("_sponsored_rules"), name_en=sponsor["name_en"], name_ko=sponsor["name_ko"],
                   official_url=sponsor["official_url"])
