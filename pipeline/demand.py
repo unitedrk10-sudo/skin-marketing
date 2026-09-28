@@ -36,6 +36,9 @@ CLICKS_FOR_FULL_WEIGHT = 100
 CLICK_VALUE = 20               # 클릭 1 = 조회 20 (병원 찾기·병원 도착은 조회보다 강한 신호)
 COVERAGE_PENALTY = 0.15        # 최근 8주 글 1개당 점수 감소율
 OTHER_PRIOR = 2
+TREND_BOOST = 0.4              # 관광지: 트렌드 스캔 100점 = +0.4 (pipeline.trends)
+SEASON_BOOST = 0.15            # 관광지: 이번·다음 달이 시즌이면 +0.15
+EMERGING_PRIOR = 0.6           # 목록에 없는 신규 트렌드 장소의 기본값 (관심도 3/5 상당)
 CF_GRAPHQL = "https://api.cloudflare.com/client/v4/graphql"
 
 PAGEVIEWS_QUERY = """query ($account: String!, $filter: AccountRumPageloadEventsAdaptiveGroupsFilter_InputObject) {
@@ -131,13 +134,21 @@ def scores(today: date | None = None, catalog_name: str = "procedures", views: d
     total_views, total_clicks = sum(views.values()), sum(clicks.values())
     weight = min(MAX_DATA_WEIGHT, MAX_DATA_WEIGHT * max(total_views / VIEWS_FOR_FULL_WEIGHT, total_clicks / CLICKS_FOR_FULL_WEIGHT))
 
+    # 관광지는 유행·계절을 탄다: 최근 트렌드 스캔(21일 이내)과 계절 가산점
+    from pipeline import trends
+    scan = (trends.latest(today) or {}).get("attractions", {}) if catalog_name == "attractions" else {}
+
     out = {}
     for pid, prior in priors.items():
         # 글이 없는 시술은 데이터가 없으므로 사전값 그대로 (아직 안 써본 시술을 불리하게 만들지 않음)
         data = signal[pid] / top if pid in signal and top else prior
         w = weight if pid in signal and top else 0.0
-        score = ((1 - w) * prior + w * data) / (1 + COVERAGE_PENALTY * recent.get(pid, 0))
+        trend = scan.get(pid, {})
+        season = catalog_name == "attractions" and trends.in_season(catalog.get(pid) or {}, today)
+        base = (1 - w) * prior + w * data + TREND_BOOST * trend.get("trend", 0) / 100 + (SEASON_BOOST if season else 0)
+        score = base / (1 + COVERAGE_PENALTY * recent.get(pid, 0))
         out[pid] = {**raw[pid], "prior": prior, "recent_posts": recent.get(pid, 0), "data_weight": round(w, 2),
+                    "trend": trend.get("trend", 0), "trend_why": trend.get("why", ""), "season": season,
                     "score": round(score, 3), "name": (catalog.get(pid) or {}).get("name", "Other")}
     return out
 
@@ -146,6 +157,10 @@ def reason(s: dict) -> str:
     parts = [f"관심도 {round(s['prior'] * 5)}/5"]
     if s["data_weight"]:
         parts.append(f"조회 {s['views']}·클릭 {s['clicks']} (글 {s['posts']}개, 데이터 {round(s['data_weight'] * 100)}%)")
+    if s.get("trend"):
+        parts.append(f"🔥 트렌드 {s['trend']}")
+    if s.get("season"):
+        parts.append("🍂 시즌")
     if s["recent_posts"]:
         parts.append(f"최근 8주 {s['recent_posts']}편")
     return " · ".join(parts)
@@ -181,7 +196,14 @@ def prompt_block(tables: dict[str, dict[str, dict]], limit: int = 8) -> str:
         out.append(f"{label}:")
         out += [f"- {s['name']}: demand score {s['score']:.2f}"
                 + (f" (our data: {s['views']} views, {s['clicks']} clinic-search clicks on {s['posts']} posts)"
-                   if s["data_weight"] else "") for s in rows]
+                   if s["data_weight"] else "")
+                + (f" [trending: {s['trend_why']}]" if s.get("trend") else "")
+                + (" [in season now or next month]" if s.get("season") else "") for s in rows]
+    from pipeline import trends
+    data = trends.latest()
+    if data and data.get("emerging"):
+        out.append("Trending right now (new places/events, from this week's scan):")
+        out += [f"- {e['name']} ({e['area']}): trend {e['trend']} — {e['why']}" for e in data["emerging"]]
     return "\n".join(out)
 
 
