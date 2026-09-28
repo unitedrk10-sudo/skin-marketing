@@ -89,6 +89,10 @@ GENERIC_WORDS = {
 }
 INSTITUTION = re.compile(r"\b(?:Academy|Association|Society|Journal|College|Institute|Ministry|Agency|Administration|Board)\b", re.I)
 
+# 시술 × 여행 글의 날짜별 일정에는 시술 다음 날 관찰일이 있어야 한다 (_rules "observation day")
+ITINERARY = re.compile(r"\bday\s*[1-9]\b", re.I)
+OBSERVATION_DAY = re.compile(r"observation[\s-]day", re.I)
+
 # 화장품 글(content_type: skincare) 전용 — 의약품으로 오인될 표현 (화장품법 §13①1)
 COSMETIC_PATTERNS = re.compile(
     r"\b(?:heal(?:s|ing)?|cures?|treats?|treating|repairs?\s+(?:wounds?|scars?|damaged\s+skin)|regenerat(?:es|ing)\s+(?:cells|skin)"
@@ -186,6 +190,10 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
                 if NEGATION.search(text[max(0, m.start() - 30):m.start()]):
                     continue  # "cosmetics can't claim to treat..." 같은 설명은 허용
                 findings.append(Finding("rules", "block", f"[{where}] 화장품을 의약품처럼 표현 (화장품법 §13)", _snippet(text, m)))
+
+    if draft.get("content_type") == "procedure_travel" and ITINERARY.search(texts["blog"]) \
+            and not OBSERVATION_DAY.search(texts["blog"]):
+        findings.append(Finding("rules", "block", "[blog] 시술 여행 일정에 시술 다음 날 관찰일(observation day) 없음"))
 
     # 출처 연결: 모든 사실 참조가 실제 사실 목록에 있어야 한다
     known = {f["id"] for f in draft.get("facts", [])}

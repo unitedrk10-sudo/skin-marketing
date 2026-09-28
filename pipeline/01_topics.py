@@ -1,6 +1,6 @@
 """1. 주간 주제 선정 — Hermes 크론 (월 09:00, 에이전트 모드).
 
-추천 순서는 시술별 수요 점수(pipeline.demand: 영어권 관심도 사전값 + 우리 블로그 조회수·링크 클릭) 기준.
+추천 순서는 수요 점수(pipeline.demand: 시술·관광지별 영어권 관심도 사전값 + 우리 블로그 조회수·링크 클릭) 기준.
 Gemini 검색 연동으로 주제 후보를 조사해 content/topics/<주차>.json 에 저장하고,
 텔레그램으로 보낼 메시지를 stdout 에 출력한다. 사람이 번호를 고르면 02_draft 를 실행한다.
 
@@ -33,7 +33,7 @@ from pipeline.common import (
 log = get_logger("01_topics")
 RECENT_LIMIT = 60
 WAVE_BONUS = {1: 0.3, 2: 0.1}   # seed 의 wave(시의성·기초 주제)는 가산점으로만 — 순서는 수요 점수가 정한다
-MAX_PER_PROCEDURE = 2           # 한 주에 같은 시술 주제는 최대 2개 (다양성)
+MAX_PER_FOCUS = 2               # 한 주에 같은 시술·관광지 주제는 최대 2개 (다양성)
 
 
 def recent_titles() -> list[str]:
@@ -73,26 +73,27 @@ def used_seed_ids() -> set[str]:
     return {i for i in drafted if i} | {i for i, n in offered.items() if n >= 2}
 
 
-def annotate(topics: list[dict], table: dict[str, dict], bonus: dict[int, float] | None = None) -> list[dict]:
+def annotate(topics: list[dict], tables: dict[str, dict[str, dict]], bonus: dict[int, float] | None = None) -> list[dict]:
     """주제마다 수요 점수·근거를 붙이고 점수 순으로 정렬한다 (bonus: 주제 index → 가산점)."""
     for i, t in enumerate(topics):
-        score, pid, why = demand.topic_score(t, table)
-        t["demand"] = {"score": round(score + (bonus or {}).get(i, 0), 3), "procedure": pid, "reason": why}
+        score, focus, why = demand.topic_score(t, tables)
+        t["demand"] = {"score": round(score + (bonus or {}).get(i, 0), 3), "focus": focus, "reason": why}
     return sorted(topics, key=lambda t: -t["demand"]["score"])  # 동점은 원래 순서
 
 
 def diverse(topics: list[dict], count: int) -> list[dict]:
-    """점수 순으로 고르되 같은 시술은 MAX_PER_PROCEDURE 개까지 — 모자라면 나머지로 채운다."""
+    """점수 순으로 고르되 같은 시술·관광지는 MAX_PER_FOCUS 개까지 — 모자라면 나머지로 채운다."""
     picked, per = [], Counter()
     for t in topics:
-        if per[t["demand"]["procedure"]] < MAX_PER_PROCEDURE or t["demand"]["procedure"] == "other":
+        focus = t["demand"]["focus"]
+        if per[focus] < MAX_PER_FOCUS or focus.endswith(":other"):
             picked.append(t)
-            per[t["demand"]["procedure"]] += 1
+            per[focus] += 1
     rest = [t for t in topics if t not in picked]
     return (picked + rest)[:count]
 
 
-def from_seed(week: str, count: int, table: dict[str, dict] | None = None) -> dict | None:
+def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None = None) -> dict | None:
     """조사해 둔 초기 주제 목록에서 아직 안 쓴 것을 수요 점수(+wave 가산점) 순으로 꺼낸다. 다 썼으면 None."""
     axes = load_yaml("channels.yaml")["content_axes"]
     seeds = load_yaml("seed_topics.yaml").get("topics", [])
@@ -106,8 +107,8 @@ def from_seed(week: str, count: int, table: dict[str, dict] | None = None) -> di
         topic["sources"] = [x if isinstance(x, dict) else {"url": x, "title": ""} for x in s.get("sources", [])]
         topic["seed_id"] = s["id"]
         candidates.append(topic)
-    table = table or demand.scores()
-    ranked = annotate(candidates, table, {i: WAVE_BONUS.get(s.get("wave", 9), 0) for i, s in enumerate(fresh)})
+    tables = tables or demand.all_scores()
+    ranked = annotate(candidates, tables, {i: WAVE_BONUS.get(s.get("wave", 9), 0) for i, s in enumerate(fresh)})
     return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [],
             "topics": validate(diverse(ranked, count), axes)}
 
@@ -126,7 +127,7 @@ def build(week: str, count: int) -> dict:
     channels = load_yaml("channels.yaml")
     axes = channels["content_axes"]
     recent = recent_titles()
-    table = demand.scores()
+    tables = demand.all_scores()
     text = prompt(
         "topic_research",
         today=date.today().isoformat(),
@@ -135,7 +136,7 @@ def build(week: str, count: int) -> dict:
         axes="\n".join(f"- {a}" for a in axes),
         channels=str({k: channels[k] for k in ("audience", "shortform", "blog")}),
         recent_titles="\n".join(f"- {t}" for t in recent) or "(none yet)",
-        demand=demand.prompt_block(table),
+        demand=demand.prompt_block(tables),
     )
     data, result = llm.generate_json("topics", text)
     topics = validate(data.get("topics", []) if isinstance(data, dict) else data, axes)
@@ -146,7 +147,7 @@ def build(week: str, count: int) -> dict:
         "created_at": now_iso(),
         "model": result.model,
         "grounding_urls": result.grounding_urls,
-        "topics": annotate(topics, table),
+        "topics": annotate(topics, tables),
     }
 
 

@@ -383,3 +383,99 @@ topics:
     keywords: [aqua peel korea, hydrafacial seoul, korean clinic facial, glass skin facial]
     hook: "The 'glass skin' facial — what's in it?"
     has_price: false
+
+  # ---------- 관광지 소개·코스 (travel_guide) — AI 검색 유입 통로 (2026-09-28 조사: 서울AI재단 2025 외국인 방문 분석) ----------
+  - id: seongsu-seoul-forest
+    wave: 1
+    axis: travel_guide
+    title: "Seongsu-dong and Seoul Forest: a half-day guide"
+    angle: "What to see in Seongsu and Seoul Forest, how to get there from Gangnam or central Seoul, K-beauty flagship stores in the area, and how to pace a walk around a recent skin treatment."
+    why_now: "Visitors from the Americas are reported to favor Seoul Forest and Seongsu (2025 Seoul foreign-visitor analysis)."
+    keywords: [seongsu seoul, seongsu-dong guide, seoul forest, olive young seongsu]
+    hook: "Why is everyone from the US heading to Seongsu?"
+    has_price: false
+    sources:
+      - https://english.seoul.go.kr/foreign-tourists-enjoying-k-culture-and-k-hiking-in-seoul-tourists-in-every-nook-and-cranny-of-the-city/
+  - id: gyeongbokgung-hanbok
+    wave: 1
+    axis: travel_guide
+    title: "Gyeongbokgung Palace in a hanbok: planning around a skin treatment"
+    angle: "How a palace visit works (hours, closed days, hanbok visitors, guard ceremony), how much time to allow, and why an outdoor, sunny palace day fits better before a procedure or after the observation day."
+    why_now: "Gyeongbokgung drew a record number of international visitors in 2025."
+    keywords: [gyeongbokgung palace, hanbok rental seoul, seoul palace guide, gyeongbokgung hours]
+    hook: "Palace day in a hanbok — before or after your treatment?"
+    has_price: false
+  - id: myeongdong-first-timers
+    wave: 1
+    axis: travel_guide
+    title: "Myeongdong for first-timers: K-beauty shopping and street food"
+    angle: "How Myeongdong is laid out, when it is busiest, K-beauty shopping and tax-free basics, street food, and nearby Namsan — with notes for shoppers buying aftercare products."
+    why_now: "Myeongdong remained Seoul's most-visited area for foreign visitors in 2025."
+    keywords: [myeongdong guide, myeongdong shopping, k-beauty shopping seoul, myeongdong street food]
+    hook: "First time in Myeongdong? Here's how it actually works."
+    has_price: false
+  - id: indoor-gangnam-coex-lotte
+    wave: 1
+    axis: travel_guide
+    title: "Indoor Gangnam: COEX, Starfield Library and Lotte World Tower"
+    angle: "Indoor, low-walking places near Gangnam that suit the day after a skin treatment: what's there, how to get between them, and how long to allow."
+    why_now: "Samseong/COEX ranked among the most-visited Seoul areas in 2025; most skin clinics are in Gangnam."
+    keywords: [coex mall, starfield library, lotte world tower seoul sky, indoor things to do gangnam]
+    hook: "Your observation day in Gangnam — where to go indoors?"
+    has_price: false
+  - id: bukchon-hanok-village
+    wave: 2
+    axis: travel_guide
+    title: "Bukchon Hanok Village: visiting hours, quiet rules and a walking route"
+    angle: "Bukchon's resident-protection visiting hours, a walking route to Samcheong-dong and nearby palaces, and sun and walking tips for visitors with healing skin."
+    why_now: "European visitors showed the strongest interest in Bukchon in 2025; visiting-hour rules apply."
+    keywords: [bukchon hanok village, bukchon visiting hours, bukchon walking route, samcheong-dong]
+    hook: "Bukchon has visiting hours now — do you know them?"
+    has_price: false
+  - id: n-seoul-tower-namsan
+    wave: 2
+    axis: travel_guide
+    title: "N Seoul Tower and Namsan: cable car, bus or walk?"
+    angle: "Ways up Namsan, what's at the top, sunset timing and how much walking each route involves — useful when you want an easy evening after a treatment."
+    why_now: "N Seoul Tower ranked second among Seoul spots visited by foreigners in 2025."
+    keywords: [n seoul tower, namsan cable car, namsan tower sunset, seoul tower tickets]
+    hook: "Namsan Tower: the easy way up."
+    has_price: false
+  - id: gwangjang-market-food
+    wave: 2
+    axis: travel_guide
+    title: "Gwangjang Market food guide for visitors"
+    angle: "How the market is laid out, classic dishes, opening times, cash and card, and a note on skipping makgeolli and soju in the first days after injectables."
+    why_now: "Gwangjang Market was among the fastest-growing spots for foreign visitors in 2025."
+    keywords: [gwangjang market, gwangjang market food, bindaetteok, seoul food market]
+    hook: "What to eat at Gwangjang Market (and what to skip after a treatment)."
+    has_price: false
+  - id: hongdae-yeonnam
+    wave: 2
+    axis: travel_guide
+    title: "Hongdae and Yeonnam-dong: a relaxed afternoon route"
+    angle: "Getting there, Gyeongui Line Forest Park, shopping streets and evening crowds — and how it fits into a trip based in Gangnam."
+    why_now: "Hongdae ranked in the top five Seoul areas for foreign visitors in 2025."
+    keywords: [hongdae guide, yeonnam-dong, gyeongui line forest park, hongdae shopping]
+    hook: "Hongdae without the chaos — here's the route."
+    has_price: false
+  - id: han-river-parks
+    wave: 3
+    axis: travel_guide
+    title: "Han River parks and cruises: picnics, bikes and sunsets"
+    angle: "Popular Han River parks, rentals, cruises and the rainbow fountain season — plus sun and exercise timing after laser treatments."
+    why_now: "Han River picnics are a staple of visitor itineraries; outdoor sun matters after lasers."
+    keywords: [han river park, hangang picnic, han river cruise, banpo rainbow fountain]
+    hook: "Chimaek by the Han River — after your laser?"
+    has_price: false
+  - id: k-hiking-seoul
+    wave: 3
+    axis: travel_guide
+    title: "K-hiking in Seoul: Bukhansan and Inwangsan for visitors"
+    angle: "Trail options, difficulty and access by subway, what to bring, and why intense exercise and strong sun usually wait until after the first days of recovery."
+    why_now: "Seoul reports a rise in foreign visitors joining 'K-hiking'."
+    keywords: [bukhansan hiking, inwangsan hike, hiking in seoul, seoul mountain trails]
+    hook: "Hiking in Seoul — how soon after a treatment?"
+    has_price: false
+    sources:
+      - https://english.seoul.go.kr/foreign-tourists-enjoying-k-culture-and-k-hiking-in-seoul-tourists-in-every-nook-and-cranny-of-the-city/

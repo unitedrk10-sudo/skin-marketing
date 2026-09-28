@@ -23,6 +23,11 @@ Accuracy:
 Trip planning around procedures:
 - Every itinerary keeps the day right after a procedure as a light "observation day" in the same city: no flight, no long-distance travel, no sauna, alcohol, intense exercise or strong sun, and a suggestion to ask the clinic whether a follow-up check is needed before leaving. Present this as common planning advice to confirm with the treating clinic, and cite a source for any downtime figure.
 
+Place guides and routes (travel_guide, procedure_travel):
+- Describe attractions, neighborhoods and routes with sourced facts only — opening hours, fees, closures, access and events come from VisitKorea, Visit Seoul, another government tourism site or the venue's official website, stated "as of <month year>" because they change.
+- No rankings or "best/must-see" claims; "one of the most visited" only with a cited statistic. No paid placements: do not promote individual restaurants, cafes, shops or hotels.
+- Keep the link to the topic of skin treatments practical (sun, heat, crowds, walking, when a place fits into a treatment trip), never as an invitation to a specific clinic.
+
 Skincare and cosmetic products (Korean Cosmetics Act §13):
 - Describe products as cosmetics. Never say a cosmetic treats, heals, cures, repairs wounds or scars, regenerates cells, or works like a procedure or medicine ("like Botox in a jar", "medical-grade", "prescription-strength").
 - Use the manufacturer's or an official description of what the product does ("moisturizing", "soothing", "helps support the skin barrier") and cite it; cite independent research for any ingredient claim.

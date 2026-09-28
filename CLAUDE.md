@@ -17,7 +17,8 @@
 - 법령 조회: `python -m pipeline.law_api search 의료법` / `python -m pipeline.law_api article 의료법 27`
 - 법령 동기화: `python -m pipeline.law_sync`
 - LLM 설정 점검: `python -m pipeline.llm check`
-- 주간 주제: `python -m pipeline.01_topics` / 초기 주제 목록에서: `--from-seed 6` (`config/seed_topics.yaml`, 소진 시 Gemini 로 자동 전환). 추천 순서 = 수요 점수 (`python -m pipeline.demand`: `config/procedures.yaml` 관심도 사전값 + 글별 조회수·링크 클릭, 같은 시술 주 2개까지)
+- 주간 주제: `python -m pipeline.01_topics` / 초기 주제 목록에서: `--from-seed 6` (`config/seed_topics.yaml`, 소진 시 Gemini 로 자동 전환). 추천 순서 = 수요 점수 (`python -m pipeline.demand`: `config/procedures.yaml`·`config/attractions.yaml` 관심도 사전값 + 글별 조회수·링크 클릭, 같은 시술·관광지 주 2개까지)
+- 관광지 소개·코스(축 `travel_guide`): `config/attractions.yaml` 속성으로 코스 규칙을 프롬프트에 넣는다 (`pipeline/attractions.py`, 관찰일 가능 목록 `python -m pipeline.attractions`)
 - 초안 생성: `python -m pipeline.02_draft --week 2026-W40 --pick 1,3` / 수정: `--revise <draft_id> --note "..."`
 - 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate`
 - Claude Code 검수 한 사이클: `python -m pipeline.02c_external_review review` (export → claude -p → import)

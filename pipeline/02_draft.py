@@ -19,7 +19,7 @@ import re
 from datetime import date
 from pathlib import Path
 
-from pipeline import llm, sponsors
+from pipeline import attractions, llm, sponsors
 from pipeline.common import (
     blog_text,
     content_dir,
@@ -46,7 +46,7 @@ def _revision(note: str | None) -> str:
     return f"\nREVISION REQUEST from the human reviewer (must be addressed): {note}\n" if note else ""
 
 
-def research(topic: dict, note: str | None, rules: str | None = None) -> list[dict]:
+def research(topic: dict, note: str | None, rules: str | None = None, travel: str = "") -> list[dict]:
     text = prompt(
         "fact_research",
         rules=rules,
@@ -56,6 +56,7 @@ def research(topic: dict, note: str | None, rules: str | None = None) -> list[di
         angle=topic["angle"],
         keywords=", ".join(topic.get("keywords", [])),
         revision_note=_revision(note),
+        travel_context=travel,
     )
     data, _ = llm.generate_json("research", text)
     facts = []
@@ -72,7 +73,7 @@ def research(topic: dict, note: str | None, rules: str | None = None) -> list[di
     return facts
 
 
-def write_script(topic: dict, facts: list[dict], note: str | None, rules: str | None = None) -> dict:
+def write_script(topic: dict, facts: list[dict], note: str | None, rules: str | None = None, travel: str = "") -> dict:
     lo, hi = load_yaml("channels.yaml")["shortform"]["duration_sec"]
     text = prompt(
         "shortform_script",
@@ -83,6 +84,7 @@ def write_script(topic: dict, facts: list[dict], note: str | None, rules: str | 
         hook=topic.get("hook", ""),
         facts=facts_text(facts),
         revision_note=_revision(note),
+        travel_context=travel,
     )
     data, _ = llm.generate_json("shortform", text)
     if not data.get("lines"):
@@ -90,7 +92,7 @@ def write_script(topic: dict, facts: list[dict], note: str | None, rules: str | 
     return data
 
 
-def write_blog(topic: dict, facts: list[dict], note: str | None, rules: str | None = None) -> dict:
+def write_blog(topic: dict, facts: list[dict], note: str | None, rules: str | None = None, travel: str = "") -> dict:
     lo, hi = load_yaml("channels.yaml")["blog"]["words"]
     text = prompt(
         "blog_post",
@@ -102,6 +104,7 @@ def write_blog(topic: dict, facts: list[dict], note: str | None, rules: str | No
         keywords=", ".join(topic.get("keywords", [])),
         facts=facts_text(facts),
         revision_note=_revision(note),
+        travel_context=travel,
     )
     data, _ = llm.generate_json("blog", text)
     if not data.get("markdown"):
@@ -134,10 +137,11 @@ def add_disclosures(draft: dict, sponsor: dict) -> None:
 
 def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -> dict:
     rules = sponsors.rules_text(sponsor) if sponsor else None
-    facts = research(topic, note, rules)
+    travel = "" if sponsor else attractions.context(topic)  # 여행 축: 관광지 속성·코스 규칙
+    facts = research(topic, note, rules, travel)
     draft = {"topic": topic, "facts": facts}
-    draft["shortform"] = write_script(topic, facts, note, rules)
-    draft["blog"] = write_blog(topic, facts, note, rules)
+    draft["shortform"] = write_script(topic, facts, note, rules, travel)
+    draft["blog"] = write_blog(topic, facts, note, rules, travel)
     if sponsor:
         draft["sponsor"] = sponsor
         add_disclosures(draft, sponsor)

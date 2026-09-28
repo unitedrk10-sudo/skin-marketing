@@ -1,13 +1,15 @@
-"""시술별 수요 점수 — 주간 주제 추천 순서의 기준 (01_topics).
+"""수요 점수 — 시술(config/procedures.yaml)·관광지(config/attractions.yaml)별. 주간 주제 추천 순서의 기준 (01_topics).
 
-점수(0~1) = 사전값(config/procedures.yaml demand, 영어권 관심도 조사) 과 우리 트래픽의 가중 평균.
+점수(0~1) = 사전값(카탈로그의 demand, 영어권 관심도 조사) 과 우리 트래픽의 가중 평균. 시술·관광지 모두 같은 방식.
   - 트래픽: 최근 28일 블로그 글 조회수(Cloudflare Web Analytics) + 링크 클릭(추적기: 등록기관 의도·병원 도착)을 시술별로
     글 1개당 평균으로 환산 (글을 많이 쓴 시술이 유리해지지 않게).
   - 데이터 비중은 표본이 쌓일수록 커지고 최대 70% (사전값 30% 는 항상 유지 — 아직 안 쓴 시술도 추천되도록).
-  - 최근 8주에 이미 많이 쓴 시술은 조금 낮춘다 (주제 다양성).
+  - 최근 8주에 이미 많이 쓴 시술·관광지는 조금 낮춘다 (주제 다양성).
+주제 점수 = 주제에 걸리는 시술·관광지 중 가장 높은 점수. 관광지 소개·코스 글은 AI 검색 답변에 많이 인용되는 유입 통로라
+관광지 점수가 시술 점수와 같은 기준으로 경쟁한다.
 설정이 없거나 API 가 실패하면 사전값만 쓴다 (주제 선정이 멈추지 않게).
 
-    python -m pipeline.demand            # 시술별 점수표 출력
+    python -m pipeline.demand            # 시술·관광지 점수표 출력
 
 환경변수(선택): CF_API_TOKEN (Account Analytics:Read), CF_ACCOUNT_ID, config/site.yaml analytics_site_tag
 """
@@ -69,29 +71,30 @@ def page_views(start: date, end: date) -> dict[str, int]:
     return dict(views)
 
 
-def link_clicks(start: date, end: date) -> Counter:
-    """시술별 클릭 (추적기 export, 사람만). 미설정·실패 시 빈 Counter."""
+def link_clicks(start: date, end: date, catalog: str = "procedures") -> Counter:
+    """시술(또는 관광지)별 클릭 (추적기 export, 사람만). 미설정·실패 시 빈 Counter."""
     from pipeline import analytics, tracker
     from pipeline.site import load_tracked_links
     if not tracker.configured():
         return Counter()
     try:
-        rows = analytics.enrich(analytics.fetch(start, end), load_tracked_links(), analytics.load_procedures())
+        rows = analytics.enrich(analytics.fetch(start, end), load_tracked_links(), analytics.load_procedures(),
+                                analytics.load_catalog("attractions"))
     except tracker.TrackerError as e:
         log.warning("추적기 클릭 가져오기 실패 — 사전값·조회수만 사용: %s", e)
         return Counter()
     clicks: Counter = Counter()
     for r in rows:
-        for pid in r["procedures"].split("|"):
+        for pid in (r.get(catalog) or "other").split("|"):
             clicks[pid] += r["clicks"]
     return clicks
 
 
-def posts_by_procedure() -> tuple[dict[str, list[str]], Counter]:
-    """게시된 글 → 시술 (경로 목록), 최근 8주 글 수."""
+def posts_by_catalog(catalog: str = "procedures") -> tuple[dict[str, list[str]], Counter]:
+    """게시된 글 → 시술(또는 관광지)별 경로 목록, 최근 8주 글 수."""
     from pipeline import analytics
     from pipeline.site import collect_posts
-    procedures = analytics.load_procedures()
+    procedures = analytics.load_catalog(catalog)
     paths: dict[str, list[str]] = {}
     recent: Counter = Counter()
     since = (date.today() - timedelta(weeks=RECENT_WEEKS)).isoformat()
@@ -105,15 +108,15 @@ def posts_by_procedure() -> tuple[dict[str, list[str]], Counter]:
     return paths, recent
 
 
-def scores(today: date | None = None) -> dict[str, dict]:
+def scores(today: date | None = None, catalog_name: str = "procedures", views: dict[str, int] | None = None) -> dict[str, dict]:
     end = (today or date.today()) - timedelta(days=1)
     start = end - timedelta(days=WINDOW_DAYS - 1)
-    catalog = load_yaml("procedures.yaml").get("procedures") or {}
+    catalog = load_yaml(f"{catalog_name}.yaml").get(catalog_name) or {}
     priors = {pid: float(p.get("demand", 3)) / 5 for pid, p in catalog.items()}
     priors["other"] = OTHER_PRIOR / 5
-    paths, recent = posts_by_procedure()
-    views = page_views(start, end)
-    clicks = link_clicks(start, end)
+    paths, recent = posts_by_catalog(catalog_name)
+    views = page_views(start, end) if views is None else views
+    clicks = link_clicks(start, end, catalog_name)
 
     signal: dict[str, float] = {}
     raw: dict[str, dict] = {}
@@ -148,29 +151,47 @@ def reason(s: dict) -> str:
     return " · ".join(parts)
 
 
-def topic_score(topic: dict, table: dict[str, dict]) -> tuple[float, str, str]:
-    """주제 → (점수, 대표 시술, 근거). 여러 시술에 걸리면 가장 높은 것."""
+def all_scores(today: date | None = None) -> dict[str, dict[str, dict]]:
+    """{"procedures": {...}, "attractions": {...}} — 조회수는 한 번만 가져온다."""
+    end = (today or date.today()) - timedelta(days=1)
+    views = page_views(end - timedelta(days=WINDOW_DAYS - 1), end)
+    return {name: scores(today, name, views) for name in ("procedures", "attractions")}
+
+
+def topic_score(topic: dict, tables: dict[str, dict[str, dict]]) -> tuple[float, str, str]:
+    """주제 → (점수, 대표 항목 "catalog:id", 근거). 시술·관광지 중 걸리는 것 가운데 가장 높은 점수.
+    어느 것에도 안 걸리면 시술 "other" 점수."""
     from pipeline import analytics
-    pids = analytics.tag({"title": topic.get("title", ""), "keywords": topic.get("keywords", [])}, analytics.load_procedures())
-    best = max(pids, key=lambda p: table.get(p, table["other"])["score"])
-    s = table.get(best, table["other"])
-    return s["score"], best, f"{s['name']}: {reason(s)}"
+    meta = {"title": topic.get("title", ""), "keywords": topic.get("keywords", [])}
+    hits = [(name, pid) for name, table in tables.items()
+            for pid in analytics.tag(meta, analytics.load_catalog(name)) if pid != "other" and pid in table]
+    if not hits:
+        s = tables["procedures"]["other"]
+        return s["score"], "procedures:other", f"{s['name']}: {reason(s)}"
+    name, pid = max(hits, key=lambda h: tables[h[0]][h[1]]["score"])
+    s = tables[name][pid]
+    return s["score"], f"{name}:{pid}", f"{s['name']}: {reason(s)}"
 
 
-def prompt_block(table: dict[str, dict], limit: int = 10) -> str:
-    """주제 조사 프롬프트용 — 수요 높은 순 시술 목록."""
-    rows = sorted((s for pid, s in table.items() if pid != "other"), key=lambda s: -s["score"])[:limit]
-    return "\n".join(f"- {s['name']}: demand score {s['score']:.2f}"
-                     + (f" (our data: {s['views']} views, {s['clicks']} clinic-search clicks on {s['posts']} posts)"
-                        if s["data_weight"] else "") for s in rows)
+def prompt_block(tables: dict[str, dict[str, dict]], limit: int = 8) -> str:
+    """주제 조사 프롬프트용 — 수요 높은 순 시술·관광지 목록."""
+    out = []
+    for name, label in (("procedures", "Procedures"), ("attractions", "Places & areas")):
+        rows = sorted((s for pid, s in tables.get(name, {}).items() if pid != "other"), key=lambda s: -s["score"])[:limit]
+        out.append(f"{label}:")
+        out += [f"- {s['name']}: demand score {s['score']:.2f}"
+                + (f" (our data: {s['views']} views, {s['clicks']} clinic-search clicks on {s['posts']} posts)"
+                   if s["data_weight"] else "") for s in rows]
+    return "\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
-    argparse.ArgumentParser(description="시술별 수요 점수").parse_args(argv)
-    table = scores()
-    print(f"[시술별 수요 점수 {datetime.now(timezone.utc).date()}] 높은 순")
-    for pid, s in sorted(table.items(), key=lambda x: -x[1]["score"]):
-        print(f"{s['score']:.2f}\t{s['name']}\t{reason(s)}")
+    argparse.ArgumentParser(description="시술·관광지 수요 점수").parse_args(argv)
+    for name, table in all_scores().items():
+        label = "시술" if name == "procedures" else "관광지·지역"
+        print(f"[{label} 수요 점수 {datetime.now(timezone.utc).date()}] 높은 순")
+        for pid, s in sorted(table.items(), key=lambda x: -x[1]["score"]):
+            print(f"{s['score']:.2f}\t{s['name']}\t{reason(s)}")
     return 0
 
 
