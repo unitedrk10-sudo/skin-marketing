@@ -15,8 +15,13 @@ Absolutely forbidden:
 Accuracy:
 - EVERY fact, number, price range, downtime, session count and medical claim MUST come from a source URL. If you cannot source it, leave it out.
 - Prefer primary/authoritative sources: peer-reviewed papers (PubMed), government pages (KHIDI, MOHW, visitkorea, FDA), professional societies (AAD), then reputable media. Never cite a clinic's own website.
+- Product facts (what a device or injectable is, its ingredients, approvals) may cite the manufacturer's official product page — manufacturers, not clinics.
+- When readers need to find or check a clinic, point to official registries instead of any clinic: Medical Korea's list of registered medical institutions for foreign patients (https://www.medicalkorea.or.kr/en/registeredhospitals) and the Korean government's medical-license information. Never recommend or link an individual clinic.
 - Price information is always a range for the category (e.g., "typically ranges from ... in Seoul"), never a single clinic's price list.
 - Entry requirements (K-ETA, visas), tax refund rules and similar facts change often — only use sources from the last 12 months and say "as of <month year>".
+
+Trip planning around procedures:
+- Every itinerary keeps the day right after a procedure as a light "observation day" in the same city: no flight, no long-distance travel, no sauna, alcohol, intense exercise or strong sun, and a suggestion to ask the clinic whether a follow-up check is needed before leaving. Present this as common planning advice to confirm with the treating clinic, and cite a source for any downtime figure.
 
 Skincare and cosmetic products (Korean Cosmetics Act §13):
 - Describe products as cosmetics. Never say a cosmetic treats, heals, cures, repairs wounds or scars, regenerates cells, or works like a procedure or medicine ("like Botox in a jar", "medical-grade", "prescription-strength").
