@@ -1,0 +1,21 @@
+# 시술·주제 분류 — pipeline.analytics 가 추적 링크(글 제목·키워드·slug)를 시술별로 묶을 때 쓴다.
+# 키워드는 소문자, 단어 단위로 찾는다. 한 글이 여러 시술에 걸리면 모두에 센다. 안 걸리면 "other".
+# 새 시술 글을 쓰기 시작하면 여기에 추가한다 (영업 자료의 "시술별 관심도" 표 기준).
+
+procedures:
+  rejuran:        {name: "Rejuran (PN skin booster)", keywords: [rejuran, polynucleotide, pn]}
+  juvelook:       {name: "Juvelook", keywords: [juvelook]}
+  re2o:           {name: "Re2O (Lituo)", keywords: [re2o, lituo, "리투오"]}
+  skin_booster:   {name: "Skin boosters (general)", keywords: [skin booster, skinbooster, profhilo, hyaluronic acid injection]}
+  pdrn_exosome:   {name: "PDRN / exosome", keywords: [pdrn, exosome, salmon dna]}
+  botox:          {name: "Botulinum toxin", keywords: [botox, botulinum, toxin, jaw reduction, masseter]}
+  filler:         {name: "Dermal fillers", keywords: [filler]}
+  ulthera:        {name: "Ultherapy / HIFU", keywords: [ulthera, ultherapy, hifu]}
+  shurink:        {name: "Shurink", keywords: [shurink, shrink universe]}
+  thermage_rf:    {name: "Thermage / monopolar RF", keywords: [thermage, onda, monopolar]}
+  rf_microneedling: {name: "RF microneedling", keywords: [potenza, microneedling, sylfirm, genius rf]}
+  titanium:       {name: "Titanium lifting", keywords: [titanium lifting, titanium lift]}
+  laser_toning:   {name: "Laser toning / pigment", keywords: [laser toning, pico, picosecond, melasma, pigmentation]}
+  acne_scar:      {name: "Acne & acne scars", keywords: [acne, scar]}
+  skincare:       {name: "Skincare & recovery products", keywords: [skincare, cica, panthenol, sunscreen, serum, cream, aftercare]}
+  travel:         {name: "Trip planning & logistics", keywords: [itinerary, trip, travel, k-eta, visa, tax refund, airport, flight]}

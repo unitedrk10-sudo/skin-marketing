@@ -207,9 +207,9 @@ def check_sponsor(draft: dict, texts: dict[str, str], human: set[str]) -> list[F
     sponsor = draft["sponsor"]
     findings = [Finding("rules", "block", f"[sponsor] {p}") for p in sponsors.problems(sponsor)]
     disclosure = (draft.get("shortform") or {}).get("on_screen_disclosure", "")
-    if f"Sponsored by {sponsor['name_en']}" not in disclosure:
+    if sponsors.short_disclosure(sponsor).split(" · ")[0] not in disclosure or "Advertisement" not in disclosure:
         findings.append(Finding("rules", "block", "[script] 영상 내 스폰서 광고 표시 없음", disclosure))
-    if not re.search(rf"Sponsored content.*advertisement by {re.escape(sponsor['name_en'])}", texts["blog"], re.I):
+    if not re.search(rf"{sponsors.label(sponsor)} content.*advertisement by {re.escape(sponsor['name_en'])}", texts["blog"], re.I):
         findings.append(Finding("rules", "block", "[blog] 스폰서 광고 표시 없음 (표시광고법 — 대가 관계 명시)"))
     human.add(f"스폰서 광고({sponsor['name_ko']}) — 병원 확인 필요")
     return findings

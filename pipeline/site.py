@@ -260,7 +260,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
     md, sources = _numbered_sources(strip_leading_h1(blog["markdown"]), draft.get("facts", []))
     body_html = _rewrite_links(render_markdown(md), sponsor, tracked_url)
     esc = html.escape
-    badge = f'<span class="badge">Sponsored · Ad by {esc(sponsor["name_en"])}</span> ' if sponsor else ""
+    badge = f'<span class="badge">{sponsors.label(sponsor)} · Ad by {esc(sponsor["name_en"])}</span> ' if sponsor else ""
     src_items = "".join(
         f'<li id="src-{i}"><a href="{esc(s["url"])}" rel="noopener" target="_blank">{esc(s["title"])}</a> '
         f'<span class="meta">({esc(hostname(s["url"]))})</span></li>' for i, s in enumerate(sources, 1))
@@ -278,7 +278,7 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
     esc = html.escape
     items = "".join(
         f'<li><a href="/{p["slug"]}/">{esc(p["draft"]["blog"].get("title", ""))}</a>'
-        + (' <span class="badge">Sponsored</span>' if p["draft"].get("sponsor") else "")
+        + (f' <span class="badge">{sponsors.label(p["draft"]["sponsor"])} · Ad</span>' if p["draft"].get("sponsor") else "")
         + f'<br><span class="meta">{esc(p["date"][:10])} · {esc(p["draft"]["blog"].get("meta_description", ""))}</span></li>'
         for p in posts[: cfg.get("posts_on_home", 30)]) or "<li>First guides are coming soon.</li>"
     base = base_url(cfg)
@@ -305,8 +305,8 @@ side effects vary from person to person — always consult a licensed doctor.</p
 <ul><li>No clinic rankings, "best clinic" lists, patient testimonials or before-and-after photos.</li>
 <li>No clinic names or booking links in our independent guides, and no payment from clinics for those guides.</li></ul>
 <h2>Sponsored posts</h2>
-<p>Some posts are advertisements paid for by a licensed clinic at a flat fee. They are always labeled
-<em>Sponsored</em> at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
+<p>Some posts are advertisements paid for by a licensed clinic at a flat fee, or produced free of charge during a short
+partner pilot. They are always labeled <em>Sponsored</em> or <em>Partner</em> and as an advertisement at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
 sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, our independent guides.</p>"""
     return page(cfg, f"About — {cfg['name']}", body, path="/about/")
 
@@ -376,25 +376,53 @@ def render_robots(cfg: dict) -> str:
 
 # ---------------- 스폰서 추적 링크 ----------------
 
-def tracked_links(posts: list[dict]) -> dict[str, str]:
-    """스폰서 글별 추적 링크 (?s=blog). 추적기 미설정이면 빈 dict — 원래 병원 링크에 rel=sponsored 만 붙는다."""
+def link_meta(post: dict, kind: str) -> dict:
+    """추적 링크 → 글 메타데이터 (pipeline.analytics 가 시술·축별로 묶을 때 쓴다)."""
+    draft = post["draft"]
+    sponsor = draft.get("sponsor") or {}
+    return {"kind": kind, "draft_id": draft["id"], "slug": post["slug"], "date": post["date"][:10], "title": draft["blog"].get("title", ""),
+            "axis": draft.get("content_type", ""), "keywords": (draft.get("topic") or {}).get("keywords", []),
+            "sponsor_id": sponsor.get("id"), "contract": (sponsor.get("contract") or {}).get("type")}
+
+
+def registry_key(draft_id: str) -> str:
+    return f"{REGISTRY_KEY}:{draft_id}"
+
+
+def load_tracked_links() -> dict[str, dict]:
+    """content/site/tracked_links.json — {키: {url, code, kind, draft_id, title, axis, keywords, ...}}.
+    키: 스폰서 글은 draft_id, 중립 글의 등록기관 링크는 "_registry:<draft_id>". 예전 형식(키 → URL 문자열)도 읽는다."""
     path = content_dir() / "site" / "tracked_links.json"
-    mapping = load_json(path) if path.exists() else {}
+    raw = load_json(path) if path.exists() else {}
+    return {k: (v if isinstance(v, dict) else {"url": v}) for k, v in raw.items()}
+
+
+def tracked_links(posts: list[dict]) -> dict[str, dict]:
+    """글별 추적 링크 (?s=blog): 스폰서 글 → 병원 공식 사이트, 중립 시술·여행 글 → 등록기관 목록 (글마다 따로 세서
+    어떤 글·시술이 병원 찾기로 이어졌는지 본다). 추적기 미설정이면 기존 목록만 — 링크는 원래 주소로 나간다."""
+    mapping = load_tracked_links()
     if not tracker.configured():
         return mapping
     changed = False
     for p in posts:
         draft = p["draft"]
-        if draft.get("sponsor") and draft["id"] not in mapping:
-            link = tracker.add_link(draft["sponsor"]["id"], None, f"blog: {draft['blog'].get('title', '')}"[:120])
-            mapping[draft["id"]] = f"{link['url']}?s=blog"
-            changed = True
-    if REGISTRY_KEY not in mapping and any(not p["draft"].get("sponsor") for p in posts):
-        link = tracker.add_link(None, REGISTRY_URL, "blog: find a registered clinic (Medical Korea)")
-        mapping[REGISTRY_KEY] = f"{link['url']}?s=blog"
+        title = draft["blog"].get("title", "")
+        if draft.get("sponsor"):
+            key, kind, sponsor_id, target, label = draft["id"], "sponsor", draft["sponsor"]["id"], None, f"blog: {title}"
+        elif draft.get("content_type") in REGISTRY_AXES:
+            key, kind, sponsor_id, target, label = registry_key(draft["id"]), "registry", None, REGISTRY_URL, f"registry: {title}"
+        else:
+            continue
+        if key in mapping:
+            if "kind" not in mapping[key]:  # 예전 형식 → 메타데이터 보강 (링크는 그대로)
+                mapping[key] = {**mapping[key], **link_meta(p, kind)}
+                changed = True
+            continue
+        link = tracker.add_link(sponsor_id, target, label[:120])
+        mapping[key] = {"url": f"{link['url']}?s=blog", "code": link["code"], **link_meta(p, kind)}
         changed = True
     if changed:
-        save_json(path, mapping)
+        save_json(content_dir() / "site" / "tracked_links.json", mapping)
     return mapping
 
 
@@ -415,7 +443,9 @@ def build(out: Path | None = None) -> dict:
         f.write_text(text, encoding="utf-8")
 
     for p in posts:
-        write(f"{p['slug']}/index.html", render_post(cfg, p, links.get(p["draft"]["id"]), links.get(REGISTRY_KEY)))
+        own = links.get(p["draft"]["id"], {}).get("url")
+        registry = (links.get(registry_key(p["draft"]["id"])) or links.get(REGISTRY_KEY) or {}).get("url")
+        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry))
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))

@@ -115,9 +115,13 @@ def _rows(items: list[dict], name, total: int) -> str:
 def sponsor_report(sponsor: dict, month: str, data: dict) -> str:
     t = data["totals"]
     total = t["clicks"]
+    pilot = sponsors.is_pilot(sponsor)
+    contract = "무상 파일럿 (프로모션)" if pilot else {"monthly": "월 정액", "per_post": "글당 정액"}[sponsor["contract"]["type"]]
+    fee_note = ("본 수치는 무상 파일럿 기간의 광고 게재 성과 자료입니다. 이후 계약은 정액이며 클릭·방문 수와 연동하지 않습니다."
+                if pilot else "본 수치는 광고 게재 성과 보고 자료이며, 광고비는 계약에 따른 정액입니다.")
     return f"""# {sponsor['name_ko']} ({sponsor['name_en']}) — 링크 유입 리포트 {month}
 
-기간: {data['from']} ~ {data['to']} (UTC) · 대상: {sponsor['official_url']}
+기간: {data['from']} ~ {data['to']} (UTC) · 대상: {sponsor['official_url']} · 계약: {contract}
 
 ## 요약
 | 항목 | 값 |
@@ -152,7 +156,8 @@ def sponsor_report(sponsor: dict, month: str, data: dict) -> str:
 - 병원 사이트 방문 URL 에 `utm_source`·`utm_medium`(채널)·`utm_campaign`(콘텐츠) 이 붙어 있어, 병원의 애널리틱스(GA4 등)에서도 같은 유입을 직접 확인할 수 있습니다.
 - 봇·링크 미리보기 요청은 제외했습니다. IP 는 저장하지 않으며 고유 방문자는 하루 단위로만 셉니다.
 - 채널은 링크 종류(?s=)와 리퍼러로 분류합니다. 앱 내 브라우저는 리퍼러를 보내지 않는 경우가 있어 일부가 "직접/앱"으로 잡힐 수 있습니다.
-- 본 수치는 광고 게재 성과 보고 자료이며, 광고비는 계약에 따른 정액입니다.
+- {fee_note}
+- 이 시스템의 측정 범위는 "병원 사이트 도착"까지입니다. 상담·예약·결제 등 이후 전환은 병원 자체 측정 영역입니다.
 """
 
 

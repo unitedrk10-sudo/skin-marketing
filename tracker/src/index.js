@@ -5,6 +5,7 @@
 //     GET  /api/links                                     링크 목록
 //     POST /api/links/<code>/deactivate                   링크 끄기
 //     GET  /api/stats?from=YYYY-MM-DD&to=YYYY-MM-DD[&sponsor=<id>][&code=<code>]
+//     GET  /api/export?from=YYYY-MM-DD&to=YYYY-MM-DD   분석용 일·링크·채널·국가별 집계
 // 개인정보: IP 원문 미저장. 날짜별 솔트 해시로 하루 단위 고유 방문자만 센다.
 
 import {
@@ -98,6 +99,22 @@ async function stats(env, url) {
   });
 }
 
+// 분석용 내보내기 — 일·링크·채널·국가별 집계 (개별 클릭·방문자 해시는 내보내지 않음)
+async function exportRows(env, url) {
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  if (!isValidDay(from) || !isValidDay(to)) return json({ error: "from, to 는 YYYY-MM-DD" }, 400);
+  const { results } = await env.DB.prepare(
+    `SELECT c.day, c.code, l.sponsor_id, l.label, l.target_url, c.source, c.country, c.is_bot,
+            COUNT(*) AS clicks, COUNT(DISTINCT c.visitor) AS unique_visitors
+     FROM clicks c JOIN links l ON l.code = c.code
+     WHERE c.day >= ? AND c.day <= ?
+     GROUP BY c.day, c.code, c.source, c.country, c.is_bot
+     ORDER BY c.day, c.code`,
+  ).bind(from, to).all();
+  return json({ from, to, rows: results });
+}
+
 async function api(request, env, url) {
   if (!authorized(request, env)) return json({ error: "unauthorized" }, 401);
   const path = url.pathname.replace(/\/+$/, "");
@@ -112,6 +129,7 @@ async function api(request, env, url) {
     return json({ code: off[1], active: false });
   }
   if (path === "/api/stats" && request.method === "GET") return stats(env, url);
+  if (path === "/api/export" && request.method === "GET") return exportRows(env, url);
   return json({ error: "not found" }, 404);
 }
 

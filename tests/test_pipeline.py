@@ -873,8 +873,16 @@ def test_registry_box_in_neutral_posts_with_tracking(site_env, tmp_path, monkeyp
     post = (tmp_path / "dist" / "rejuran" / "index.html").read_text()
     assert "Looking for a clinic?" in post and 'href="https://go.example/reg234?s=blog"' in post
     assert made[0]["target_url"] == site_mod.REGISTRY_URL and made[0]["sponsor_id"] is None
+    assert made[0]["label"].startswith("registry: ")                      # 글마다 따로 센다
+    meta = site_mod.load_tracked_links()[site_mod.registry_key(approved)]
+    assert meta["kind"] == "registry" and meta["code"] == "reg234" and meta["axis"] and meta["slug"] == "rejuran"
     site_mod.build()
     assert len(made) == 1  # 추적 링크는 한 번만 만든다
+
+
+def test_tracked_links_reads_legacy_format(site_env):
+    common.save_json(common.content_dir() / "site" / "tracked_links.json", {"_registry": "https://go.example/old?s=blog"})
+    assert site_mod.load_tracked_links() == {"_registry": {"url": "https://go.example/old?s=blog"}}
 
 
 def test_no_registry_box_in_sponsored_or_skincare(sponsored, tmp_path, monkeypatch):
@@ -885,3 +893,93 @@ def test_no_registry_box_in_sponsored_or_skincare(sponsored, tmp_path, monkeypat
     html_out = site_mod.render_post(site_mod.config(), post)
     assert "Looking for a clinic?" not in html_out
     assert "static.cloudflareinsights.com/beacon.min.js" in html_out and "&quot;token&quot;: &quot;abc&quot;" in html_out
+
+
+# ---- 무상 파일럿 ----
+
+PILOT = {**SPONSOR, "contract": {"type": "pilot", "start": "2026-01-01", "end": "2026-06-30"}}
+
+
+def test_pilot_contract_is_short_and_labeled_as_ad(env, tmp_path):
+    with pytest.raises(sponsors_mod.SponsorError, match="파일럿"):
+        sponsors_mod.validate({**PILOT, "contract": {"type": "pilot", "start": "2026-01-01", "end": "2026-12-31"}})
+    pilot = sponsors_mod.validate(PILOT)
+    assert sponsors_mod.short_disclosure(pilot).startswith("Partner content with Glow Skin Clinic · Advertisement")
+    assert "advertisement by Glow Skin Clinic (unpaid pilot" in sponsors_mod.blog_disclosure(pilot)
+    assert "free of charge" in sponsors_mod.rules_text(pilot) and "flat fee" not in sponsors_mod.rules_text(pilot)
+
+
+def test_pilot_draft_passes_sponsor_checks_and_report_marks_pilot(sponsored, tmp_path, monkeypatch):
+    write_sponsors(tmp_path, {**PILOT, "contract": {"type": "pilot", "start": str(date.today()),
+                                                     "end": str(date.today() + timedelta(days=90))}})
+    draft = common.load_draft(common.content_dir("drafts") / make_sponsored(sponsored))
+    assert draft["blog"]["markdown"].startswith("> **Partner content — this is an advertisement by Glow Skin Clinic")
+    assert [f.message for f in review_mod.check_rules(draft)[0]] == []
+    draft["blog"]["markdown"] = draft["blog"]["markdown"].split("\n\n", 1)[1]
+    assert any("광고 표시 없음" in f.message for f in review_mod.check_rules(draft)[0])
+    post = site_mod.render_post({**common.load_yaml("site.yaml"), "domain": ""}, {"draft": draft, "slug": "x", "date": "2026-10-01"})
+    assert "Partner · Ad by Glow Skin Clinic" in post
+    data = {"from": "2026-10-01", "to": "2026-10-31", "totals": {"clicks": 0, "unique_daily": 0, "bots": 0},
+            "by_source": [], "by_link": [], "by_country": [], "by_day": []}
+    report = tracker_mod.sponsor_report(draft["sponsor"], "2026-10", data)
+    assert "무상 파일럿" in report and "병원 사이트 도착" in report
+
+
+# ---- 유입 분석 ----
+
+analytics_mod = importlib.import_module("pipeline.analytics")
+
+
+def test_procedure_tagging():
+    procs = analytics_mod.load_procedures()
+    assert analytics_mod.tag({"title": "What is Rejuran? PN skin boosters explained"}, procs)[:1] == ["rejuran"]
+    assert "acne_scar" in analytics_mod.tag({"title": "Acne scars in Korea", "slug": "acne-scars"}, procs)
+    assert analytics_mod.tag({"title": "Planning a Seoul trip", "keywords": ["k-eta"]}, procs) == ["travel"]
+    assert analytics_mod.tag({"title": "Opinion"}, procs) == ["other"]
+    assert "rejuran" not in analytics_mod.tag({"title": "Open hours"}, procs)  # pn 은 단어 단위
+
+
+def test_analytics_report_joins_links_and_procedures(env, tmp_path, monkeypatch):
+    links = {
+        "_registry:2026-W40-01-rejuran": {"url": "u", "code": "reg111", "kind": "registry", "draft_id": "2026-W40-01-rejuran",
+                                          "slug": "rejuran", "date": "2026-10-01", "title": "What is Rejuran?", "axis": "procedure",
+                                          "keywords": ["rejuran"], "sponsor_id": None, "contract": None},
+        "_registry:2026-W40-02-ulthera": {"url": "u", "code": "reg222", "kind": "registry", "slug": "ulthera", "date": "2026-10-01",
+                                          "title": "Ultherapy basics", "axis": "procedure", "keywords": []},
+        "sp-glow-1": {"url": "u", "code": "sp1111", "kind": "sponsor", "draft_id": "sp-glow-1", "slug": "glow-rejuran",
+                      "date": "2026-10-05", "title": "Rejuran at Glow", "axis": "sponsored", "keywords": [],
+                      "sponsor_id": "glow", "contract": "pilot"},
+        "_registry:later": {"url": "u", "code": "reg999", "kind": "registry", "date": "2026-12-01", "title": "Later"},
+    }
+    common.save_json(common.content_dir() / "site" / "tracked_links.json", links)
+    rows = [
+        {"day": "2026-10-02", "code": "reg111", "sponsor_id": None, "label": "", "target_url": site_mod.REGISTRY_URL,
+         "source": "ai", "country": "US", "is_bot": 0, "clicks": 4, "unique_visitors": 3},
+        {"day": "2026-10-09", "code": "sp1111", "sponsor_id": "glow", "label": "", "target_url": "https://glow",
+         "source": "blog", "country": "SG", "is_bot": 0, "clicks": 6, "unique_visitors": 5},
+        {"day": "2026-10-09", "code": "sp1111", "sponsor_id": "glow", "label": "", "target_url": "https://glow",
+         "source": "other", "country": "US", "is_bot": 1, "clicks": 50, "unique_visitors": 1},
+        {"day": "2026-10-10", "code": "manual", "sponsor_id": None, "label": "tiktok bio", "target_url": "https://skinbound.example",
+         "source": "tiktok", "country": "TH", "is_bot": 0, "clicks": 2, "unique_visitors": 2},
+    ]
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    calls = []
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: calls.append((p, query)) or {"rows": rows})
+    monkeypatch.setattr(analytics_mod, "reports_dir", lambda: tmp_path / "reports")
+    assert analytics_mod.main(["report", "--month", "2026-10"]) == 0
+    assert calls == [("/api/export", {"from": "2026-10-01", "to": "2026-10-31"})]
+    md = (tmp_path / "reports" / "2026-10.md").read_text()
+    assert "| 의도: 등록기관 목록 클릭 | 4 |" in md and "| 도착: 파일럿 병원 사이트 | 6 |" in md
+    assert "| 전체 클릭 (사람) | 12 |" in md                                  # 봇 50 제외
+    assert "| Rejuran (PN skin booster) | 4 | 0 | 6 | 10 |" in md              # 중립 글 의도 + 파일럿 도착
+    assert "| 의도(등록기관 목록) | 2 | 4 | 2.0 |" in md                          # 12월 글은 분모에서 제외, 클릭 0 인 글은 포함
+    import csv
+    data = list(csv.DictReader((tmp_path / "reports" / "2026-10.csv").open(encoding="utf-8")))
+    assert len(data) == 3 and {r["kind"] for r in data} == {"registry", "pilot", "other"}
+    assert "visitor" not in data[0] and data[0]["week"] == "2026-W40"
+
+
+def test_analytics_silent_without_tracker(monkeypatch, capsys):
+    monkeypatch.delenv("TRACKER_URL", raising=False)
+    assert analytics_mod.main(["report"]) == 0 and capsys.readouterr().out == ""

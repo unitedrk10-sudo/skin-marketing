@@ -20,6 +20,9 @@ import yaml
 from pipeline.common import CONFIG_DIR, read_prompt, render
 
 REQUIRED = ("id", "name_en", "name_ko", "official_url", "contract")
+# monthly | per_post = 정액 유료. pilot = 무상 프로모션(유입 데이터 확보용) — 광고 표시는 똑같이 붙는다.
+CONTRACT_TYPES = ("monthly", "per_post", "pilot")
+PILOT_MAX_DAYS = 183  # 무상 파일럿은 기간을 짧게 (최대 6개월) — 사실상 무기한 무상 광고가 되지 않게
 
 
 class SponsorError(ValueError):
@@ -43,11 +46,13 @@ def validate(s: dict) -> dict:
     if urlparse(s["official_url"]).scheme != "https":
         raise SponsorError(f"스폰서 {s['id']}: official_url 은 https 주소여야 합니다")
     contract = s["contract"]
-    if contract.get("type") not in ("monthly", "per_post"):
-        raise SponsorError(f"스폰서 {s['id']}: contract.type 은 monthly | per_post (성과 연동 계약 금지)")
+    if contract.get("type") not in CONTRACT_TYPES:
+        raise SponsorError(f"스폰서 {s['id']}: contract.type 은 monthly | per_post | pilot (성과 연동 계약 금지)")
     start, end = _as_date(contract["start"]), _as_date(contract["end"])
     if end < start:
         raise SponsorError(f"스폰서 {s['id']}: 계약 종료일이 시작일보다 빠름")
+    if contract["type"] == "pilot" and (end - start).days > PILOT_MAX_DAYS:
+        raise SponsorError(f"스폰서 {s['id']}: 무상 파일럿은 최대 {PILOT_MAX_DAYS}일 (이후 정액 계약으로 전환)")
     return {**s, "contract": {**contract, "start": start.isoformat(), "end": end.isoformat()},
             "ad_review_required": bool(s.get("ad_review_required")), "review_no": str(s.get("review_no") or "")}
 
@@ -89,13 +94,26 @@ def problems(sponsor: dict, today: date | None = None) -> list[str]:
     return out
 
 
+def is_pilot(sponsor: dict) -> bool:
+    return (sponsor.get("contract") or {}).get("type") == "pilot"
+
+
+def label(sponsor: dict) -> str:
+    """광고 배지·표시 문구의 앞부분. 무상 파일럿은 대가가 없으므로 "Sponsored" 대신 "Partner" (광고 표시는 동일)."""
+    return "Partner" if is_pilot(sponsor) else "Sponsored"
+
+
 def short_disclosure(sponsor: dict) -> str:
+    if is_pilot(sponsor):
+        return f"Partner content with {sponsor['name_en']} · Advertisement (unpaid pilot) · AI-generated content"
     return f"Sponsored by {sponsor['name_en']} · Advertisement · AI-generated content"
 
 
 def blog_disclosure(sponsor: dict) -> str:
     review = f" Ad review no. {sponsor['review_no']}." if sponsor["review_no"] else ""
-    return (f"> **Sponsored content — this is an advertisement by {sponsor['name_en']}.**{review} "
+    head = (f"Partner content — this is an advertisement by {sponsor['name_en']} (unpaid pilot partnership, no fee paid)."
+            if is_pilot(sponsor) else f"Sponsored content — this is an advertisement by {sponsor['name_en']}.")
+    return (f"> **{head}**{review} "
             "Produced with AI assistance and based on publicly available sources and information provided by the clinic. "
             "It is not medical advice; consult a licensed doctor.")
 
@@ -106,8 +124,11 @@ def official_link_line(sponsor: dict) -> str:
 
 
 def rules_text(sponsor: dict) -> str:
+    fee_line = ("We produce and publish it free of charge as a short partner pilot — it is still an advertisement."
+                if is_pilot(sponsor) else "We produce and publish it for a flat fee.")
     return render(read_prompt("_sponsored_rules"), name_en=sponsor["name_en"], name_ko=sponsor["name_ko"],
-                  official_url=sponsor["official_url"])
+                  official_url=sponsor["official_url"], fee_line=fee_line,
+                  short_label=short_disclosure(sponsor).split(" · ")[0])
 
 
 def platform_policy() -> dict:
