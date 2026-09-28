@@ -617,9 +617,11 @@ def deploy() -> str:
     if state.get("hash") == result["hash"]:
         return ""
     cfg = config()
-    cmd = ["npx", "--yes", "wrangler", "pages", "deploy", str(dist_dir()), "--project-name", cfg["cloudflare_project"],
-           "--branch", "main", "--commit-dirty=true"]
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=600, check=False)
+    # Windows 의 npx 는 npx.cmd 라 전체 경로로 넘겨야 실행된다
+    cmd = [shutil.which("npx") or "npx", "--yes", "wrangler", "pages", "deploy", str(dist_dir()),
+           "--project-name", cfg["cloudflare_project"], "--branch", "main", "--commit-dirty=true"]
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=600, check=False)
     if proc.returncode != 0:
         raise RuntimeError(f"wrangler pages deploy 실패: {(proc.stderr or proc.stdout)[-500:]}")
     new = [s for s in result["slugs"] if s not in state.get("slugs", [])]

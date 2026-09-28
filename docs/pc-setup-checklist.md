@@ -58,8 +58,9 @@ python -m pipeline.site build && python -m pipeline.site deploy
 
 ## 6. Hermes 등록
 ```bash
-bash hermes/install.sh
-bash ~/.hermes/scripts/skin-check.sh
+python -m venv .venv                     # 이미 있으면 생략
+.venv\Scripts\python hermes\install.py    # macOS/Linux: .venv/bin/python hermes/install.py
+# 끝에 출력되는 skin-check 명령 실행 (키·모델·Claude Code 점검)
 ```
 - [ ] 텔레그램 봇 연결·DM 페어링 (Hermes 메신저 게이트웨이)
 - [ ] 크론 등록 확인: `hermes cron list` — law-sync, weekly-topics, worker, traffic-report, site, clinics, weekly-report, analytics

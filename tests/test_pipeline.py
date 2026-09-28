@@ -290,7 +290,7 @@ def test_list_and_approve_moves_files_and_logs_agreement(env, tmp_path):
     out = human_mod.apply("1 승인\n2 폐기")
     assert (common.content_dir("approved") / first / "draft.json").exists()
     assert (common.content_dir("rejected") / second / "history.json").exists()
-    rows = (tmp_path / "logs" / "review_agreement.csv").read_text().splitlines()
+    rows = (tmp_path / "logs" / "review_agreement.csv").read_text(encoding="utf-8").splitlines()
     assert rows[1].endswith("pass,approve,1") and rows[2].endswith("caution,reject,1")
     assert len(out) == 2
 
@@ -522,6 +522,16 @@ def test_worker_failed_request_is_quarantined(worker_env):
     assert not list(worker_mod.requests_dir().glob("*.json"))
 
 
+def test_worker_lock_is_exclusive(tmp_path):
+    path = tmp_path / ".lock"
+    with path.open("w") as first:
+        assert worker_mod.try_lock(first)
+        with path.open("w") as second:
+            assert not worker_mod.try_lock(second)  # 이전 실행이 잡고 있으면 건너뜀
+    with path.open("w") as again:
+        assert worker_mod.try_lock(again)  # 닫으면 풀린다
+
+
 def test_worker_revise_request_regenerates(worker_env):
     worker_mod.request_drafts("1")
     worker_mod.run(review_runner=fake_claude())
@@ -750,7 +760,7 @@ def test_site_publishes_only_approved_posts(site_env, tmp_path):
     result = site_mod.build()
     assert result["posts"] == 1
     dist = tmp_path / "dist"
-    post = (dist / "rejuran" / "index.html").read_text()
+    post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
     assert "<script>alert" not in post and "&lt;script&gt;" in post       # 원시 HTML 차단
     assert "javascript:" not in post
     assert 'href="#src-1"' in post and URL in post                        # 각주 + 출처 목록
@@ -758,9 +768,9 @@ def test_site_publishes_only_approved_posts(site_env, tmp_path):
     ld = [json.loads(m) for m in re.findall(r'<script type="application/ld\+json">(.*?)</script>', post)]
     assert ld[0]["citation"] == [URL] and "MedicalWebPage" in ld[0]["@type"]
     assert ld[1]["@type"] == "FAQPage" and ld[1]["mainEntity"][0]["name"] == "Does it hurt?"
-    assert "https://skinbound.example/rejuran/" in (dist / "sitemap.xml").read_text()
-    assert "rejuran" in (dist / "llms.txt").read_text()
-    assert "Allow: /" in (dist / "robots.txt").read_text()
+    assert "https://skinbound.example/rejuran/" in (dist / "sitemap.xml").read_text(encoding="utf-8")
+    assert "rejuran" in (dist / "llms.txt").read_text(encoding="utf-8")
+    assert "Allow: /" in (dist / "robots.txt").read_text(encoding="utf-8")
 
 
 def test_site_sponsored_post_labels_and_tracked_link(sponsored, tmp_path, monkeypatch):
@@ -774,12 +784,12 @@ def test_site_sponsored_post_labels_and_tracked_link(sponsored, tmp_path, monkey
     human_mod.list_message("drafts")
     human_mod.apply("1 병원확인\n1 승인", confirm=True)
     site_mod.build()
-    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text()  # blog.slug
+    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text(encoding="utf-8")  # blog.slug
     assert "Sponsored · Ad by Glow Skin Clinic" in post and "advertisement by Glow Skin Clinic" in post
     assert 'href="https://go.example/abc234?s=blog" rel="sponsored noopener"' in post
     assert '"sponsor": {"@type": "MedicalOrganization"' in post
     assert not (tmp_path / "dist" / "sitemap.xml").exists()                # 도메인 없으면 sitemap 생략
-    assert "Sponsored" in (tmp_path / "dist" / "index.html").read_text()
+    assert "Sponsored" in (tmp_path / "dist" / "index.html").read_text(encoding="utf-8")
 
 
 def test_site_deploy_only_when_changed(site_env, monkeypatch):
@@ -875,7 +885,7 @@ def test_sponsored_post_always_links_official_site(sponsored, tmp_path, monkeypa
     human_mod.list_message("drafts")
     human_mod.apply("1 병원확인\n1 승인", confirm=True)
     site_mod.build()
-    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text()
+    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text(encoding="utf-8")
     assert 'href="https://go.example/zz2345?s=blog" rel="sponsored noopener"' in post
 
 
@@ -904,7 +914,7 @@ def test_registry_box_in_neutral_posts_with_tracking(site_env, tmp_path, monkeyp
     review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
     _approve(site_env, approved)
     site_mod.build()
-    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text()
+    post = (tmp_path / "dist" / "rejuran" / "index.html").read_text(encoding="utf-8")
     assert "Looking for a clinic?" in post and 'href="https://go.example/reg234?s=blog"' in post
     assert made[0]["target_url"] == site_mod.REGISTRY_URL and made[0]["sponsor_id"] is None
     assert made[0]["label"].startswith("registry: ")                      # 글마다 따로 센다
@@ -1003,7 +1013,7 @@ def test_analytics_report_joins_links_and_procedures(env, tmp_path, monkeypatch)
     monkeypatch.setattr(analytics_mod, "reports_dir", lambda: tmp_path / "reports")
     assert analytics_mod.main(["report", "--month", "2026-10"]) == 0
     assert calls == [("/api/export", {"from": "2026-10-01", "to": "2026-10-31"})]
-    md = (tmp_path / "reports" / "2026-10.md").read_text()
+    md = (tmp_path / "reports" / "2026-10.md").read_text(encoding="utf-8")
     assert "| 의도: 등록기관 목록 클릭 | 4 |" in md and "| 도착: 파일럿 병원 사이트 | 6 |" in md
     assert "| 전체 클릭 (사람) | 12 |" in md                                  # 봇 50 제외
     assert "| Rejuran (PN skin booster) | 4 | 0 | 6 | 10 |" in md              # 중립 글 의도 + 파일럿 도착
@@ -1406,7 +1416,7 @@ def test_render_moves_to_rendered_with_outputs(env, monkeypatch):
     assert (out / "video.mp4").exists() and (out / "captions.srt").exists() and not (out / "render").exists()
     meta = common.load_json(out / "render.json")
     assert meta["timeline"][0]["start"] == 0 and meta["voice"] == common.load_yaml("voice.yaml")["voice"]
-    assert "AI-generated content" in (out / "captions.ass").read_text()
+    assert "AI-generated content" in (out / "captions.ass").read_text(encoding="utf-8")
     assert any("ass=captions.ass" in c for c in cmds[-1]) and "1080x1920" in " ".join(cmds[-1])
     assert common.load_json(out / "history.json")[-1] == {**common.load_json(out / "history.json")[-1], "from": "approved", "to": "rendered"}
     assert not list(common.draft_dirs("approved"))
@@ -1487,7 +1497,7 @@ def test_weekly_report_counts_pipeline_activity(env, monkeypatch, tmp_path):
     monkeypatch.setattr(report_mod, "ROOT", tmp_path)
     monkeypatch.setattr(report_mod, "extras", lambda: ["🌐 블로그 글 1개 (스폰서 0)"])
     assert report_mod.main([]) == 0
-    text = next((tmp_path / "reports" / "weekly").glob("*.md")).read_text()
+    text = next((tmp_path / "reports" / "weekly").glob("*.md")).read_text(encoding="utf-8")
     assert "[주간 리포트" in text and "승인 1" in text and "tiktok 1" in text and "게시 키트 1" in text
 
 
@@ -1503,7 +1513,7 @@ def test_site_share_images_and_icons(sponsored, tmp_path, monkeypatch):
     dist = tmp_path / "dist"
     assert (dist / "og" / "rejuran.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and (dist / "og" / "default.png").exists()
     assert (dist / "favicon.svg").exists() and (dist / "apple-touch-icon.png").exists()
-    post = (dist / "rejuran" / "index.html").read_text()
+    post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
     assert '<meta property="og:image" content="https://skinbound.example/og/rejuran.png">' in post
     assert 'twitter:card" content="summary_large_image"' in post and 'rel="icon" href="/favicon.svg"' in post
     first = (dist / "og" / "rejuran.png").read_bytes()
