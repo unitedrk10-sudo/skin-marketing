@@ -5,6 +5,7 @@ Content axis: {{axis}}
 Angle: {{angle}}
 Keywords: {{keywords}}
 {{revision_note}}
+{{travel_context}}
 
 Use Google Search to collect the facts needed to write a 45-second short-form script and a 1,200-2,000 word blog post on this topic: how it works, who it suits, pain, downtime, number of sessions, typical price RANGE in Korea vs the US/Southeast Asia (only if relevant), risks and side effects, and practical travel/timing notes if relevant.
 

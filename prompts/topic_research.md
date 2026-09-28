@@ -8,7 +8,7 @@ Propose exactly {{count}} topics for this week, spread across these content axes
 Channel formats:
 {{channels}}
 
-Audience demand by procedure (higher = more interest from our English-speaking audience, based on our own page views and clinic-search clicks plus prior research). Weight your picks toward high-demand procedures, but keep the content-axis variety and include at most 2 topics about the same procedure:
+Audience demand by procedure and by place (higher = more interest from our English-speaking audience, based on our own page views and clinic-search clicks plus prior research). Weight your picks toward high-demand procedures, but keep the content-axis variety and include at most 2 topics about the same procedure or place. Place guides and day routes (travel_guide) are a key way AI search answers find us, so include them when places rank high:
 {{demand}}
 
 Do NOT repeat or closely overlap these recent topics:

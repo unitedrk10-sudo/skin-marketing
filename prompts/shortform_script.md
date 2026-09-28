@@ -4,6 +4,7 @@ Topic: {{title}}
 Angle: {{angle}}
 Suggested hook: {{hook}}
 {{revision_note}}
+{{travel_context}}
 
 You may ONLY use the facts below. Do not add any fact, number or claim that is not in this list. Every line that states a fact must list the fact ids it relies on.
 

@@ -1,0 +1,62 @@
+# 관광지·지역 카탈로그 — pipeline.demand(주제 추천 점수), pipeline.attractions(코스 짜기 데이터), pipeline.analytics(관광지별 집계).
+# 여기 값은 "코스 짜기용 내부 속성"이다. 글에 쓰는 사실(운영시간·요금·교통·볼거리)은 02_draft 가 공식 출처
+# (VisitKorea, Visit Seoul, 시설 공식 사이트)에서 URL 과 함께 다시 수집한다.
+#
+# demand: 영어권(미국·캐나다 + 동남아 영어권) 관심도 사전값 1~5. 데이터가 쌓이면 글별 조회수·클릭이 점점 더 반영된다.
+# 근거 (2026-09-28 조사):
+#   - 서울AI재단 2025 분석: 외국인 방문 1위 명동, 이어 N서울타워, 삼성역·코엑스, 강남역, 홍대. 증가율 상위 DDP·낙산공원·광장시장.
+#     미주 방문객은 서울숲·성수, 유럽은 북촌, 동남아는 경복궁·북촌 같은 역사 명소 선호 (Seoul Metropolitan Government, Stripes Korea)
+#   - 경복궁 외국인 방문 278만 명(2025) — 외국인 최다 방문 명소 (Travel Daily News)
+#   - 올리브영 성수 1년 250만 명, 성수 외국인 방문객 4명 중 3명 방문; 외국인 매출 상위 매장은 명동 (Korea Herald, Asia Business Daily)
+#   - 외국인 "K-하이킹"(북한산 등) 증가 (Seoul Metropolitan Government)
+#
+# 속성 (시술 다음 날 = 관찰일 코스 판단용, 기획서 _rules "observation day"):
+#   setting: indoor | outdoor | mixed      sun: low | mid | high (햇빛 노출)      activity: low | mid | high (걷기·땀)
+#   heat: true = 사우나·찜질방·온천 (시술 직후 피함)      zone: gangnam | central | east | west | north | day_trip | other_city
+#   관찰일 가능 = 실내 또는 햇빛 적음 + 활동 적음 + 열 없음 + 서울 시내 (pipeline.attractions.observation_ok)
+
+attractions:
+  myeongdong:         {name: "Myeongdong", area: "Jung-gu", demand: 5, setting: mixed, sun: mid, activity: low, zone: central,
+                       keywords: [myeongdong, myeong-dong, namdaemun]}
+  gyeongbokgung:      {name: "Gyeongbokgung Palace", area: "Jongno-gu", demand: 5, setting: outdoor, sun: high, activity: mid, zone: central,
+                       keywords: [gyeongbokgung, gyeongbok palace, royal palace, hanbok, changdeokgung, palace]}
+  bukchon:            {name: "Bukchon Hanok Village", area: "Jongno-gu", demand: 4, setting: outdoor, sun: high, activity: mid, zone: central,
+                       keywords: [bukchon, hanok village, samcheong]}
+  seongsu:            {name: "Seongsu-dong & Seoul Forest", area: "Seongdong-gu", demand: 5, setting: mixed, sun: mid, activity: low, zone: east,
+                       keywords: [seongsu, seoul forest, seongsu-dong]}
+  n_seoul_tower:      {name: "N Seoul Tower & Namsan", area: "Yongsan-gu", demand: 4, setting: mixed, sun: mid, activity: mid, zone: central,
+                       keywords: [n seoul tower, namsan, namsan tower, seoul tower]}
+  coex:               {name: "COEX & Starfield Library", area: "Gangnam-gu (Samseong)", demand: 4, setting: indoor, sun: low, activity: low, zone: gangnam,
+                       keywords: [coex, starfield, starfield library, samseong]}
+  gangnam_sinsa:      {name: "Gangnam, Sinsa & Garosu-gil", area: "Gangnam-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: gangnam,
+                       keywords: [garosu-gil, garosugil, sinsa, apgujeong, cheongdam, gangnam station]}
+  lotte_world_tower:  {name: "Lotte World Tower & Seokchon Lake", area: "Songpa-gu (Jamsil)", demand: 3, setting: indoor, sun: low, activity: low, zone: gangnam,
+                       keywords: [lotte world tower, seoul sky, jamsil, lotte world, seokchon]}
+  hongdae:            {name: "Hongdae & Yeonnam-dong", area: "Mapo-gu", demand: 4, setting: mixed, sun: mid, activity: low, zone: west,
+                       keywords: [hongdae, yeonnam, hongik, mangwon]}
+  gwangjang_market:   {name: "Gwangjang Market", area: "Jongno-gu", demand: 4, setting: indoor, sun: low, activity: low, zone: central,
+                       keywords: [gwangjang, gwangjang market, bindaetteok]}
+  ddp:                {name: "Dongdaemun Design Plaza (DDP)", area: "Jung-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: central,
+                       keywords: [ddp, dongdaemun design plaza, dongdaemun]}
+  insadong_ikseon:    {name: "Insadong & Ikseon-dong", area: "Jongno-gu", demand: 3, setting: mixed, sun: mid, activity: low, zone: central,
+                       keywords: [insadong, ikseon, ikseon-dong, ssamziegil]}
+  the_hyundai:        {name: "The Hyundai Seoul & Yeouido", area: "Yeongdeungpo-gu", demand: 3, setting: indoor, sun: low, activity: low, zone: west,
+                       keywords: [the hyundai seoul, yeouido, ifc mall]}
+  museums:            {name: "Museums (National Museum of Korea, Leeum)", area: "Yongsan-gu", demand: 3, setting: indoor, sun: low, activity: low, zone: central,
+                       keywords: [national museum of korea, leeum, museum, gallery]}
+  han_river:          {name: "Han River parks & cruise", area: "Seoul", demand: 3, setting: outdoor, sun: high, activity: mid, zone: central,
+                       keywords: [han river, hangang, banpo, river cruise, yeouido park]}
+  naksan_seoul_wall:  {name: "Naksan Park & Seoul City Wall", area: "Jongno-gu", demand: 2, setting: outdoor, sun: high, activity: mid, zone: central,
+                       keywords: [naksan, city wall, ihwa mural]}
+  k_hiking:           {name: "K-hiking (Bukhansan, Inwangsan)", area: "Seoul", demand: 3, setting: outdoor, sun: high, activity: high, zone: north,
+                       keywords: [bukhansan, inwangsan, hiking, hike]}
+  jjimjilbang:        {name: "Jjimjilbang & Korean spas", area: "Seoul", demand: 3, setting: indoor, sun: low, activity: low, heat: true, zone: central,
+                       keywords: [jjimjilbang, korean spa, sauna, bathhouse, spa land]}
+  kbeauty_shopping:   {name: "K-beauty shopping (Olive Young etc.)", area: "Seoul", demand: 4, setting: indoor, sun: low, activity: low, zone: central,
+                       keywords: [olive young, k-beauty shopping, cosmetics shopping, beauty store]}
+  nami_day_trip:      {name: "Day trips (Nami Island, DMZ, Suwon)", area: "Gyeonggi/Gangwon", demand: 3, setting: outdoor, sun: high, activity: mid, zone: day_trip,
+                       keywords: [nami island, dmz, suwon, hwaseong, day trip, gapyeong]}
+  busan:              {name: "Busan", area: "Busan", demand: 4, setting: outdoor, sun: high, activity: mid, zone: other_city,
+                       keywords: [busan, haeundae, gamcheon]}
+  jeju:               {name: "Jeju Island", area: "Jeju", demand: 4, setting: outdoor, sun: high, activity: mid, zone: other_city,
+                       keywords: [jeju]}

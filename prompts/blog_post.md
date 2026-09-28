@@ -4,6 +4,7 @@ Topic: {{title}}
 Angle: {{angle}}
 Keywords (use naturally, no stuffing): {{keywords}}
 {{revision_note}}
+{{travel_context}}
 
 You may ONLY use the facts below. Do not add any fact, number or claim that is not in this list. After every sentence that uses a fact, put its id in square brackets, e.g. "Downtime is usually 1-3 days [F4]."
 

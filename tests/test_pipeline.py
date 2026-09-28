@@ -835,8 +835,8 @@ def test_from_seed_order_and_reuse(env):
 def test_seed_week_limits_same_procedure():
     topics = [{"title": f"Rejuran {i}", "keywords": [], "axis": "procedure", "angle": "a"} for i in range(4)]
     topics.append({"title": "Botox basics", "keywords": [], "axis": "procedure", "angle": "a"})
-    table = demand_mod.scores()
-    picked = topics_mod.diverse(topics_mod.annotate(topics, table), 3)
+    tables = demand_mod.all_scores()
+    picked = topics_mod.diverse(topics_mod.annotate(topics, tables), 3)
     assert [t["title"] for t in picked] == ["Rejuran 0", "Rejuran 1", "Botox basics"]
 
 
@@ -852,7 +852,7 @@ def test_demand_blends_our_traffic(site_env, monkeypatch):
     assert data["rejuran"]["views"] == 3000 and data["rejuran"]["data_weight"] == 0.7
     assert data["thermage_rf"]["data_weight"] == 0                         # 글 없는 시술은 사전값 유지
     assert "조회 3000" in demand_mod.reason(data["rejuran"])
-    assert "Rejuran" in demand_mod.prompt_block(data)
+    assert "Rejuran" in demand_mod.prompt_block({"procedures": data})
 
 
 def test_topic_research_prompt_includes_demand(env):
@@ -1010,10 +1010,57 @@ def test_analytics_report_joins_links_and_procedures(env, tmp_path, monkeypatch)
     assert "| 의도(등록기관 목록) | 2 | 4 | 2.0 |" in md                          # 12월 글은 분모에서 제외, 클릭 0 인 글은 포함
     import csv
     data = list(csv.DictReader((tmp_path / "reports" / "2026-10.csv").open(encoding="utf-8")))
-    assert len(data) == 3 and {r["kind"] for r in data} == {"registry", "pilot", "other"}
+    assert len(data) == 3 and {r["kind"] for r in data} == {"registry", "pilot", "other"} and "attractions" in data[0]
+    assert "## 관광지·지역별" in md
     assert "visitor" not in data[0] and data[0]["week"] == "2026-W40"
 
 
 def test_analytics_silent_without_tracker(monkeypatch, capsys):
     monkeypatch.delenv("TRACKER_URL", raising=False)
     assert analytics_mod.main(["report"]) == 0 and capsys.readouterr().out == ""
+
+
+# ---- 관광지 (소개·코스) ----
+
+attractions_mod = importlib.import_module("pipeline.attractions")
+
+
+def test_observation_day_places():
+    catalog = attractions_mod.load()
+    assert catalog["coex"]["observation_ok"] and catalog["gwangjang_market"]["observation_ok"]
+    for aid in ("jjimjilbang", "gyeongbokgung", "k_hiking", "nami_day_trip", "jeju"):
+        assert not catalog[aid]["observation_ok"], aid
+    axes = common.load_yaml("channels.yaml")["content_axes"]
+    assert "travel_guide" in axes and "travel_guide" in site_mod.REGISTRY_AXES
+
+
+def test_travel_context_only_for_travel_axes(env):
+    topic = {"title": "Seongsu-dong and Seoul Forest", "axis": "travel_guide", "keywords": ["seongsu"]}
+    block = attractions_mod.context(topic)
+    assert [ln for ln in block.split("\n") if ln.startswith("- ")][0].startswith("- Seongsu-dong & Seoul Forest")  # 주제에 걸린 곳이 맨 앞
+    assert "OK for the observation day" in block and "visitkorea" in block and "half-day course" in block
+    assert attractions_mod.context({"title": "Rejuran", "axis": "procedure"}) == ""
+    draft_mod.create("2026-W40", 1, {**TOPICS["topics"][0], **topic})
+    prompts = {stage: p for stage, p in env.calls}
+    for stage in ("research", "shortform", "blog"):
+        assert "TRAVEL PLANNING DATA" in prompts[stage], stage
+    assert "Place guides and routes" in prompts["blog"]
+
+
+def test_procedure_travel_itinerary_needs_observation_day():
+    base = {"facts": [{"id": "F1", "text": "x", "url": URL}], "shortform": script(), "content_type": "procedure_travel"}
+    plan = "# Trip\n\nDay 1: treatment [F1]. Day 2: Gyeongbokgung. Results vary; ask a licensed doctor.\n\n" + DISCLOSURE
+    msgs = [f.message for f in review_mod.check_rules({**base, "blog": blog(plan)})[0]]
+    assert any("관찰일" in m for m in msgs)
+    ok = plan.replace("Day 2: Gyeongbokgung.", "Day 2: an observation day at COEX.")
+    assert not any("관찰일" in f.message for f in review_mod.check_rules({**base, "blog": blog(ok)})[0])
+
+
+def test_travel_topics_compete_on_attraction_demand(env):
+    tables = demand_mod.all_scores()
+    score, focus, why = demand_mod.topic_score({"title": "Seongsu-dong and Seoul Forest: a half-day guide"}, tables)
+    assert focus == "attractions:seongsu" and score == 1.0 and "Seongsu" in why
+    assert demand_mod.topic_score({"title": "Your first consultation"}, tables)[1] == "procedures:other"
+    assert "Places & areas:" in demand_mod.prompt_block(tables)
+    week = topics_mod.from_seed("2026-W40", 6, tables)
+    assert any(t["axis"] == "travel_guide" for t in week["topics"])

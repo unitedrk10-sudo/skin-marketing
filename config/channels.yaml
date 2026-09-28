@@ -23,6 +23,7 @@ content_axes:             # 기획서 3장
   - trend                # 트렌드
   - review_curation      # 후기 큐레이션 (병원별 X)
   - procedure_travel     # 시술 × 여행 (정보만)
+  - travel_guide         # 관광지 소개·코스 (AI 검색 유입 통로, config/attractions.yaml, 시술 후 주의점 포함)
   - skincare             # 재생·진정 화장품·홈케어 (화장품법 §13: 의약품 오인 표현 금지, 협찬이면 스폰서 트랙)
 
 topics_per_week: 6

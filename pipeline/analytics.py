@@ -24,7 +24,7 @@ from pipeline.common import ROOT, get_logger, load_yaml, run_cli
 log = get_logger("analytics")
 
 KIND_LABEL = {"registry": "의도(등록기관 목록)", "sponsor": "도착(스폰서 병원)", "pilot": "도착(파일럿 병원)", "other": "기타 링크"}
-CSV_FIELDS = ["day", "week", "code", "kind", "contract", "sponsor_id", "draft_id", "slug", "title", "axis", "procedures",
+CSV_FIELDS = ["day", "week", "code", "kind", "contract", "sponsor_id", "draft_id", "slug", "title", "axis", "procedures", "attractions",
               "source", "country", "clicks", "unique_visitors"]
 
 
@@ -36,9 +36,16 @@ def fetch(start: date, end: date) -> list[dict]:
     return tracker._request("GET", "/api/export", query={"from": start.isoformat(), "to": end.isoformat()})["rows"]
 
 
+CATALOGS = ("procedures", "attractions")  # config/<이름>.yaml — 시술, 관광지·지역
+
+
 def load_procedures() -> dict[str, dict]:
+    return load_catalog("procedures")
+
+
+def load_catalog(name: str) -> dict[str, dict]:
     out = {}
-    for pid, p in (load_yaml("procedures.yaml").get("procedures") or {}).items():
+    for pid, p in (load_yaml(f"{name}.yaml").get(name) or {}).items():
         words = [str(k).strip().lower() for k in p.get("keywords", []) if str(k).strip()]
         pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(w) for w in words) + r")(?:e?s)?(?![a-z0-9])")
         out[pid] = {"name": p.get("name", pid), "pattern": pattern}
@@ -56,7 +63,8 @@ def _week(day: str) -> str:
     return f"{y}-W{w:02d}"
 
 
-def enrich(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict]) -> list[dict]:
+def enrich(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict],
+           attractions: dict[str, dict] | None = None) -> list[dict]:
     """추적기 집계 행 + 글 메타데이터 + 시술 태그. 사람 클릭만 (봇·미리보기 제외)."""
     from pipeline.site import REGISTRY_URL
     by_code = {v["code"]: v for v in links.values() if v.get("code")}
@@ -73,6 +81,7 @@ def enrich(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict]
                     "contract": meta.get("contract") or "", "sponsor_id": r.get("sponsor_id") or meta.get("sponsor_id") or "",
                     "draft_id": meta.get("draft_id", ""), "slug": meta.get("slug", ""), "title": meta.get("title", ""),
                     "axis": meta.get("axis", ""), "procedures": "|".join(tag(meta, procedures)),
+                    "attractions": "|".join(tag(meta, attractions if attractions is not None else load_catalog("attractions"))),
                     "source": r["source"], "country": r.get("country") or "XX",
                     "clicks": int(r["clicks"]), "unique_visitors": int(r.get("unique_visitors") or 0)})
     return out
@@ -90,6 +99,7 @@ def published_counts(links: dict[str, dict], end: date) -> Counter:
 def analyze(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict], end: date) -> dict:
     kinds = Counter()
     by_proc = defaultdict(Counter)
+    by_place = defaultdict(Counter)
     by_post = defaultdict(lambda: {"clicks": 0, "unique": 0})
     by_source, by_country = defaultdict(Counter), Counter()
     by_week = defaultdict(Counter)
@@ -97,6 +107,9 @@ def analyze(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict
         kinds[r["kind"]] += r["clicks"]
         for pid in r["procedures"].split("|"):
             by_proc[pid][r["kind"]] += r["clicks"]
+        for aid in (r.get("attractions") or "other").split("|"):
+            if aid != "other":
+                by_place[aid][r["kind"]] += r["clicks"]
         post = by_post[(r["kind"], r["title"] or r["code"], r["sponsor_id"])]
         post["clicks"] += r["clicks"]
         post["unique"] += r["unique_visitors"]
@@ -111,6 +124,8 @@ def analyze(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict
         "ai": _sum(by_source.get("ai", Counter())),
         "by_procedure": sorted(((procedures.get(p, {}).get("name", "Other" if p == "other" else p), c)
                                 for p, c in by_proc.items()), key=lambda x: -_sum(x[1])),
+        "by_attraction": sorted((((load_catalog("attractions").get(a) or {}).get("name", a), c)
+                                 for a, c in by_place.items()), key=lambda x: -_sum(x[1])),
         "by_post": sorted(((k, v) for k, v in by_post.items()), key=lambda x: -x[1]["clicks"]),
         "by_source": sorted(by_source.items(), key=lambda x: -_sum(x[1])),
         "by_country": by_country.most_common(20),
@@ -151,6 +166,9 @@ def render(result: dict, start: date, end: date) -> str:
               "## 시술별 관심도 (시술 = config/procedures.yaml 키워드 분류)",
               "| 시술 | 의도 | 도착(스폰서) | 도착(파일럿) | 합계 |", "|---|---|---|---|---|"]
     lines += [f"| {name} | {c['registry']} | {c['sponsor']} | {c['pilot']} | {_sum(c)} |" for name, c in result["by_procedure"]] or ["| - | 0 | 0 | 0 | 0 |"]
+    lines += ["", "## 관광지·지역별 (여행 글이 병원 찾기·병원 도착으로 이어진 정도, config/attractions.yaml 분류)",
+              "| 관광지·지역 | 의도 | 도착 | 합계 |", "|---|---|---|---|"]
+    lines += [f"| {name} | {c['registry']} | {c['sponsor'] + c['pilot']} | {_sum(c)} |" for name, c in result["by_attraction"]] or ["| - | 0 | 0 | 0 |"]
     lines += ["", "## 글별 (상위 30)", "| 종류 | 글 | 병원 | 클릭 | 하루 고유 방문 합계 |", "|---|---|---|---|---|"]
     lines += [f"| {KIND_LABEL.get(kind, kind)} | {title} | {sponsor or '-'} | {v['clicks']} | {v['unique']} |"
               for (kind, title, sponsor), v in result["by_post"][:30]] or ["| - | - | - | 0 | 0 |"]
@@ -189,7 +207,7 @@ def run(start: date, end: date, name: str) -> tuple[Path, dict]:
     from pipeline.site import load_tracked_links
     links = load_tracked_links()
     procedures = load_procedures()
-    rows = enrich(fetch(start, end), links, procedures)
+    rows = enrich(fetch(start, end), links, procedures, load_catalog("attractions"))
     result = analyze(rows, links, procedures, end)
     out = reports_dir()
     write_csv(rows, out / f"{name}.csv")
