@@ -136,7 +136,7 @@ def scores(today: date | None = None, catalog_name: str = "procedures", views: d
 
     # 관광지는 유행·계절을 탄다: 최근 트렌드 스캔(21일 이내)과 계절 가산점
     from pipeline import trends
-    scan = (trends.latest(today) or {}).get("attractions", {}) if catalog_name == "attractions" else {}
+    scan = trends.place_trends(trends.latest(today)) if catalog_name == "attractions" else {}  # 관광지 + 근처 맛집·카페 트렌드
 
     out = {}
     for pid, prior in priors.items():
@@ -204,6 +204,9 @@ def prompt_block(tables: dict[str, dict[str, dict]], limit: int = 8) -> str:
     if data and data.get("emerging"):
         out.append("Trending right now (new places/events, from this week's scan):")
         out += [f"- {e['name']} ({e['area']}): trend {e['trend']} — {e['why']}" for e in data["emerging"]]
+    if data and data.get("food"):
+        out.append("Trending food & cafes (from this week's scan):")
+        out += [f"- {f['name']} ({f['kind']}, {f['area']}): trend {f['trend']} — {f['why']}" for f in data["food"]]
     return "\n".join(out)
 
 

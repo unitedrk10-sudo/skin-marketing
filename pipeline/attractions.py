@@ -40,21 +40,36 @@ def describe(a: dict) -> str:
     return f"- {a['name']} ({a.get('area', '')}; {', '.join(notes)}) — {fit}"
 
 
-def context(topic: dict, tables: dict | None = None) -> str:
-    """여행 축 주제용 프롬프트 블록. 다른 축은 빈 문자열."""
-    if topic.get("axis") not in TRAVEL_AXES:
+def food_lines(items: list[dict]) -> str:
+    if not items:
         return ""
-    from pipeline import analytics, demand
+    lines = [f"- {f['name']} ({f['kind']}, {f['area']}) — {f['why']} Source: {', '.join(f['sources'][:2])}" for f in items]
+    return ("\nTRENDING FOOD & CAFES (this week's trend scan — optional; if you use one, it must become a sourced fact):\n"
+            + "\n".join(lines) + "\n")
+
+
+def context(topic: dict, tables: dict | None = None, home: dict | None = None) -> str:
+    """여행 축 주제용 프롬프트 블록. 다른 축은 빈 문자열.
+    home: 스폰서 병원(zone, area) — 스폰서 "병원 중심 코스" 글에서 같은 권역 관광지를 앞에 둔다."""
+    if topic.get("axis") not in TRAVEL_AXES and not home:
+        return ""
+    from pipeline import analytics, demand, trends
     catalog = load()
     tagged = [a for a in analytics.tag({"title": topic.get("title", ""), "keywords": topic.get("keywords", [])},
                                       analytics.load_catalog("attractions")) if a in catalog]
     table = (tables or {}).get("attractions") or demand.scores(catalog_name="attractions")
     ranked = sorted(catalog, key=lambda a: -table.get(a, {}).get("score", 0))
-    chosen = list(dict.fromkeys(tagged + ranked))[:max(CONTEXT_LIMIT, len(tagged))]
+    nearby = [a for a in ranked if home and catalog[a].get("zone") == home.get("zone")]
+    chosen = list(dict.fromkeys(tagged + nearby + ranked))[:max(CONTEXT_LIMIT, len(tagged) + len(nearby))]
     lines = [describe(catalog[a]) for a in chosen]
+    food = food_lines(trends.food_for(trends.latest(), chosen))
     guide = ("For a place guide: what the place is, how to get there by subway, what to see and do, how much time to allow, "
-             "tips for visitors who recently had a skin treatment (sun, heat, crowds), and a half-day course with nearby places. "
-             if topic["axis"] == "travel_guide" else "")
+             "where and what to eat or grab a coffee nearby, tips for visitors who recently had a skin treatment (sun, heat, "
+             "crowds), and a half-day course with nearby places. " if topic.get("axis") == "travel_guide" else "")
+    if home:
+        guide += (f"This is a route for visitors treated at {home['name_en']} in {home.get('area') or home.get('zone')}: build "
+                  f"the procedure day and observation day around that area (places in the same zone first). The route is travel "
+                  f"information only — no perks, pickups, discounts, packages or any other inducement. ")
     return f"""
 TRAVEL PLANNING DATA (internal attributes for building routes — NOT facts to publish; every fact about a place such as
 opening hours, fees, access or what is there must come from a sourced fact, preferably VisitKorea (english.visitkorea.or.kr),
@@ -64,8 +79,9 @@ Visit Seoul (english.visitseoul.net) or the venue's official website, stated "as
 Route rules: on a procedure day, choose only indoor, low-activity places near where the reader is staying. On the day right after
 a procedure (the observation day), use ONLY places marked "OK for the observation day". Places with strong sun, sauna/heat, hikes,
 day trips or another city go on later days, and say to follow the treating clinic's aftercare advice. Group places by area to
-limit travel time. {guide}Present places neutrally — no rankings or "best", no paid placements, no restaurant or shop promotions.
-"""
+limit travel time. {guide}Present places neutrally — no rankings or "best", no paid placements. Restaurants and cafes only as
+unpaid editorial examples backed by an independent source (see the rules).
+{food}"""
 
 
 def main(argv: list[str] | None = None) -> int:

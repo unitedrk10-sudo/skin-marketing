@@ -5,6 +5,7 @@ This is a **clearly labeled advertisement** for {{name_en}} ({{name_ko}}), a lic
 Allowed:
 - Naming {{name_en}} / {{name_ko}} and linking ONLY to {{official_url}}.
 - Describing which procedures the clinic offers and general information about them, sourced as below.
+- When travel planning data is provided: a sourced travel route around the clinic's area (places, food, cafes) as general travel information. No perks, pickups, discounts, packages or other inducements tied to the route, and restaurants/cafes only as unpaid editorial examples with an independent source.
 
 Absolutely forbidden (Medical Service Act §56② and §27③):
 1. Any other clinic or hospital name; any doctor name; phone numbers, messenger IDs, booking links, addresses beyond the area name.

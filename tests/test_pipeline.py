@@ -1126,3 +1126,55 @@ def test_old_trend_scan_is_ignored(env):
     env.responses["trends"] = TREND_SCAN
     trends_mod.scan("2026-W40")
     assert trends_mod.latest(date.today() + timedelta(days=30)) is None
+
+
+# ---- 맛집·카페 트렌드 / 병원 중심 코스 (스폰서) ----
+
+FOOD_SCAN = {**TREND_SCAN, "food": [
+    {"name": "Seongsu salt-bread cafes", "kind": "cafe_street", "area": "Seongsu", "attraction": "seongsu", "trend": 80,
+     "why": "Viral on Instagram", "sources": ["https://news.example/saltbread"],
+     "topic": {"title": "Seongsu's salt-bread cafe trend", "angle": "What it is and where the cafe streets are",
+               "keywords": ["seongsu cafe"], "hook": "Why the lines in Seongsu?"}},
+    {"name": "Dubai chewy cookie", "kind": "dessert", "area": "Seoul", "attraction": "", "trend": 70,
+     "why": "Dessert trend", "sources": ["https://news.example/cookie"], "topic": None},
+    {"name": "No source bistro", "kind": "restaurant", "area": "Hongdae", "attraction": "hongdae", "trend": 99, "sources": []},
+]}
+
+
+def test_food_trends_feed_places_prompts_and_topics(env):
+    env.responses["trends"] = FOOD_SCAN
+    data = trends_mod.scan("2026-W40")
+    assert [f["name"] for f in data["food"]] == ["Seongsu salt-bread cafes", "Dubai chewy cookie"]   # 출처 없음 제외
+    places = trends_mod.place_trends(data)
+    assert places["seongsu"]["trend"] == 60 and "salt-bread" in places["seongsu"]["why"]            # 80 × 0.75
+    assert demand_mod.scores(catalog_name="attractions")["seongsu"]["trend"] == 60
+    block = attractions_mod.context({"title": "Seongsu-dong guide", "axis": "travel_guide", "keywords": ["seongsu"]})
+    assert "TRENDING FOOD & CAFES" in block and "Seongsu salt-bread cafes" in block and "Dubai chewy cookie" in block
+    assert "https://news.example/saltbread" in block
+    ids = [t["seed_id"] for t in trends_mod.emerging_topics(data)]
+    assert "trend-food-seongsu-salt-bread-cafes" in ids and not any("cookie" in i for i in ids)   # 주제 아이디어 있는 것만
+    assert "🍜 Seongsu salt-bread cafes" in trends_mod.summary(data)
+    assert "unpaid editorial example" in common.read_prompt("_rules")
+
+
+def test_sponsored_course_post_uses_clinic_zone(sponsored, tmp_path):
+    write_sponsors(tmp_path, {**SPONSOR, "zone": "gangnam", "area": "Sinsa, Gangnam-gu"})
+    draft_id = draft_mod.create_sponsored("glow", "3 days in Seoul around Glow Skin Clinic", "a route", course=True)
+    blog_prompt = [p for stage, p in sponsored.calls if stage == "blog"][-1]
+    assert "TRAVEL PLANNING DATA" in blog_prompt and "visitors treated at Glow Skin Clinic in Sinsa, Gangnam-gu" in blog_prompt
+    assert "no perks, pickups, discounts" in blog_prompt
+    first = [ln for ln in blog_prompt.split("\n") if ln.startswith("- ")]
+    assert "COEX" in "".join(first[:4])                                     # 같은 권역(강남) 관광지 먼저
+    assert common.load_draft(common.content_dir("drafts") / draft_id)["topic"]["course"] is True
+    sponsored.calls.clear()
+    draft_mod.create_sponsored("glow", "Rejuran at Glow Skin Clinic", "what to expect")
+    assert all("TRAVEL PLANNING DATA" not in p for _, p in sponsored.calls)   # 일반 스폰서 글은 관광 데이터 없음
+
+
+def test_sponsored_course_requires_zone(sponsored):
+    with pytest.raises(sponsors_mod.SponsorError, match="zone"):
+        draft_mod.create_sponsored("glow", "t", "a", course=True)
+    with pytest.raises(ValueError, match="zone"):
+        worker_mod.request_sponsored("glow", "t", "a", course=True)
+    with pytest.raises(sponsors_mod.SponsorError, match="zone"):
+        sponsors_mod.validate({**SPONSOR, "zone": "mars"})

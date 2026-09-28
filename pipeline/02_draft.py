@@ -137,7 +137,10 @@ def add_disclosures(draft: dict, sponsor: dict) -> None:
 
 def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -> dict:
     rules = sponsors.rules_text(sponsor) if sponsor else None
-    travel = "" if sponsor else attractions.context(topic)  # 여행 축: 관광지 속성·코스 규칙
+    if sponsor:  # 스폰서 "병원 중심 코스" 글만 관광 데이터를 받는다 (병원 권역 기준)
+        travel = attractions.context(topic, home=sponsor) if topic.get("course") else ""
+    else:  # 여행 축: 관광지 속성·코스 규칙·맛집 트렌드
+        travel = attractions.context(topic)
     facts = research(topic, note, rules, travel)
     draft = {"topic": topic, "facts": facts}
     draft["shortform"] = write_script(topic, facts, note, rules, travel)
@@ -175,12 +178,16 @@ def create(week: str, index: int, topic: dict) -> str:
     return draft_id
 
 
-def create_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str] | None = None) -> str:
-    """스폰서 글 초안. 계약 기간이 아니면 만들지 않는다."""
+def create_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str] | None = None, course: bool = False) -> str:
+    """스폰서 글 초안. 계약 기간이 아니면 만들지 않는다.
+    course=True: 병원 권역 중심 여행 코스 글 (sponsors.yaml 의 zone·area 필요, 광고 표시는 동일)."""
     sponsor = sponsors.get(sponsor_id)
     if not sponsors.contract_active(sponsor):
         raise sponsors.SponsorError(f"{sponsor_id}: 계약 기간이 아닙니다 ({sponsor['contract']['start']} ~ {sponsor['contract']['end']})")
-    topic = {"title": title, "axis": "sponsored", "angle": angle, "keywords": keywords or [], "hook": "", "has_price": False}
+    if course and not sponsor.get("zone"):
+        raise sponsors.SponsorError(f"{sponsor_id}: 코스 글에는 sponsors.yaml 의 zone(병원 권역)이 필요합니다")
+    topic = {"title": title, "axis": "sponsored", "angle": angle, "keywords": keywords or [], "hook": "", "has_price": False,
+             **({"course": True} if course else {})}
     draft_id = f"sp-{sponsor_id}-{date.today().strftime('%Y%m%d')}-{slugify(title, 30)}"
     path = content_dir("drafts") / draft_id
     if (path / "draft.json").exists():
@@ -232,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--title", help="스폰서 글 제목 (--sponsor 와 함께)")
     parser.add_argument("--angle", help="스폰서 글에서 답할 질문 (--sponsor 와 함께)")
     parser.add_argument("--keywords", default="", help="쉼표로 구분")
+    parser.add_argument("--course", action="store_true", help="스폰서 병원 권역 중심 여행 코스 글 (--sponsor 와 함께)")
     args = parser.parse_args(argv)
 
     if args.revise:
@@ -243,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.title and args.angle):
             parser.error("--sponsor 에는 --title 과 --angle 이 필요합니다")
         keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
-        print(create_sponsored(args.sponsor, args.title, args.angle, keywords))
+        print(create_sponsored(args.sponsor, args.title, args.angle, keywords, args.course))
         return 0
     if not (args.week and args.pick):
         parser.error("--week 와 --pick 이 필요합니다")
