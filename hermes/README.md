@@ -46,7 +46,7 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 |---|---|---|---|
 | skin-law-sync | 월 08:00 | `skin-law-sync.py` | 추적 법령 변경 감지 → 변경 있을 때만 알림 |
 | skin-weekly-topics | 월 09:00 | `skin-weekly-topics.py` | 코드 업데이트(`git pull`) → 관광지 트렌드 스캔(주 1회) → 주간 주제 후보 전송 (수요·트렌드·계절 순) |
-| skin-worker | 10분마다 | `skin-worker.py` | 요청 처리(초안 생성·수정 재생성) → 자동 검수 → Claude Code 검수 → 바뀐 게 있으면 검수 요청 전송 |
+| skin-worker | 10분마다 | `skin-worker.py` | 요청 처리(초안 생성·수정 재생성: Gemini 출처 찾기 → Claude 작성) → 자동 검수(Gemini) → 바뀐 게 있으면 검수 요청 전송 |
 | skin-traffic-report | 월 10:00 | `skin-traffic-report.py` | 스폰서 링크 유입 주간 요약 (추적기 배포 전·클릭 없으면 조용) |
 | skin-weekly-report | 일 20:00 | `skin-weekly-report.py` | 주간 리포트 (초안·검수 등급·승인·렌더링·게시·대기·자동/사람 일치율·블로그·유입·수요 상위) |
 | skin-clinics | 월 07:00 | `skin-clinics.py` | 코스 관광지 주변 피부과 목록 갱신 (심평원 공공데이터, `DATA_GO_KR_KEY` 없으면 조용) |
@@ -61,12 +61,12 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 ```
 월 09:00  [주제 후보 6건]            ← skin-weekly-topics
 사람      "1,3,4"                    → worker request-drafts (요청만 남김)
-~10분 후  [초안 검수 3건] ✅⚠️⛔     ← skin-worker (생성 → 02b → claude -p 검수)
+~20분 후  [초안 검수 3건] ✅⚠️⛔     ← skin-worker (출처 확보 → claude -p 작성 → 02b 검수) + 초안별 .md 첨부
 사람      "1,3 승인 / 2 수정: …"     → 03_review apply (수정은 요청만 남김)
 ~10분 후  [초안 검수 1건]            ← skin-worker (재생성 → 재검수)
 ```
-- ⏳ = Claude Code 검수 대기. 결과 반영 전에는 승인이 보류된다 (사람이 명시하면 `--confirm`).
-- Claude Code 검수가 실패하면 알림 후 다음 워커 실행 때 자동 재요청. 로그: `logs/claude_review_<id>.log`.
+- 검수 메시지에는 초안별 대본 전문·블로그 구성·걸린 항목이 들어가고, 블로그 전문과 사실별 원문 인용은 첨부 파일(`<draft_id>.md`)로 온다.
+- Claude 작성(`claude -p`)은 Claude Code CLI 로그인이 필요하다. 사용량 한도에 걸리면 요청을 버리지 않고 다음 워커 실행 때 다시 한다 (실패 알림에 "보류"로 표시).
 - 실패한 요청은 `content/requests/failed/` 로 옮겨져 반복 실행되지 않는다.
 - 게시·삭제(06_publish) 등 되돌릴 수 없는 작업은 명령 승인(approval) 대상으로 등록한다 (구현 후).
 - 영상: 승인된 초안은 워커가 `04_render_video` 로 렌더링(`GOOGLE_TTS_API_KEY` + ffmpeg 필요, 없으면 조용히 건너뜀) → "게시 전 확인" 메시지 → "게시 OK" → 워커가 `06_publish kits` 로 채널별 게시 키트 → 직접 올린 뒤 "N 게시 완료 <채널> <URL>" → 모두 올리면 published.
