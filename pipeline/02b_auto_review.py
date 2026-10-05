@@ -145,6 +145,12 @@ def _generic(phrase: str) -> bool:
     return all(w.lower().strip("'.-") in GENERIC_WORDS for w in words)
 
 
+def _in_question(text: str, m: re.Match) -> bool:
+    """일치 부분이 들어 있는 문장이 물음표로 끝나는지."""
+    end = re.search(r"[.!?\n]", text[m.end():])
+    return bool(end) and end.group(0) == "?"
+
+
 def _snippet(text: str, m: re.Match, pad: int = 30) -> str:
     return text[max(0, m.start() - pad) : m.end() + pad].replace("\n", " ").strip()
 
@@ -169,6 +175,8 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
                     continue
                 if kind == "clinic_name" and any(n in _snippet(text, m, 60) for n in sponsor_names):
                     continue  # 스폰서 글의 광고주 병원명은 허용
+                if kind == "testimonial" and _in_question(text, m):
+                    continue  # FAQ 의 독자 질문 ("How should I protect my skin?") 은 체험담이 아니다
                 findings.append(Finding("rules", "block", f"[{where}] {label}", _snippet(text, m)))
                 if kind in ("clinic_name", "doctor_name"):
                     human.add("병원·의사 언급")
