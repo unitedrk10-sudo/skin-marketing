@@ -2,6 +2,7 @@
 
 - 모델·공급자는 config/models.yaml 의 stages 에서 읽는다 (코드에 모델명 하드코딩 금지).
 - 키는 환경변수(GEMINI_API_KEY, ANTHROPIC_API_KEY)에서만 읽고 로그에 남기지 않는다.
+- provider: claude_cli 는 같은 머신의 Claude Code CLI(claude -p)를 부른다 — 초안 작성 (Pro 로그인, 키 불필요).
 - 테스트에서는 set_backend() 로 실제 API 대신 가짜 응답 함수를 넣는다.
 
 CLI:
@@ -12,8 +13,12 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
+import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -25,6 +30,8 @@ log = get_logger("llm")
 KEY_ENV = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 # API 를 부르지 않고 검수 요청 파일로 내보내 Claude Code 세션이 처리하는 단계 (02c_external_review.py)
 EXTERNAL = "claude_code"
+# 같은 머신의 Claude Code CLI(claude -p, Pro 로그인)로 바로 호출하는 단계 — 초안 작성 (API 키 불필요)
+CLAUDE_CLI = "claude_cli"
 RETRIES = 3
 # 응답이 오지 않는 호출을 끊는다 (없으면 워커가 Hermes 1시간 제한까지 멈추고 잠금 때문에 다음 실행도 건너뜀).
 # pro + 검색 연동은 2분 안팎 걸린다. 초과하면 재시도.
@@ -33,6 +40,10 @@ REQUEST_TIMEOUT_SEC = 300
 
 class LLMError(RuntimeError):
     pass
+
+
+class RateLimited(LLMError):
+    """사용량 한도 — 같은 요청을 나중에 다시 하면 된다 (워커는 요청을 버리지 않는다)."""
 
 
 @dataclass
@@ -58,7 +69,7 @@ def stage_config(stage: str) -> dict:
     if stage not in stages:
         raise LLMError(f"config/models.yaml 에 stage '{stage}' 없음")
     cfg = dict(stages[stage])
-    if cfg.get("provider") not in (*KEY_ENV, EXTERNAL):
+    if cfg.get("provider") not in (*KEY_ENV, EXTERNAL, CLAUDE_CLI):
         raise LLMError(f"stage '{stage}': 지원하지 않는 provider {cfg.get('provider')!r}")
     return cfg
 
@@ -131,7 +142,43 @@ def _anthropic(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRes
     return LLMResult(text=text, model=resp.model, stage=stage)
 
 
-PROVIDERS = {"gemini": _gemini, "anthropic": _anthropic}
+# ---- Claude Code CLI (claude -p) ----
+
+LIMIT_WORDS = re.compile(r"usage limit|rate limit|limit reached|limit will reset|overloaded|too many requests", re.I)
+
+
+def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult:
+    """프롬프트는 stdin 으로. 도구는 cfg.tools (기본: 없음). 저장소 밖 빈 폴더에서 실행해 CLAUDE.md·MCP 를 읽지 않는다."""
+    cmd = [os.environ.get("CLAUDE_BIN", "claude"), "-p", "--output-format", "json", "--strict-mcp-config",
+           "--no-session-persistence", "--tools", ",".join(cfg.get("tools") or [])]
+    if cfg.get("model"):
+        cmd += ["--model", cfg["model"]]
+    if system:
+        cmd += ["--append-system-prompt", system]
+    timeout = cfg.get("timeout_sec", 1800)
+    with tempfile.TemporaryDirectory(prefix="skin-claude-") as workdir:
+        try:
+            proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", cwd=workdir, timeout=timeout)
+        except FileNotFoundError as e:
+            raise LLMError(f"claude 명령을 찾을 수 없습니다 (CLAUDE_BIN): {e}") from e
+        except subprocess.TimeoutExpired as e:  # 재시도하면 Hermes 1시간 제한을 넘긴다 → 다음 워커 실행에 맡김
+            raise RateLimited(f"claude -p {timeout}s 초과 — 다음 실행 때 재시도") from e
+    try:
+        out = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        out = {"is_error": True, "result": (proc.stdout or proc.stderr or "").strip()[-500:]}
+    text = str(out.get("result") or "")
+    if out.get("is_error") or proc.returncode != 0:
+        detail = text or (proc.stderr or "").strip()[-500:] or f"exit {proc.returncode}"
+        if LIMIT_WORDS.search(detail):
+            raise RateLimited(f"Claude 사용량 한도: {detail[:200]}")
+        raise LLMError(f"claude -p 실패 (stage={stage}): {detail[:300]}")
+    model = next(iter(out.get("modelUsage") or {}), cfg.get("model") or "claude")
+    return LLMResult(text=text, model=model, stage=stage)
+
+
+PROVIDERS = {"gemini": _gemini, "anthropic": _anthropic, CLAUDE_CLI: _claude_cli}
 
 
 def generate(stage: str, prompt: str, system: str | None = None) -> LLMResult:
@@ -184,6 +231,9 @@ def _check() -> int:
     external = [s for s, c in stages.items() if c.get("provider") == EXTERNAL]
     if external:
         print(f"Claude Code 외부 검수: {', '.join(external)} (02c_external_review export/import)")
+    cli = [s for s, c in stages.items() if c.get("provider") == CLAUDE_CLI]
+    if cli:
+        print(f"Claude Code CLI (claude -p): {', '.join(cli)}")
     if not ok:
         return 1
     for stage in (s for s in stages if s not in external):

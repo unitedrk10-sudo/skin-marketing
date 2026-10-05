@@ -9,17 +9,19 @@
 
 | 역할 | 도구 | 비고 |
 |---|---|---|
-| 파이프라인 개발 | **Claude Code** (Pro 플랜) | 스크립트·프롬프트·설정 작성 및 수정. 운영에는 사용하지 않음 |
+| 파이프라인 개발 | **Claude Code** (Pro 플랜) | 스크립트·프롬프트·설정 작성 및 수정 |
 | 운영(스케줄·실행) | **Hermes Agent** | 크론 작업, 스크립트 실행, 메신저 전달 |
-| LLM | **Gemini API** (유료 등급) | 주제 조사(검색 연동), 초안 생성, 법규 1차 점검, 리포트 요약 |
-| 자동 검수 | **다른 회사 모델** (Claude Code — 저장소 검수 요청 파일 방식, API 키 없음) + 규칙 코드 | 생성 모델과 다른 모델로 교차 검수 (6-0 참고). 필요 시 Claude API 로 전환 가능 |
+| 찾기 (LLM) | **Gemini API** (유료 등급) | 주제 조사·트렌드 스캔·**출처 페이지 찾기** (Google 검색 연동) |
+| 쓰기 (LLM) | **Claude Code CLI** (`claude -p`, Pro 로그인 — API 키 없음) | 코드가 받아 둔 출처 페이지 본문만 보고 사실 목록·숏폼 대본·블로그 작성 (2026-10-06 결정) |
+| 자동 검수 | **다른 회사 모델** (Gemini API) + 규칙 코드 | 작성 모델(Claude)과 다른 회사 모델로 출처 대조·교차 검수 (6-0 참고) |
 | 사람 검수 | **Telegram** (Hermes 메신저 게이트웨이) | 자동 검수 결과 기반 승인·수정, 영상 게시 전 확인 |
 | TTS | 미정 (ElevenLabs / Google Cloud TTS 등) | 채널 전체 동일 목소리 고정 |
 | 예약 게시 | 미정 (Buffer / Later / Metricool 등) | 공식 연동 지원 도구만 사용 |
 
 **원칙**
-- 운영은 Claude Code에 의존하지 않는다. Claude Code가 꺼져 있어도 Hermes만으로 파이프라인이 돌아가야 한다.
-  - 예외: 검수(②본문 대조·③교차 검수)는 Claude Code가 한다 (2026-09-27 결정). Claude Code 검수가 늦어지면 초안은 ⏳ 대기로 남고, 사람이 `--confirm`으로 강제 승인할 수 있다.
+- 운영 스케줄·실행은 Hermes 가 하고, Claude Code 는 Hermes 워커가 부르는 **작성 단계(`claude -p`)**에만 쓴다. Claude Code 대화 세션이 켜져 있을 필요는 없다 (CLI 로그인만 유지).
+  - 역할 변경 (2026-10-06): 처음에는 Gemini 가 쓰고 Claude Code 가 검수했으나, Gemini 가 출처 페이지에 없는 내용을 사실로 적는 문제가 실제 운영에서 반복돼 **Gemini = 찾기·검수, Claude = 읽고 쓰기**로 바꿨다. 같은 회사 모델이 쓰고 검수하지 않는 원칙(6-0)은 유지.
+  - Claude 사용량 한도(Pro)에 걸리면 그 요청은 버리지 않고 다음 워커 실행 때 다시 시도한다.
 - 결정적(deterministic) 작업(렌더링·게시·파일 이동)은 Hermes 크론의 **no-agent 모드**(스크립트만 실행, LLM 미사용)로 돌린다.
 - LLM 호출은 모델 교체가 쉽도록 한 곳에 모은다 (`pipeline/llm.py`). 필요 시 LiteLLM 등으로 추상화.
 - 로컬 모델(qwen 등)은 사용하지 않는다. 추후 AI 상담 단계에서 개인정보를 다룰 때 재검토.
@@ -87,7 +89,8 @@
 
 ```
 [1 주제선정] → [2 초안생성] → [2.5 자동검수] → [3 텔레그램 검수] → [4 영상제작] → [5 게시 전 확인] → [6 예약게시] → [7 리포트]
-  Hermes+Gemini  Hermes+Gemini   규칙+출처+교차모델   사람(걸린 것 위주)  Hermes 스크립트   사람(Telegram)     Hermes 스크립트  Hermes+Gemini
+  Hermes+Gemini  Gemini 찾기      규칙+출처+교차모델   사람(걸린 것 위주)  Hermes 스크립트   사람(Telegram)     Hermes 스크립트  Hermes+Gemini
+                 →Claude 쓰기     (Gemini)
 ```
 
 | 단계 | 실행 주체 | 모드 | 내용 |
@@ -95,7 +98,7 @@
 | 1. 주제 선정 | Hermes 크론 (월 09:00) | 에이전트 + Gemini | 검색 키워드·트렌드·경쟁 채널 인기 영상 조사 → 주간 주제 5~7개 텔레그램 전송 → 사람이 선택 |
 
 > 초기 운영: `config/seed_topics.yaml`(2026-09-28 조사, 25개, wave 1~3) 에서 주 6개씩 먼저 제안 → 소진 후 Gemini 주제 조사로 자동 전환.
-| 2. 초안 생성 | Hermes (주제 선택 직후) | 에이전트 + Gemini | 숏폼 대본(30~60초), 블로그 글(1,200~2,000단어), 제목·해시태그. **모든 사실에 출처 URL**. 법규 1차 자동 점검 결과 첨부 |
+| 2. 초안 생성 | Hermes 워커 (주제 선택 직후) | 스크립트 + Gemini + Claude | ① Gemini 가 검색으로 읽을 페이지 후보만 고름 → ② 코드가 페이지를 받아 404·빈 페이지·병원 사이트 제외 → ③ Claude 가 그 본문만 보고 사실 목록(사실마다 **원문 인용**)·숏폼 대본(30~60초)·블로그(1,200~2,000단어) 작성 (쓸 만한 페이지가 5개 미만이면 Claude 가 추가 검색) → ④ 코드가 인용문이 페이지에 실제로 있는지 대조, 없으면 그 사실 제외 |
 | 2.5 자동 검수 | Hermes (초안 생성 직후) | 스크립트 + 검수 모델 | 규칙 검사 → 출처 검증 → 교차 모델 검수 → 통과/주의/차단 등급 부여 (6-0 참고) |
 | 3. 초안 검수 | 사람 | Telegram | 자동 검수 등급 기반 승인 / 수정 요청 / 폐기 (6장 참고) |
 | 4. 영상 제작 | Hermes 크론 | no-agent (스크립트) | `approved/` 대본만 대상. TTS + 자막 + B롤 합성 |
@@ -120,17 +123,19 @@ derm-content/
 ├── config/
 │   ├── channels.yaml             # 채널별 포맷·빈도
 │   ├── voice.yaml                # TTS 목소리 설정
-│   ├── models.yaml               # 단계별 Gemini 모델 지정
+│   ├── models.yaml               # 단계별 모델 지정 (Gemini 찾기·검수 / Claude CLI 쓰기)
 │   ├── banned_terms.txt          # 금지 표현 목록 (7장 참고)
 │   └── laws.yaml                 # 추적 법령·조문·키워드 (국가법령정보 API)
 ├── prompts/
+│   ├── _rules.md                 # 7장 금지 사항 — 모든 생성·검수 프롬프트에 들어감
 │   ├── topic_research.md
-│   ├── shortform_script.md
-│   ├── blog_post.md
-│   ├── compliance_check.md       # LLM 1차 자동 점검용
+│   ├── source_search.md          # Gemini: 읽을 출처 페이지 찾기
+│   ├── write_draft.md            # Claude: 출처 본문 → 사실(원문 인용)·대본·블로그
+│   ├── source_check.md / cross_review.md   # Gemini 검수
 │   └── weekly_report.md
 ├── pipeline/
-│   ├── llm.py                    # LLM 호출 단일 진입점 (모델 교체 지점)
+│   ├── llm.py                    # LLM 호출 단일 진입점 (모델 교체 지점, Claude CLI 포함)
+│   ├── web.py                    # 페이지 수집·리디렉션 해석·병원 사이트 판별·인용문 대조
 │   ├── 01_topics.py
 │   ├── 02_draft.py
 │   ├── 02b_auto_review.py        # 규칙 검사 + 출처 검증 + 교차 모델 검수 → 등급
@@ -172,8 +177,10 @@ derm-content/
 | 단계 | 방식 | 확인 항목 |
 |---|---|---|
 | ① 규칙 검사 | 코드 (LLM 없음) | `banned_terms.txt` 금지어, 병원명·의사명 패턴, 전화번호·예약 URL, "board-certified" 등 자격 표기 |
-| ② 출처 검증 | 코드 + LLM | 모든 출처 URL 접속 확인(HTTP 200), 페이지 본문에 해당 주장이 실제로 있는지 대조 (가짜·깨진 출처 차단) |
-| ③ 교차 모델 검수 | **생성 모델과 다른 회사 모델** | 7장 체크리스트 기준: 과장·단정 표현, 사실 오류, 체험담 형식, 비교 표현 |
+| ② 출처 검증 | 코드 + Gemini | 모든 출처 URL 접속 확인(HTTP 200), 페이지 본문에 해당 주장이 실제로 있는지 대조 (가짜·깨진 출처 차단). 병원 사이트로 보이는 출처는 ⚠️ |
+| ③ 교차 모델 검수 | **작성 모델(Claude)과 다른 회사 모델 (Gemini)** | 7장 체크리스트 기준: 과장·단정 표현, 사실 오류, 체험담 형식, 비교 표현 |
+
+> 작성 단계에서 이미 원문 인용 대조(코드)를 거치므로 ②는 두 번째 확인이다. 선택 기능: `config/models.yaml` 에서 검수 단계를 `claude_code` 로 바꾸면 02c 외부 검수 방식(요청 파일 + `claude -p`)으로 돌아간다 — 단, 작성도 Claude 이므로 같은 회사 원칙에 어긋나 쓰지 않는다.
 
 **등급 기준**
 | 등급 | 조건 | 처리 |
@@ -200,13 +207,19 @@ derm-content/
 - 예상 사람 검수 시간: 1~4주 주 1~2시간 → 이후 주 20~30분
 
 ### 6-1. 초안 검수 (월요일)
-Hermes → 텔레그램 메시지 예시:
+Hermes → 텔레그램 메시지 예시 (휴대폰에서 바로 판단하도록, 2026-10-06):
 ```
-[주간 초안 5건 / 블로그 2건]
-1. What is Rejuran? (42s) ✅ 자동점검 통과
-2. Korea vs US skin booster price ⚠️ "cheapest" 표현 감지
-3. ...
-(각 원문 파일 첨부 + 출처 링크)
+[초안 검수 2건 (숏폼+블로그)] 답장 예: `1,3 승인` · `2 수정: 가격 출처 다시` · `4 폐기` · `전체 승인`
+
+1. What is Rejuran? (42s) ✅ 👤새 유형 첫 게시물(procedure)
+   📝 블로그: Rejuran explained — 메타 설명
+      How it works · Who it suits · Pain & downtime · FAQ
+   🎬 대본:
+      · Salmon DNA on your face? ...
+2. Korea vs US skin booster price (50s) ⚠️ 👤가격 포함
+   ⚠️ 병원 사이트로 보이는 출처 [F3] — 논문·정부·학회 출처로 교체 권장
+   ...
+(초안별 .md 첨부 — 걸린 항목 전체, 대본, 블로그 전문, 사실별 원문 인용·출처)
 ```
 
 사람 → 답장 규칙 (자연어 허용, 아래는 권장 형식):
@@ -234,7 +247,7 @@ Hermes → 텔레그램 메시지 예시:
 
 > 근거: 의료법 제56조(비의료인 의료광고 금지), 제27조 제3항(환자 알선 금지), 표시광고법 제3조(부당 표시·광고, 추천·보증 심사지침), 저작권법, AI 기본법 제31조(생성형 AI 결과물 표시). 조문 원문은 `legal/digest.md`.
 > 본 체크리스트는 법률 자문이 아니며, 2단계 이상 진행 전 의료법 전문 변호사 자문 필요.
-> `compliance_check.md` 프롬프트로 1차 자동 점검 후, 사람이 최종 확인한다.
+> 작성 프롬프트(`write_draft.md`)와 검수 프롬프트에 이 체크리스트(`_rules.md`)가 들어가고, 02b 자동 검수(규칙 코드 + Gemini 교차 검수) 후 사람이 최종 확인한다.
 
 ### 절대 금지
 - [ ] 병원명·의사명·병원 연락처·예약 링크 없음
@@ -316,8 +329,8 @@ Hermes → 텔레그램 메시지 예시:
 
 ## 11. Claude Code 작업 규칙 (CLAUDE.md에 포함)
 
-- 이 프로젝트는 **개발만** Claude Code로 하고, 운영은 Hermes가 한다. 스크립트는 사람 개입 없이 CLI로 단독 실행 가능해야 한다.
-- 모든 LLM 호출은 `pipeline/llm.py`를 통해서만 한다. 모델명은 `config/models.yaml`에서 읽는다.
+- 개발은 Claude Code 대화 세션으로, 운영은 Hermes가 한다. 운영 중 Claude 는 워커가 부르는 작성 단계(`claude -p`)로만 쓴다. 스크립트는 사람 개입 없이 CLI로 단독 실행 가능해야 한다.
+- 모든 LLM 호출(Claude CLI 포함)은 `pipeline/llm.py`를 통해서만 한다. 모델명은 `config/models.yaml`에서 읽는다.
 - API 키·봇 토큰은 환경변수로만 읽고, 코드·로그·저장소에 남기지 않는다.
 - 파일 상태 이동(drafts → approved → rendered → ready_to_publish → published)은 `03_review.py`와 정해진 스크립트만 수행한다.
 - `06_publish.py`는 `ready_to_publish/` 외의 경로를 처리하지 않는다. 이 제약을 우회하는 코드를 만들지 않는다.
@@ -415,7 +428,7 @@ Hermes → 텔레그램 메시지 예시:
 - 예약 게시 도구 선택 (Buffer / Later / Metricool)
 - ~~블로그 플랫폼~~ → **자체 정적 사이트 (Cloudflare Pages, `pipeline/site.py`)로 결정 (2026-09-28)**: AI 인용 자산 + 스폰서 트랙의 주 무대(틱톡 브랜디드 금지). 승인된 글 자동 게시
 - ~~채널/브랜드명~~ → **Skinbound 확정 (2026-09-28)** — 도메인·핸들·상표 확인 절차: `docs/brand-candidates.md`
-- ~~Gemini 단계별 모델 배분~~ → **결정 (2026-09-28)**: 조사·사실 수집·블로그 = `gemini-3.1-pro-preview`, 트렌드·대본·법규 1차 점검 = `gemini-3.8-flash` (`config/models.yaml`). 2.5 계열은 신규 사용자 404. pro 는 preview 라 종료 시 `gemini-pro-latest` 로 교체 (`python -m pipeline.llm models` 로 확인)
-- 교차 검수 모델 선택 (Claude API / 기타) 및 API 키 발급
+- ~~Gemini 단계별 모델 배분~~ → **결정 (2026-09-28, 2026-10-06 갱신)**: 주제 조사·출처 찾기·교차 검수 = `gemini-3.1-pro-preview`, 트렌드·출처 대조 = `gemini-3.8-flash`, 작성 = Claude Code CLI 기본 모델 (`config/models.yaml`). 2.5 계열은 신규 사용자 404. pro 는 preview 라 종료 시 `gemini-pro-latest` 로 교체 (`python -m pipeline.llm models` 로 확인)
+- ~~교차 검수 모델 선택~~ → Gemini (작성이 Claude 로 바뀌어 검수는 다른 회사 모델인 Gemini, 2026-10-06)
 - B롤·이미지 확보 방식 (스톡 라이선스 / AI 생성) — 7장 저작권 체크와 연동
 - 운영 법인 형태·소재지 (국내 개인사업자/법인 권장 — 해외 법인 검토 결과는 대화 기록 참고)

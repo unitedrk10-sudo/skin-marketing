@@ -111,6 +111,10 @@ def run(review_runner=None) -> tuple[str, list[str]]:
         try:
             _process(req)
             path.unlink()
+        except llm.RateLimited as e:  # 사용량 한도·시간 초과 — 요청을 그대로 두고 다음 실행 때 다시
+            failures.append(f"{req.get('kind')} 요청 보류 (다음 실행 때 재시도): {e}")
+            log.warning("요청 보류: %s — %s", path.name, e)
+            break  # 같은 한도에 걸릴 나머지 요청도 다음 실행으로
         except Exception as e:  # noqa: BLE001 — 한 요청 실패가 나머지를 막지 않게
             failures.append(f"{req.get('kind')} 요청 실패: {e}")
             log.exception("요청 실패: %s", path.name)

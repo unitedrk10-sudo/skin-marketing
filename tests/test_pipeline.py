@@ -3,10 +3,12 @@
 import importlib
 import json
 import re
+import subprocess
+from pathlib import Path
 
 import pytest
 
-from pipeline import common, llm
+from pipeline import common, llm, web
 
 topics_mod = importlib.import_module("pipeline.01_topics")
 draft_mod = importlib.import_module("pipeline.02_draft")
@@ -22,8 +24,9 @@ TOPICS = {"topics": [
     {"title": "Skin booster price range", "axis": "price_guide", "angle": "Korea vs US", "why_now": "search",
      "keywords": ["price"], "hook": "Why so different?", "has_price": True, "sources": []},
 ]}
+QUOTE = "Polynucleotide injections fact"  # ok_fetch 페이지에 들어 있는 문구
 FACTS = {"facts": [
-    {"id": "F1", "text": f"Polynucleotide injections fact {i}", "url": URL, "source_title": "PubMed", "kind": "mechanism"}
+    {"id": f"F{i + 1}", "text": f"Polynucleotide injections fact {i}", "url": URL, "source_title": "PubMed", "kind": "mechanism"}
     for i in range(6)
 ] + [{"id": "F9", "text": "no url fact", "url": "", "source_title": ""}]}
 
@@ -40,45 +43,58 @@ def blog(markdown=None):
 
 
 class FakeLLM:
+    """responses["research"] 의 사실(url 별)로 출처 후보를 만들고, 작성 단계는 그 사실 + shortform + blog 를 돌려준다.
+    작성 결과를 통째로 바꾸려면 responses["write"] 를 넣는다."""
+
     def __init__(self):
         self.responses = {
             "topics": TOPICS, "research": FACTS, "shortform": script(), "blog": blog(),
-            "compliance": {"issues": [], "summary": "ok"},
             "source_check": {"results": [{"id": "F1", "verdict": "supported", "evidence": "..."}]},
             "cross_review": {"findings": [], "overall": "fine"},
         }
         self.calls = []
 
+    def response(self, stage):
+        facts = self.responses["research"]["facts"]
+        if stage == "sources" and "sources" not in self.responses:
+            return {"sources": [{"url": f["url"], "title": f.get("source_title", "")} for f in facts if f.get("url")]}
+        if stage in ("write", "write_search"):
+            return self.responses.get("write") or {
+                "facts": [{**f, "quote": QUOTE} for f in facts],
+                "shortform": self.responses["shortform"], "blog": self.responses["blog"]}
+        return self.responses[stage]
+
     def __call__(self, stage, cfg, system, prompt):
         self.calls.append((stage, prompt))
-        return llm.LLMResult(text=json.dumps(self.responses[stage]), model=f"fake-{cfg['model']}", stage=stage)
+        data = json.loads(json.dumps(self.response(stage)))  # 호출마다 새 사본 (작성 결과를 코드가 고친다)
+        return llm.LLMResult(text=json.dumps(data), model=f"fake-{cfg.get('model', cfg['provider'])}", stage=stage)
 
 
 _real_stage_config = llm.stage_config
 
 
-def _api_mode_stage_config(stage):
-    """검수 단계를 Anthropic API 모드로 시험 (설정 기본값은 claude_code 외부 검수)."""
-    cfg = _real_stage_config(stage)
-    if cfg["provider"] == llm.EXTERNAL:
-        cfg = {"provider": "anthropic", "model": "claude-test"}
-    return cfg
+def _external_stage_config(stage):
+    """검수 단계를 Claude Code 외부 검수(02c, 선택 기능)로 시험 — 기본 설정은 Gemini API 검수."""
+    if stage in ("source_check", "cross_review"):
+        return {"provider": llm.EXTERNAL}
+    return _real_stage_config(stage)
+
+
+def ok_fetch(url):
+    return 200, "Polynucleotide injections fact " * 20
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_CONTENT_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("SKIN_LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setattr(llm, "stage_config", _api_mode_stage_config)
     monkeypatch.setenv("SKIN_SPONSORS_FILE", str(tmp_path / "sponsors.yaml"))  # 기본: 스폰서 없음
     fake = FakeLLM()
     llm.set_backend(fake)
+    web.set_fetcher(ok_fetch)  # 출처 페이지 수집도 네트워크 없이
     yield fake
     llm.set_backend(None)
-
-
-def ok_fetch(url):
-    return 200, "Polynucleotide injections fact " * 20
+    web.set_fetcher(None)
 
 
 def make_draft(env, **overrides):
@@ -89,8 +105,7 @@ def make_draft(env, **overrides):
 
 # ---- 프롬프트 ----
 
-@pytest.mark.parametrize("name", ["topic_research", "fact_research", "shortform_script", "blog_post",
-                                  "compliance_check", "cross_review"])
+@pytest.mark.parametrize("name", ["topic_research", "source_search", "write_draft", "cross_review"])
 def test_generation_prompts_include_rules(name):
     text = common.read_prompt(name)
     assert "{{rules}}" in text
@@ -109,16 +124,22 @@ def test_parse_json_handles_fences_and_prose():
 
 
 def test_llm_stage_models_come_from_config():
-    assert llm.stage_config("research")["provider"] == "gemini"
-    assert llm.is_external("cross_review") and llm.is_external("source_check")
+    assert llm.stage_config("sources")["provider"] == "gemini" and llm.stage_config("sources")["search"]
+    assert llm.stage_config("write")["provider"] == llm.CLAUDE_CLI and llm.stage_config("write")["tools"] == []
+    assert set(llm.stage_config("write_search")["tools"]) == {"WebSearch", "WebFetch"}
+    assert not llm.is_external("cross_review") and not llm.is_external("source_check")
 
 
-def test_generation_and_review_use_different_vendors():
-    assert llm.stage_config("cross_review")["provider"] != llm.stage_config("blog")["provider"]
-    assert llm.stage_config("source_check")["provider"] != llm.stage_config("research")["provider"]
+def test_writing_and_review_use_different_vendors():
+    """기획서 6-0: 같은 회사 모델이 쓰고 검수하지 않는다 (작성 Claude ↔ 검수 Gemini)."""
+    vendor = {"claude_cli": "anthropic", "claude_code": "anthropic", "anthropic": "anthropic", "gemini": "google"}
+    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search")}
+    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review")}
+    assert writers.isdisjoint(reviewers)
 
 
-def test_external_stage_is_never_called_as_api():
+def test_external_stage_is_never_called_as_api(monkeypatch):
+    monkeypatch.setattr(llm, "stage_config", _external_stage_config)
     with pytest.raises(llm.LLMError):
         llm.generate("cross_review", "x")
 
@@ -137,12 +158,15 @@ def test_draft_created_with_sourced_facts_only(env):
     path = common.content_dir("drafts") / draft_id
     draft = common.load_draft(path)
     assert draft_id == "2026-W40-01-what-is-rejuran"
-    assert all(f["url"].startswith("http") for f in draft["facts"])  # 출처 없는 사실 제외
+    assert [f["id"] for f in draft["facts"]] == ["F1", "F2", "F3", "F4", "F5", "F6"]  # 출처 없는 F9 제외
+    assert all(f["url"] == URL and f["quote"] == QUOTE for f in draft["facts"])
+    assert draft["sources"] == [{"id": "S1", "url": URL, "title": "PubMed"}] and draft["writer"]
     assert (path / "script.md").exists() and (path / "blog.md").exists()
-    assert [c[0] for c in env.calls] == ["research", "shortform", "blog", "compliance"]
-    # 대본·블로그 프롬프트에는 사실 목록과 규칙이 들어간다
-    shortform_prompt = env.calls[1][1]
-    assert URL in shortform_prompt and "NON-NEGOTIABLE CONTENT RULES" in shortform_prompt
+    # 출처가 MIN_SOURCES 보다 적으면 작성 모델이 추가 검색까지 하는 단계로
+    assert [c[0] for c in env.calls] == ["sources", "write_search"]
+    # 작성 프롬프트에는 받아 둔 페이지 본문과 규칙이 들어간다
+    write_prompt = env.calls[1][1]
+    assert URL in write_prompt and QUOTE in write_prompt and "NON-NEGOTIABLE CONTENT RULES" in write_prompt
 
 
 def test_revise_keeps_identity_and_records_note(env):
@@ -150,7 +174,7 @@ def test_revise_keeps_identity_and_records_note(env):
     draft_mod.revise(draft_id, "가격 출처 다시")
     draft = common.load_draft(common.content_dir("drafts") / draft_id)
     assert draft["id"] == draft_id and draft["revisions"][0]["note"] == "가격 출처 다시"
-    assert "가격 출처 다시" in env.calls[-4][1]  # research 프롬프트에 수정 요청 반영
+    assert all("가격 출처 다시" in p for _, p in env.calls[-2:])  # 출처 찾기·작성 프롬프트에 수정 요청 반영
 
 
 def test_parse_pick():
@@ -159,24 +183,80 @@ def test_parse_pick():
         draft_mod.parse_pick("7", 5)
 
 
-def test_grounding_redirects_saved_as_real_source_urls(env, monkeypatch):
+def write_result(facts, **kw):
+    return {"facts": facts, "shortform": kw.get("shortform", script()), "blog": kw.get("blog", blog())}
+
+
+def test_grounding_redirects_fetched_at_real_source_urls(env):
     redirect = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
-    facts = [{"id": f"F{i}", "text": f"fact {i}", "url": f"{redirect}{i}", "source_title": "t"} for i in range(6)]
     resolved = {f"{redirect}{i}": f"https://pmc.ncbi.nlm.nih.gov/articles/PMC{i}/" for i in range(5)}  # 5번은 해석 실패
-    draft_mod.set_resolver(resolved.get)
+    env.responses["sources"] = {"sources": [{"url": f"{redirect}{i}", "title": f"t{i}"} for i in range(6)]}
+    env.responses["write"] = write_result([{"id": f"F{i + 1}", "source": f"S{i + 1}", "quote": QUOTE, "text": f"fact {i}"}
+                                           for i in range(5)])
+    web.set_resolver(resolved.get)
     try:
-        draft_id = make_draft(env, research={"facts": facts})
+        draft = common.load_draft(common.content_dir("drafts") / make_draft(env))
     finally:
-        draft_mod.set_resolver(None)
-    urls = [f["url"] for f in common.load_draft(common.content_dir("drafts") / draft_id)["facts"]]
-    assert urls == list(resolved.values())  # 만료되는 리디렉션 주소는 저장하지 않는다
+        web.set_resolver(None)
+    assert [s["url"] for s in draft["sources"]] == list(resolved.values())  # 만료되는 리디렉션 주소는 쓰지 않는다
+    assert [f["url"] for f in draft["facts"]] == list(resolved.values())
+    assert env.calls[-1][0] == "write"  # 출처가 충분하면 추가 검색 없이 작성
+
+
+def test_sources_drop_clinic_sites_and_dead_pages(env):
+    pages = {"https://www.aad.org/a": (200, QUOTE * 30), "https://gangnam-derma-clinic.com/rejuran": (200, QUOTE * 30),
+             "https://news.example/gone": (404, ""), "https://js-only.example/": (200, "Loading..."),
+             "https://www.mayoclinic.org/b": (200, QUOTE * 30)}
+    web.set_fetcher(lambda url: pages.get(url, (0, "")))
+    sources = draft_mod.fetch_sources([{"url": u, "title": ""} for u in pages] + [{"url": "https://www.aad.org/a", "title": "dup"}])
+    assert [s["url"] for s in sources] == ["https://www.aad.org/a", "https://www.mayoclinic.org/b"]
+    assert [s["id"] for s in sources] == ["S1", "S2"]
+
+
+def test_facts_kept_only_when_quote_is_on_the_page(env):
+    sources = [{"id": "S1", "url": URL, "title": "PubMed", "text": "Downtime is usually 1-3 days with mild swelling. " * 3}]
+    facts = draft_mod.verify_facts([
+        {"id": "F1", "source": "S1", "quote": "Downtime is usually 1-3 days with mild swelling", "text": "ok"},
+        {"id": "F2", "source": "S1", "quote": "Downtime is usually 5-7 days", "text": "number changed"},  # 페이지에 없음
+        {"id": "F3", "source": "S9", "quote": "Downtime is usually 1-3 days", "text": "unknown source"},
+        {"id": "F1", "source": "S1", "quote": "Downtime is usually 1-3 days with mild swelling", "text": "duplicate id"},
+        {"id": "F4", "source": "S1", "quote": "1-3 days", "text": "quote too short"},
+    ], sources)
+    assert [(f["id"], f["text"]) for f in facts] == [("F1", "ok")]
+    assert facts[0]["url"] == URL and facts[0]["source_title"] == "PubMed"
+
+
+def test_quote_matching_ignores_typography():
+    page = "Patients may experience “mild” swelling —\nusually for 1–3 days."
+    assert web.quote_in_page('Patients may experience "mild" swelling - usually for 1-3 days', page)
+    assert not web.quote_in_page("Patients may experience severe swelling", page)
+
+
+def test_writer_found_page_is_fetched_and_checked(env):
+    extra = "https://www.fda.gov/rejuran-note"
+    pages = {extra: (200, "The agency notes injections can cause bruising at the site. " * 12),
+             "https://some-clinic-seoul.com/x": (200, "Injections can cause bruising at the site. " * 12)}
+    web.set_fetcher(lambda url: pages.get(url, (0, "")))
+    sources = []
+    facts = draft_mod.verify_facts([
+        {"id": "F1", "url": extra, "quote": "injections can cause bruising at the site", "text": "bruising"},
+        {"id": "F2", "url": "https://some-clinic-seoul.com/x", "quote": "Injections can cause bruising at the site", "text": "clinic"},
+    ], sources)
+    assert [f["id"] for f in facts] == ["F1"] and [s["url"] for s in sources] == [extra]  # 병원 사이트는 받지 않는다
+
+
+def test_too_few_verified_facts_fails_the_draft(env):
+    env.responses["write"] = write_result([{"id": "F1", "source": "S1", "quote": "not on the page at all, made up", "text": "x"}])
+    with pytest.raises(llm.LLMError, match="사실이 부족"):
+        make_draft(env)
 
 
 def test_script_fact_ids_normalized(env):
     nested = script()
     nested["lines"] = [{**nested["lines"][0], "fact_ids": [["F1", "F2"]]},
                        {**nested["lines"][0], "fact_ids": "F3, F4"}, {**nested["lines"][0], "fact_ids": None}]
-    draft = common.load_draft(common.content_dir("drafts") / make_draft(env, shortform=nested))
+    env.responses["shortform"] = nested
+    draft = common.load_draft(common.content_dir("drafts") / make_draft(env))
     assert [ln["fact_ids"] for ln in draft["shortform"]["lines"]] == [["F1", "F2"], ["F3", "F4"], []]
 
 
@@ -367,6 +447,20 @@ def test_approve_all_holds_caution_without_confirm(env):
     assert (common.content_dir("approved") / second).exists()
 
 
+def test_review_message_readable_on_phone(env):
+    first, second = _two_reviewed_drafts(env)
+    msg = human_mod.list_message("drafts")
+    assert "🎬 대본:" in msg and "· Rejuran uses polynucleotides." in msg  # 대본 전문
+    assert "📝 블로그: Rejuran explained — What it is" in msg
+    assert "⚠️ [?/minor] x" in msg  # 걸린 항목을 메시지에서 바로
+    assert "script.md" not in msg  # PC 경로 대신 첨부
+    media = re.findall(r"^MEDIA:`(.+)`$", msg, re.M)
+    assert len(media) == 2 and all(Path(m).exists() for m in media)
+    doc = Path(media[1]).read_text(encoding="utf-8")
+    assert doc.startswith(f"# {second}") and "## 검수에서 걸린 항목" in doc and "## 블로그" in doc
+    assert f"> {QUOTE}" in doc and URL in doc  # 사실별 원문 인용·출처
+
+
 def test_invalid_reply_moves_nothing(env):
     first, _ = _two_reviewed_drafts(env)
     human_mod.list_message("drafts")
@@ -420,7 +514,7 @@ external_mod = importlib.import_module("pipeline.02c_external_review")
 
 @pytest.fixture
 def external(env, monkeypatch, tmp_path):
-    monkeypatch.setattr(llm, "stage_config", _real_stage_config)  # 검수 단계 = claude_code
+    monkeypatch.setattr(llm, "stage_config", _external_stage_config)  # 검수 단계 = claude_code
     monkeypatch.setattr(external_mod, "queue_dir", lambda kind: tmp_path / "review-queue" / kind)
     return env
 
@@ -583,6 +677,50 @@ def test_worker_failed_request_is_quarantined(worker_env):
     assert not list(worker_mod.requests_dir().glob("*.json"))
 
 
+def test_worker_keeps_request_when_writer_is_rate_limited(worker_env):
+    worker_mod.request_drafts("1")
+    real = worker_env.__class__.__call__
+
+    def limited(self, stage, cfg, system, prompt):
+        if stage.startswith("write"):
+            raise llm.RateLimited("Claude 사용량 한도: usage limit reached")
+        return real(self, stage, cfg, system, prompt)
+
+    llm.set_backend(limited.__get__(worker_env))
+    message, failures = worker_mod.run(review_runner=fake_claude())
+    assert any("보류" in f for f in failures)
+    assert len(list(worker_mod.requests_dir().glob("*.json"))) == 1  # 버리지 않고 다음 실행 때 재시도
+    assert not (worker_mod.requests_dir() / "failed").exists()
+    llm.set_backend(worker_env)
+    message, failures = worker_mod.run(review_runner=fake_claude())
+    assert not failures and not list(worker_mod.requests_dir().glob("*.json"))
+
+
+@pytest.mark.parametrize("stdout,code,expect", [
+    (json.dumps({"is_error": False, "result": '{"ok": true}', "modelUsage": {"claude-sonnet-5": {}}}), 0, "ok"),
+    (json.dumps({"is_error": True, "result": "Claude AI usage limit reached|1759712400"}), 1, llm.RateLimited),
+    (json.dumps({"is_error": True, "result": "Invalid model name"}), 1, llm.LLMError),
+    ("not json", 1, llm.LLMError),
+])
+def test_claude_cli_provider(monkeypatch, stdout, code, expect):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(cmd=cmd, **kw)
+        return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    cfg = {"provider": "claude_cli", "tools": ["WebSearch", "WebFetch"]}
+    if expect == "ok":
+        r = llm._claude_cli("write", cfg, None, "PROMPT")
+        assert r.text == '{"ok": true}' and r.model == "claude-sonnet-5"
+        assert seen["input"] == "PROMPT" and "WebSearch,WebFetch" in seen["cmd"]
+        assert "skin-claude-" in seen["cwd"]  # 저장소 밖에서 실행 (CLAUDE.md 를 읽지 않게)
+    else:
+        with pytest.raises(expect):
+            llm._claude_cli("write", cfg, None, "PROMPT")
+
+
 def test_worker_lock_is_exclusive(tmp_path):
     path = tmp_path / ".lock"
     with path.open("w") as first:
@@ -710,7 +848,7 @@ def test_sponsor_ok_on_neutral_draft_is_noop(env):
 
 
 def test_worker_processes_sponsored_request(sponsored, monkeypatch, tmp_path):
-    monkeypatch.setattr(llm, "stage_config", _real_stage_config)
+    monkeypatch.setattr(llm, "stage_config", _external_stage_config)
     monkeypatch.setattr(external_mod, "queue_dir", lambda kind: tmp_path / "review-queue" / kind)
     monkeypatch.setattr(review_mod.review_with_regeneration, "__defaults__", (ok_fetch,))
     assert "요청 접수" in worker_mod.request_sponsored("glow", "Rejuran at Glow Skin Clinic", "what to expect")
@@ -1113,9 +1251,9 @@ def test_travel_context_only_for_travel_axes(env):
     assert attractions_mod.context({"title": "Rejuran", "axis": "procedure"}) == ""
     draft_mod.create("2026-W40", 1, {**TOPICS["topics"][0], **topic})
     prompts = {stage: p for stage, p in env.calls}
-    for stage in ("research", "shortform", "blog"):
+    for stage in ("sources", "write_search"):
         assert "TRAVEL PLANNING DATA" in prompts[stage], stage
-    assert "Place guides and routes" in prompts["blog"]
+    assert "Place guides and routes" in prompts["write_search"]
 
 
 def test_procedure_travel_itinerary_needs_observation_day():
@@ -1231,7 +1369,7 @@ def test_food_trends_feed_places_prompts_and_topics(env):
 def test_sponsored_course_post_uses_clinic_zone(sponsored, tmp_path):
     write_sponsors(tmp_path, {**SPONSOR, "zone": "gangnam", "area": "Sinsa, Gangnam-gu"})
     draft_id = draft_mod.create_sponsored("glow", "3 days in Seoul around Glow Skin Clinic", "a route", course=True)
-    blog_prompt = [p for stage, p in sponsored.calls if stage == "blog"][-1]
+    blog_prompt = [p for stage, p in sponsored.calls if stage.startswith("write")][-1]
     assert "TRAVEL PLANNING DATA" in blog_prompt and "visitors treated at Glow Skin Clinic in Sinsa, Gangnam-gu" in blog_prompt
     assert "no perks, pickups, discounts" in blog_prompt
     first = [ln for ln in blog_prompt.split("\n") if ln.startswith("- ")]

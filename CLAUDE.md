@@ -3,8 +3,9 @@
 기획서: `docs/derm-content-automation.md` (전체 설계·법규 체크리스트의 기준 문서)
 
 ## 작업 규칙
-- 이 프로젝트는 **개발만** Claude Code로 하고, 운영은 Hermes가 한다. 스크립트는 사람 개입 없이 CLI로 단독 실행 가능해야 한다.
-- 모든 LLM 호출은 `pipeline/llm.py`를 통해서만 한다. 모델명은 `config/models.yaml`에서 읽는다.
+- 개발은 Claude Code 대화 세션으로, 운영은 Hermes가 한다. 운영 중 Claude 는 워커가 부르는 초안 작성 단계(`claude -p`, `llm.py` provider `claude_cli`)로만 쓴다. 스크립트는 사람 개입 없이 CLI로 단독 실행 가능해야 한다.
+- 모든 LLM 호출(Claude CLI 포함)은 `pipeline/llm.py`를 통해서만 한다. 모델명은 `config/models.yaml`에서 읽는다.
+- 역할 분담 (2026-10-06): **Gemini = 찾기(주제·트렌드·출처 페이지)·검수, Claude = 읽고 쓰기**. 같은 회사 모델이 쓰고 검수하지 않는다 (테스트로 강제).
 - API 키·봇 토큰(`GEMINI_API_KEY`, `LAW_API_OC` 등)은 환경변수로만 읽고, 코드·로그·저장소에 남기지 않는다.
 - 파일 상태 이동(drafts → approved → rendered → ready_to_publish → published)은 `03_review.py`와 정해진 스크립트만 수행한다.
 - `06_publish.py`는 `ready_to_publish/` 외의 경로를 처리하지 않는다. 이 제약을 우회하는 코드를 만들지 않는다.
@@ -20,9 +21,9 @@
 - 주간 주제: `python -m pipeline.01_topics` / 초기 주제 목록에서: `--from-seed 6` (`config/seed_topics.yaml`, 소진 시 Gemini 로 자동 전환). 추천 순서 = 수요 점수 (`python -m pipeline.demand`: `config/procedures.yaml`·`config/attractions.yaml` 관심도 사전값 + 글별 조회수·링크 클릭, 같은 시술·관광지 주 2개까지)
 - 관광지 소개·코스(축 `travel_guide`): `config/attractions.yaml` 속성으로 코스 규칙을 프롬프트에 넣는다 (`pipeline/attractions.py`, 관찰일 가능 목록 `python -m pipeline.attractions`)
 - 관광지 트렌드: `python -m pipeline.trends scan|show` — 주 1회 Gemini 검색 스캔(01_topics 가 자동 실행, `content/trends/`), 관광지 점수에 트렌드(+최대 0.4)·계절(`season`, 이번·다음 달 +0.15) 가산, 목록에 없는 신규 장소는 travel_guide 주제 후보로. 맛집·카페 트렌드(food)도 같이 스캔 → 근처 관광지 점수(×0.75)·여행 글 프롬프트(출처 포함)·주제 후보. 출처 없는 트렌드는 버리고 21일 지난 스캔은 무시. 식당·카페 이름은 독립 출처가 있는 무상 편집 예시로만 (`_rules.md`)
-- 초안 생성: `python -m pipeline.02_draft --week 2026-W40 --pick 1,3` / 수정: `--revise <draft_id> --note "..."`
-- 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate`
-- Claude Code 검수 한 사이클: `python -m pipeline.02c_external_review review` (export → claude -p → import)
+- 초안 생성: `python -m pipeline.02_draft --week 2026-W40 --pick 1,3` / 수정: `--revise <draft_id> --note "..."` — Gemini 출처 찾기(`sources`) → 페이지 확보·필터(`pipeline/web.py`) → Claude 작성(`write`, 페이지 5개 미만이면 `write_search`) → 원문 인용 대조
+- 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate` (출처 대조·교차 검수 = Gemini)
+- (선택, 현재 미사용) Claude Code 외부 검수 한 사이클: `python -m pipeline.02c_external_review review` — 검수 단계를 `claude_code` 로 바꿨을 때만
 - 워커(Hermes 크론): `python -m pipeline.worker run` / 주제 선택 요청: `python -m pipeline.worker request-drafts --pick 1,3`
 - 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` (병원 권역 중심 여행 코스 글: `--course`, sponsors.yaml `zone` 필요) / 목록 점검 `python -m pipeline.sponsors check`
@@ -33,8 +34,11 @@
 - Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 
 ## 구조 메모
-- 초안 = `content/<상태>/<draft_id>/` 폴더 (`draft.json`, `script.md`, `blog.md`, `review.json`, `history.json`). `content/` 는 운영 데이터라 git 에 올리지 않는다.
-- 대본·블로그는 02_draft 의 사실 목록(`facts`, 사실마다 출처 URL)만 사용하고 `[F#]` / `fact_ids` 로 참조한다. 02b 는 이 참조를 기준으로 출처를 검증한다.
+- 초안 = `content/<상태>/<draft_id>/` 폴더 (`draft.json`, `script.md`, `blog.md`, `review.json`, `history.json`, 텔레그램 첨부용 `<draft_id>.md`). `content/` 는 운영 데이터라 git 에 올리지 않는다.
+- 대본·블로그는 02_draft 의 사실 목록(`facts`, 사실마다 출처 URL + 페이지 원문 인용 `quote`)만 사용하고 `[F#]` / `fact_ids` 로 참조한다. 인용문이 받아 둔 페이지에 없는 사실은 작성 직후 코드가 버린다(`web.quote_in_page`). 02b 는 이 참조를 기준으로 출처를 다시 검증한다.
+- 출처 페이지: 병원 사이트로 보이는 도메인(`web.is_clinic_host`)은 수집 단계에서 빼고(스폰서 글의 광고주 공식 사이트만 예외), 그래도 들어오면 02b 가 ⚠️. Gemini 검색 연동의 리디렉션 주소는 실제 주소로 바꿔 저장(`web.source_url`).
+- Claude CLI(`llm._claude_cli`): 프롬프트는 stdin, 저장소 밖 임시 폴더에서 `--tools ""`(추가 검색 단계만 WebSearch·WebFetch)·`--strict-mcp-config`·`--no-session-persistence` 로 실행. 사용량 한도·시간 초과는 `llm.RateLimited` → 워커가 요청을 버리지 않고 다음 실행 때 재시도.
+- 텔레그램 검수 메시지(`03_review.list_message`): 초안별 대본 전문·블로그 구성·걸린 항목 + `MEDIA:` 첨부(`review_doc` 가 만든 `<draft_id>.md`). PC 경로는 보내지 않는다.
 - 금지 표현은 `config/banned_terms.txt`, 병원명·연락처·체험담 등 패턴은 `02b_auto_review.py` 의 `RULE_PATTERNS`. 화장품 글(`content_type: skincare`)은 `COSMETIC_PATTERNS`(화장품법 §13 의약품 오인 표현)도 검사.
 - 스폰서 글 끝에는 병원 공식 사이트 링크가 코드로 항상 붙는다(`sponsors.official_link_line`) → 블로그 빌드 시 추적 링크로 치환.
 - 스폰서 트랙(기획서 12-1-1): 광고주 병원 = 광고 주체, 우리는 매체+제작 대행, 정액만. `config/sponsors.yaml`(git 제외). 스폰서 글은 `_sponsored_rules.md` 로 생성하고 광고 표시를 코드로 넣는다(`02_draft.add_disclosures`). 02b 는 광고 표시·계약·심의번호를 ⛔ 로 검사하고, 중립 글에 스폰서 병원이 나오면 ⛔. 03_review 는 현재 내용 기준 `병원확인` 없이는 승인하지 않는다 (--confirm 으로도 불가). 이 분리를 약화하는 변경은 하지 않는다.
@@ -48,8 +52,8 @@
 - 링크 유입 추적기(`tracker/`, Cloudflare Worker + D1): 추적 링크 클릭 → 기록 → UTM 붙여 병원 사이트로 302. IP 원문 미저장. 스폰서 링크 대상은 공식 사이트(하위 도메인 포함)만. 유입 수치는 보고 자료일 뿐 요금은 정액.
 - 테스트는 `llm.set_backend()` 로 가짜 LLM 을 쓰고 `SKIN_CONTENT_DIR`/`SKIN_LOG_DIR` 로 임시 폴더를 쓴다.
 
-## 검수 요청 처리 (Claude Code 가 운영 검수를 맡는 유일한 작업)
-검수 단계(`source_check`, `cross_review`)는 `provider: claude_code` — Anthropic API 대신 Claude Code 가 한다.
+## 검수 요청 처리 (선택 기능 — 현재 미사용)
+현재 검수는 Gemini 가 한다(작성이 Claude 라서). 아래는 검수 단계(`source_check`, `cross_review`)를 `provider: claude_code` 로 바꿨을 때의 절차다.
 Hermes 의 `skin-worker` 크론(`pipeline/worker.py` → `02c_external_review.review_cycle`)이 같은 머신에서 `claude -p` 를 실행해 요청한다 (git 으로 주고받지 않음).
 요청을 받으면:
 1. 지정된 `review-queue/pending/<packet_id>.json` 을 읽는다. 파일 안 `instructions` 가 기준이다 (기획서 7장 규칙 + 출력 형식).
