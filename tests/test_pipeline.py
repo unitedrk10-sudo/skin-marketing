@@ -320,6 +320,9 @@ def test_clean_draft_has_no_rule_findings():
     ("Written by a board-certified dermatologist.", "자격"),
     ("Message us at pf.kakao.com/_abc for a quote.", "예약"),
     ("See before and after photos.", "금지 표현"),
+    ("Real patients' results, before and after.", "금지 표현"),
+    ("The result is guaranteed, not a guess.", "금지 표현"),  # 부정어가 뒤에 있으면 그대로 차단
+    ("No other way: it is the best option.", "금지 표현"),     # 최상급은 부정문 예외 없음
     ("Visit Seoul Glow Dermatology today.", "병원명"),
 ])
 def test_rule_violations_block(voice, expected):
@@ -334,6 +337,9 @@ def test_rule_violations_block(voice, expected):
     "How To Choose A Clinic in Seoul",
     "Most Korean Dermatology Clinic visits take an hour.",
     "How should I protect my skin if I go outside for a walk?",  # FAQ 독자 질문
+    "Keep strict sun protection for four weeks before and after treatment.",  # 시기 표현 (전후 사진 아님)
+    "Results can't be guaranteed, and lasers aren't risk-free.",  # 부정문 단서 표현
+    "The fall foliage is at its best in late October.",  # 관용 표현
 ])
 def test_allowed_phrases_pass(voice):
     msgs, _ = rules_for(script={"voice": voice})

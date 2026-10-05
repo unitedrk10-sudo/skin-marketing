@@ -34,6 +34,13 @@ The pages below were fetched for you. Use ONLY what these pages actually say{{se
 
 {{rules}}
 
+## Before you answer, check (reviewers flag these most often)
+- Opening hours, fees, prices, closures and entry rules carry "as of <month year>" (use the date the page states, or today's month: {{month}}).
+- If the post gives any treatment-timing or itinerary advice, it includes the full observation-day guidance from the rules: same city, no flight or long-distance travel, no sauna, alcohol, intense exercise or strong sun, and ask the treating clinic whether a follow-up check is needed — framed as planning advice to confirm with the clinic.
+- Both the script and the blog say that results and side effects vary and that readers should consult a licensed doctor.
+- Do not copy superlatives or rankings from a source ("most scenic", "best", "top") — describe the place or fact neutrally.
+- Every [F#] you cite exists in your fact list, and every fact's quote is copied exactly from its page.
+
 ## SOURCE PAGES
 {{sources}}
 

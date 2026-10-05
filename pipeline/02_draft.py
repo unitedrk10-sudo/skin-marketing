@@ -131,6 +131,7 @@ def write_draft(topic: dict, sources: list[dict], note: str | None, rules: str |
         revision_note=_revision(note),
         travel_context=travel,
         duration=f"{lo}-{hi}",
+        month=date.today().strftime("%B %Y"),
         min_words=str(words_lo),
         max_words=str(words_hi),
         sources=sources_text(sources) or "(no usable pages were found)",
