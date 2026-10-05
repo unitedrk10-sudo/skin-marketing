@@ -18,6 +18,7 @@ import re
 from urllib.parse import urlparse
 from collections import defaultdict
 from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path
 
 from pipeline import llm, sponsors, web
@@ -96,6 +97,8 @@ COSMETIC_PATTERNS = re.compile(
     r"|치료|재생시켜|의약품\s?수준", re.I)
 
 NEGATION = re.compile(r"\b(?:not|never|no|can't|cannot|can not|don't|doesn't|isn't|aren't|won't)\b[^.]*$", re.I)
+# 효과 보장 금지어 중 부정문이면 허용하는 것 (비교·최상급·전후 사진은 부정문이어도 차단)
+NEGATABLE = re.compile(r"guarantee|risk[- ]?free|painless|permanent|cure|miracle|100%", re.I)
 
 PRICE = re.compile(r"[$₩฿]|\b(?:USD|KRW|SGD|THB|CAD|won|dollars?)\b|\bprice|\bcost", re.I)
 
@@ -160,7 +163,10 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
     for where, text in texts.items():
         for term, pat in banned:
             for m in pat.finditer(text):
-                findings.append(Finding("rules", "block", f"[{where}] 금지 표현: {term}", _snippet(text, m)))
+                if NEGATABLE.search(term) and NEGATION.search(text[max(0, m.start() - 30):m.start()]):
+                    continue  # "can't be guaranteed", "aren't risk-free" 는 오히려 바람직한 단서 표현
+                # 정규식 대신 실제로 걸린 문구를 보여준다 (텔레그램에서 읽기 쉽게)
+                findings.append(Finding("rules", "block", f"[{where}] 금지 표현: {m.group(0)}", _snippet(text, m)))
         for kind, label, pat in RULE_PATTERNS:
             for m in pat.finditer(text):
                 if kind == "clinic_name" and (INSTITUTION.search(_snippet(text, m)) or _generic(m.group(0))):
@@ -308,7 +314,7 @@ def check_sources(draft: dict, fetch=fetch_page) -> tuple[list[Finding], list[di
 def check_cross(draft: dict) -> tuple[list[Finding], dict]:
     if llm.is_external("cross_review"):
         return [Finding("cross", "pending", "Claude Code 교차 검수 대기")], {"pending": True}
-    text = prompt("cross_review", facts=facts_text(draft.get("facts", [])),
+    text = prompt("cross_review", today=date.today().isoformat(), facts=facts_text(draft.get("facts", [])),
                   script=script_text(draft), blog=blog_text(draft))
     data, result = llm.generate_json("cross_review", text)
     findings = [
