@@ -23,7 +23,8 @@ REDIRECT_HOSTS = {"vertexaisearch.cloud.google.com"}
 
 # 도메인으로 추정하므로 검수에서는 ⚠️ 주의 (사람이 판단), 출처 수집에서는 제외
 CLINIC_HOST = re.compile(r"clinic|derma|hospital|plastic|surgery|aesthetic|medispa", re.I)
-MEDICAL_REFERENCE_HOSTS = ("mayoclinic.org", "clevelandclinic.org")  # 병원명이 들어간 공신력 있는 의학 정보원
+# 도메인에 clinic·surgery 등이 들어가도 공신력 있는 의학 정보원·학회
+MEDICAL_REFERENCE_HOSTS = ("mayoclinic.org", "clevelandclinic.org", "plasticsurgery.org", "asds.net", "bad.org.uk")
 
 
 def host(url: str) -> str:
