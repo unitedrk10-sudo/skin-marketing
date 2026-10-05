@@ -103,6 +103,10 @@ NEGATION = re.compile(r"\b(?:not|never|no|can't|cannot|can not|don't|doesn't|isn
 
 PRICE = re.compile(r"[$₩฿]|\b(?:USD|KRW|SGD|THB|CAD|won|dollars?)\b|\bprice|\bcost", re.I)
 
+# 병원 자체 사이트는 출처로 쓰지 않는다 (_rules.md) — 도메인으로 추정하므로 ⚠️ 주의 (사람이 판단)
+CLINIC_HOST = re.compile(r"clinic|derma|hospital|plastic|surgery|aesthetic|medispa", re.I)
+MEDICAL_REFERENCE_HOSTS = ("mayoclinic.org", "clevelandclinic.org")  # 병원명이 들어간 공신력 있는 의학 정보원
+
 
 def load_banned(path: Path | None = None) -> list[tuple[str, re.Pattern]]:
     out = []
@@ -202,12 +206,28 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
         refs |= set(ln.get("fact_ids", []))
     for fid in sorted(refs - known):
         findings.append(Finding("rules", "block", f"존재하지 않는 사실 참조 {fid} (출처 없는 주장)"))
+    findings += check_clinic_sources(draft, refs)
     if not FACT_REF.search(texts["blog"]):
         findings.append(Finding("rules", "block", "[blog] 사실 참조 [F#] 가 하나도 없음"))
     for i, ln in enumerate(sf.get("lines", []), 1):
         if re.search(r"\d", ln.get("voice", "")) and not ln.get("fact_ids"):
             findings.append(Finding("rules", "block", f"[script] {i}번 줄 수치에 출처 없음", ln.get("voice", "")))
     return findings, human
+
+
+def check_clinic_sources(draft: dict, used: set[str]) -> list[Finding]:
+    """사용된 사실의 출처가 병원 사이트로 보이면 주의 (사이트별 1건). 스폰서 글의 광고주 공식 사이트는 제외."""
+    sponsor_host = sponsors.official_host(draft["sponsor"]) if draft.get("sponsor") else None
+    by_host: dict[str, list[str]] = defaultdict(list)
+    for f in draft.get("facts", []):
+        host = (urlparse(f.get("url", "")).hostname or "").removeprefix("www.")
+        if f["id"] not in used or not CLINIC_HOST.search(host) or host == sponsor_host:
+            continue
+        if any(host == h or host.endswith("." + h) for h in MEDICAL_REFERENCE_HOSTS):
+            continue
+        by_host[host].append(f["id"])
+    return [Finding("rules", "caution", f"병원 사이트로 보이는 출처 [{','.join(ids)}] — 논문·정부·학회 출처로 교체 권장", host)
+            for host, ids in by_host.items()]
 
 
 def check_sponsor(draft: dict, texts: dict[str, str], human: set[str]) -> list[Finding]:
@@ -429,10 +449,17 @@ def main(argv: list[str] | None = None) -> int:
         log.info("검수할 초안 없음")
         return 0
 
-    for path in paths:
-        result = review_with_regeneration(path) if args.auto_regenerate else review(path)
+    failed = 0
+    for path in paths:  # 한 건이 실패해도 나머지는 검수한다
+        try:
+            result = review_with_regeneration(path) if args.auto_regenerate else review(path)
+        except Exception as e:  # noqa: BLE001 — 재생성 중 LLM 오류 등
+            log.exception("검수 실패: %s", path.name)
+            print(f"❗ {path.name}: 검수 실패 — {e}")
+            failed += 1
+            continue
         print(summary_line(result, load_draft(path)["shortform"].get("title", "")))
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
