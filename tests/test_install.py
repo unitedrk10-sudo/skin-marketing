@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,41 @@ def test_script_failure_handling(repo, tmp_path, monkeypatch):
     assert (proc.returncode, proc.stdout.strip()) == (0, "next") and "건너뜀 알림" in proc.stderr
     proc = run_script(hard)
     assert proc.returncode == 3 and "never" not in proc.stdout  # 실패 코드가 Hermes 실패 알림으로
+
+
+def fake_hermes(monkeypatch, existing: set[str], reject: set[str] = frozenset()):
+    """hermes cron list/create 흉내. reject 에 든 이름은 생성에 실패하지만 종료 코드는 0 (실제 hermes 동작)."""
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[1:3] == ["cron", "create"] and cmd[cmd.index("--name") + 1] not in reject:
+            existing.add(cmd[cmd.index("--name") + 1])
+        return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(existing))
+
+    monkeypatch.setattr(install.shutil, "which", lambda name: name)
+    monkeypatch.setattr(install.subprocess, "run", run)
+    return calls
+
+
+def test_register_only_selected_jobs(monkeypatch):
+    calls = fake_hermes(monkeypatch, {"skin-worker"})
+    install.register_jobs("telegram", {"skin-worker", "skin-weekly-topics"})
+    created = [c for c in calls if c[1:3] == ["cron", "create"]]
+    assert [c[c.index("--name") + 1] for c in created] == ["skin-weekly-topics"]  # worker 는 이미 있음
+    assert created[0][3] == "0 9 * * 1" and created[0][created[0].index("--script") + 1] == "skin-weekly-topics.py"
+
+
+def test_register_reports_silent_hermes_failures(monkeypatch):
+    fake_hermes(monkeypatch, set(), reject={"skin-weekly-report"})
+    with pytest.raises(SystemExit, match="skin-weekly-report"):
+        install.register_jobs("telegram", {"skin-worker", "skin-weekly-report"})
+
+
+def test_job_schedules_use_formats_hermes_accepts():
+    for name, schedule, _ in install.JOBS:
+        if schedule:
+            assert re.fullmatch(r"(every )?\d+[mhd]|(\S+ ){4}\S+", schedule), (name, schedule)
 
 
 def test_skill_paths_are_quoted(tmp_path):
