@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import argparse
 import re
+import urllib.error
+import urllib.request
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pipeline import attractions, llm, sponsors
 from pipeline.common import (
@@ -40,6 +43,43 @@ from pipeline.common import (
 
 log = get_logger("02_draft")
 FACT_REF = re.compile(r"\[(F\d+)\]")
+# Gemini 검색 연동이 주는 임시 리디렉션 주소 — 만료되므로 실제 출처 주소로 바꿔 저장한다
+REDIRECT_HOSTS = {"vertexaisearch.cloud.google.com"}
+USER_AGENT = "Mozilla/5.0 (compatible; skin-content-bot/1.0)"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # 따라가지 않고 3xx 를 HTTPError 로 받는다
+
+
+def resolve_redirect(url: str) -> str | None:
+    """리디렉션이 가리키는 출처 주소 (Location). 목적지 페이지에는 접속하지 않는다. 실패는 None."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        opener.open(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=20).close()
+        return None  # 리디렉션이 아니면 원래 출처를 알 수 없다
+    except urllib.error.HTTPError as e:
+        target = e.headers.get("Location", "") if 300 <= e.code < 400 else ""
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    ok = target.startswith("http") and urlparse(target).hostname not in REDIRECT_HOSTS
+    return target if ok else None
+
+
+_resolve = resolve_redirect
+
+
+def set_resolver(fn=None) -> None:
+    """테스트용: 리디렉션 해석 함수를 바꾼다 (None 이면 기본)."""
+    global _resolve
+    _resolve = fn or resolve_redirect
+
+
+def source_url(url: str) -> str | None:
+    if urlparse(url).hostname not in REDIRECT_HOSTS:
+        return url
+    return _resolve(url)
 
 
 def _revision(note: str | None) -> str:
@@ -64,6 +104,10 @@ def research(topic: dict, note: str | None, rules: str | None = None, travel: st
         url = str(f.get("url", "")).strip()
         if not f.get("text") or not url.startswith("http"):
             log.warning("출처 없는 사실 제외: %s", f.get("text", "")[:80])
+            continue
+        url = source_url(url)
+        if not url:
+            log.warning("출처 주소를 확인하지 못해 제외 (검색 연동 리디렉션): %s", f["text"][:80])
             continue
         facts.append({"id": f"F{i}", "text": f["text"].strip(), "url": url,
                       "source_title": f.get("source_title", ""), "kind": f.get("kind", "other")})
@@ -109,6 +153,8 @@ def write_blog(topic: dict, facts: list[dict], note: str | None, rules: str | No
     data, _ = llm.generate_json("blog", text)
     if not data.get("markdown"):
         raise llm.LLMError("블로그 markdown 이 없습니다")
+    # 제목은 title 로 따로 붙으므로 본문 맨 앞의 H1 은 뺀다 (제목 중복 방지)
+    data["markdown"] = re.sub(r"\A\s*#\s[^\n]*\n+", "", data["markdown"])
     return data
 
 

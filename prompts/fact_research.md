@@ -11,7 +11,7 @@ Use Google Search to collect the facts needed to write a 45-second short-form sc
 
 {{rules}}
 
-Every fact must be a single, checkable statement copied faithfully from the source page (paraphrase allowed, meaning must not change). Each fact needs the exact page URL where it appears (not a search result page, not a homepage). 12-25 facts.
+Every fact must be a single, checkable statement that faithfully matches the source page. Write each fact in your own words — do not copy sentences verbatim — and never change its meaning, numbers or hedging. Each fact needs the exact page URL where it appears (not a search result page, not a homepage). 12-25 facts.
 
 Return ONLY JSON, no prose:
 {

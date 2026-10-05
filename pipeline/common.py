@@ -17,6 +17,12 @@ from typing import Callable
 
 import yaml
 
+try:  # HTTPS 검증을 OS 인증서 저장소로 — 중간 인증서를 빠뜨린 사이트(aad.org 등)도 브라우저처럼 검증된다
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
 PROMPT_DIR = ROOT / "prompts"

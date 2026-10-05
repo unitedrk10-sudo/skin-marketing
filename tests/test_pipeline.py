@@ -159,6 +159,25 @@ def test_parse_pick():
         draft_mod.parse_pick("7", 5)
 
 
+def test_grounding_redirects_saved_as_real_source_urls(env, monkeypatch):
+    redirect = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
+    facts = [{"id": f"F{i}", "text": f"fact {i}", "url": f"{redirect}{i}", "source_title": "t"} for i in range(6)]
+    resolved = {f"{redirect}{i}": f"https://pmc.ncbi.nlm.nih.gov/articles/PMC{i}/" for i in range(5)}  # 5번은 해석 실패
+    draft_mod.set_resolver(resolved.get)
+    try:
+        draft_id = make_draft(env, research={"facts": facts})
+    finally:
+        draft_mod.set_resolver(None)
+    urls = [f["url"] for f in common.load_draft(common.content_dir("drafts") / draft_id)["facts"]]
+    assert urls == list(resolved.values())  # 만료되는 리디렉션 주소는 저장하지 않는다
+
+
+def test_blog_leading_title_heading_removed(env):
+    draft = common.load_draft(common.content_dir("drafts") / make_draft(env))
+    assert not draft["blog"]["markdown"].lstrip().startswith("#")  # 제목은 title 로 한 번만
+    assert draft["blog"]["markdown"].startswith("It uses polynucleotides")
+
+
 # ---- 02b 규칙 검사 ----
 
 def rules_for(**kw):
@@ -223,6 +242,38 @@ def test_urls_not_in_sources_block():
 def test_price_flags_human_review():
     _, human = rules_for(script={"voice": "It typically costs $300-500 in Seoul."})
     assert "가격 포함" in human
+
+
+@pytest.mark.parametrize("url,flagged", [
+    ("https://www.glowclinic.co.kr/blog/rejuran", True),
+    ("https://abplasticsurgerykorea.com/ab-blog/rejuran", True),
+    ("https://www.mayoclinic.org/tests-procedures/rejuran", False),  # 공신력 있는 의학 정보원
+    ("https://pmc.ncbi.nlm.nih.gov/articles/PMC1/", False),
+])
+def test_clinic_website_sources_flagged_for_review(url, flagged):
+    draft = {"facts": [{"id": "F1", "text": "x", "url": url}, {"id": "F2", "text": "y", "url": url}],
+             "shortform": script(fact_ids=("F1",)), "blog": blog(f"It works [F1][F2].\n\n{DISCLOSURE}")}
+    findings, _ = review_mod.check_rules(draft)
+    hits = [f for f in findings if "병원 사이트" in f.message]
+    assert len(hits) == (1 if flagged else 0)  # 같은 사이트는 한 건으로
+    assert all(f.severity == "caution" and "F1,F2" in f.message for f in hits)
+
+
+def test_auto_review_continues_after_one_draft_fails(env, monkeypatch, capsys):
+    make_draft(env)
+    draft_mod.create("2026-W40", 2, TOPICS["topics"][1])
+    real = review_mod.review
+
+    def flaky(path, fetch=review_mod.fetch_page):
+        if path.name.startswith("2026-W40-01"):
+            raise llm.LLMError("Gemini 빈 응답 (RECITATION)")
+        return real(path, fetch=ok_fetch)
+
+    monkeypatch.setattr(review_mod, "review", flaky)
+    assert review_mod.main([]) == 1  # 실패는 종료 코드로 알린다
+    out = capsys.readouterr().out
+    assert "❗ 2026-W40-01" in out
+    assert (common.content_dir("drafts") / "2026-W40-02-skin-booster-price-range" / "review.json").exists()  # 다음 초안은 검수됨
 
 
 # ---- 02b 출처 검증 · 등급 ----

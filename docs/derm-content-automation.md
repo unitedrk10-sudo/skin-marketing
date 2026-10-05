@@ -282,7 +282,7 @@ Hermes → 텔레그램 메시지 예시:
 ## 9. 구축 순서
 
 1. **Hermes 설정 마무리**
-   - [ ] Gemini API 키 환경변수 등록 (`GEMINI_API_KEY`)
+   - [x] Gemini API 키 등록 — 저장소 `.env` 의 `GEMINI_API_KEY` (2026-09-28 `pipeline.llm check` 6단계 통과)
    - [ ] `config.yaml`에 Gemini 공급자 등록, 기본 모델 지정
    - [ ] 텔레그램 봇 생성 (BotFather) → Hermes 메신저 게이트웨이 연결 → DM 페어링
    - [ ] 텔레그램으로 간단한 대화·파일 전송 테스트
@@ -415,7 +415,7 @@ Hermes → 텔레그램 메시지 예시:
 - 예약 게시 도구 선택 (Buffer / Later / Metricool)
 - ~~블로그 플랫폼~~ → **자체 정적 사이트 (Cloudflare Pages, `pipeline/site.py`)로 결정 (2026-09-28)**: AI 인용 자산 + 스폰서 트랙의 주 무대(틱톡 브랜디드 금지). 승인된 글 자동 게시
 - ~~채널/브랜드명~~ → **Skinbound 확정 (2026-09-28)** — 도메인·핸들·상표 확인 절차: `docs/brand-candidates.md`
-- Gemini 단계별 모델 배분 (Flash vs 상위 모델)
+- ~~Gemini 단계별 모델 배분~~ → **결정 (2026-09-28)**: 조사·사실 수집·블로그 = `gemini-3.1-pro-preview`, 트렌드·대본·법규 1차 점검 = `gemini-3.8-flash` (`config/models.yaml`). 2.5 계열은 신규 사용자 404. pro 는 preview 라 종료 시 `gemini-pro-latest` 로 교체 (`python -m pipeline.llm models` 로 확인)
 - 교차 검수 모델 선택 (Claude API / 기타) 및 API 키 발급
 - B롤·이미지 확보 방식 (스톡 라이선스 / AI 생성) — 7장 저작권 체크와 연동
 - 운영 법인 형태·소재지 (국내 개인사업자/법인 권장 — 해외 법인 검토 결과는 대화 기록 참고)
