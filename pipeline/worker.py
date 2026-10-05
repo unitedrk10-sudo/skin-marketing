@@ -7,9 +7,10 @@ Hermes 에이전트(텔레그램 대화)는 오래 걸리는 작업을 직접 �
 
 no-agent 크론이 주기적으로 실행한다 (stdout 이 그대로 텔레그램으로 간다):
     python -m pipeline.worker run
-  1. 요청 처리: 초안 생성(02_draft) / 수정 재생성
-  2. 자동 검수: 검수 전 초안 → 02b (⛔ 면 1회 자동 재생성)
-  3. Claude Code 검수: 02c review_cycle (export → claude -p → import)
+  1. 요청 처리: 초안 생성(02_draft — Gemini 출처 찾기 → Claude 작성) / 수정 재생성.
+     Claude 사용량 한도·시간 초과(llm.RateLimited)면 요청을 그대로 두고 다음 실행 때 다시 한다.
+  2. 자동 검수: 검수 전 초안 → 02b (Gemini, ⛔ 면 1회 자동 재생성)
+  3. (선택) Claude Code 외부 검수: 검수 단계가 claude_code 일 때만 02c review_cycle
   4. 위에서 바뀐 것이 있으면 03_review list 메시지 출력, 없으면 아무것도 출력하지 않음 (조용한 틱)
 동시에 두 번 실행되면 나중 것은 바로 끝난다 (잠금). 실패가 있으면 원인을 stderr 에 남기고 종료 코드 1.
 """
@@ -69,7 +70,7 @@ def request_drafts(pick: str, week: str | None = None) -> str:
     nums = draft_mod.parse_pick(pick, len(topics))
     enqueue("drafts", week=week, pick=nums)
     titles = ", ".join(f"{n}. {topics[n - 1]['title']}" for n in nums)
-    return f"초안 생성 요청 접수 ({week}): {titles}\n생성·자동 검수·Claude 검수가 끝나면 검수 요청을 보냅니다."
+    return f"초안 생성 요청 접수 ({week}): {titles}\n출처 확보·작성·자동 검수가 끝나면 검수 요청을 보냅니다 (편당 5~10분)."
 
 
 def request_sponsored(sponsor_id: str, title: str, angle: str, keywords: list[str] | None = None, course: bool = False) -> str:

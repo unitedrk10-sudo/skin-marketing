@@ -69,7 +69,7 @@ python -m venv .venv                     # 이미 있으면 생략
 
 ## 7. 시험 운영
 - [ ] `hermes cron run skin-weekly-topics` → 텔레그램에 주제 후보 (트렌드 스캔 포함)
-- [ ] 3개 골라 답장 → 워커가 초안·자동 검수·Claude 검수 → 검수 요청 → 샘플 3편 품질 확인
+- [ ] 3개 골라 답장 → 워커가 출처 확보·Claude 작성·자동 검수 → 검수 요청(첨부 파일 포함) → 샘플 3편 품질 확인
 - [ ] 1편 승인 → 블로그 반영 확인 → 영상 렌더링 → "게시 OK" → 게시 키트(`kit.md`) 확인
 - [ ] `python -m pipeline.clinics refresh` → `python -m pipeline.clinics show coex` (병원 목록이 실제로 나오는지)
 - [ ] `python -m pipeline.demand` (조회수 반영 여부 — CF 키 넣은 경우)
