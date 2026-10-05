@@ -43,6 +43,7 @@ from pipeline.common import (
 
 log = get_logger("02_draft")
 FACT_REF = re.compile(r"\[(F\d+)\]")
+FACT_ID = re.compile(r"\bF\d+\b")
 # Gemini 검색 연동이 주는 임시 리디렉션 주소 — 만료되므로 실제 출처 주소로 바꿔 저장한다
 REDIRECT_HOSTS = {"vertexaisearch.cloud.google.com"}
 USER_AGENT = "Mozilla/5.0 (compatible; skin-content-bot/1.0)"
@@ -133,7 +134,17 @@ def write_script(topic: dict, facts: list[dict], note: str | None, rules: str | 
     data, _ = llm.generate_json("shortform", text)
     if not data.get("lines"):
         raise llm.LLMError("대본에 lines 가 없습니다")
+    for line in data["lines"]:  # 모델이 [["F1","F2"]] 나 "F1, F2" 로 줄 때가 있다
+        line["fact_ids"] = _fact_ids(line.get("fact_ids"))
     return data
+
+
+def _fact_ids(value) -> list[str]:
+    if isinstance(value, str):
+        return FACT_ID.findall(value)
+    if isinstance(value, (list, tuple)):
+        return [fid for item in value for fid in _fact_ids(item)]
+    return []
 
 
 def write_blog(topic: dict, facts: list[dict], note: str | None, rules: str | None = None, travel: str = "") -> dict:

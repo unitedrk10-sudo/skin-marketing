@@ -172,6 +172,14 @@ def test_grounding_redirects_saved_as_real_source_urls(env, monkeypatch):
     assert urls == list(resolved.values())  # 만료되는 리디렉션 주소는 저장하지 않는다
 
 
+def test_script_fact_ids_normalized(env):
+    nested = script()
+    nested["lines"] = [{**nested["lines"][0], "fact_ids": [["F1", "F2"]]},
+                       {**nested["lines"][0], "fact_ids": "F3, F4"}, {**nested["lines"][0], "fact_ids": None}]
+    draft = common.load_draft(common.content_dir("drafts") / make_draft(env, shortform=nested))
+    assert [ln["fact_ids"] for ln in draft["shortform"]["lines"]] == [["F1", "F2"], ["F3", "F4"], []]
+
+
 def test_blog_leading_title_heading_removed(env):
     draft = common.load_draft(common.content_dir("drafts") / make_draft(env))
     assert not draft["blog"]["markdown"].lstrip().startswith("#")  # 제목은 title 로 한 번만
