@@ -1,7 +1,12 @@
-"""2. 초안 생성 — Hermes (주제 선택 직후, 에이전트 모드).
+"""2. 초안 생성 — Hermes 워커 (주제 선택 직후).
 
-흐름: 사실 수집(검색 연동, 사실마다 출처 URL) → 숏폼 대본 → 블로그 글 → 법규 1차 점검.
-대본·블로그는 수집된 사실 목록만 사용하고 각 문장에 사실 id 를 단다 (02b 출처 검증의 기준).
+흐름 (모델 배치는 config/models.yaml):
+  1. 출처 찾기 (stage sources, Gemini + Google 검색): 읽을 페이지 후보만 고른다 — 사실은 쓰지 않는다.
+  2. 출처 확보 (코드): 실제 주소로 바꾸고 페이지를 받아 404·빈 페이지·병원 사이트를 뺀다.
+  3. 작성 (stage write, Claude Code CLI): 받아 둔 페이지 본문만 보고 사실 목록 → 숏폼 대본 → 블로그.
+     쓸 만한 페이지가 MIN_SOURCES 개보다 적으면 stage write_search (Claude 가 직접 추가 검색).
+  4. 사실 확인 (코드): 사실마다 붙인 원문 인용이 그 페이지에 실제로 있는지 대조, 없으면 버린다.
+대본·블로그는 사실 id 로 근거를 단다 (02b 출처 검증의 기준). 교차 검수는 작성과 다른 회사 모델(Gemini)이 한다.
 
     python -m pipeline.02_draft --week 2026-W40 --pick 1,3,4
     python -m pipeline.02_draft --revise 2026-W40-01-what-is-rejuran --note "가격 출처 다시"
@@ -16,17 +21,14 @@ from __future__ import annotations
 
 import argparse
 import re
-import urllib.error
-import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlparse
 
-from pipeline import attractions, llm, sponsors
+from pipeline import attractions, llm, sponsors, web
 from pipeline.common import (
     blog_text,
     content_dir,
-    facts_text,
     find_draft,
     get_logger,
     iso_week,
@@ -44,52 +46,24 @@ from pipeline.common import (
 log = get_logger("02_draft")
 FACT_REF = re.compile(r"\[(F\d+)\]")
 FACT_ID = re.compile(r"\bF\d+\b")
-# Gemini 검색 연동이 주는 임시 리디렉션 주소 — 만료되므로 실제 출처 주소로 바꿔 저장한다
-REDIRECT_HOSTS = {"vertexaisearch.cloud.google.com"}
-USER_AGENT = "Mozilla/5.0 (compatible; skin-content-bot/1.0)"
 
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None  # 따라가지 않고 3xx 를 HTTPError 로 받는다
-
-
-def resolve_redirect(url: str) -> str | None:
-    """리디렉션이 가리키는 출처 주소 (Location). 목적지 페이지에는 접속하지 않는다. 실패는 None."""
-    opener = urllib.request.build_opener(_NoRedirect)
-    try:
-        opener.open(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=20).close()
-        return None  # 리디렉션이 아니면 원래 출처를 알 수 없다
-    except urllib.error.HTTPError as e:
-        target = e.headers.get("Location", "") if 300 <= e.code < 400 else ""
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
-    ok = target.startswith("http") and urlparse(target).hostname not in REDIRECT_HOSTS
-    return target if ok else None
-
-
-_resolve = resolve_redirect
-
-
-def set_resolver(fn=None) -> None:
-    """테스트용: 리디렉션 해석 함수를 바꾼다 (None 이면 기본)."""
-    global _resolve
-    _resolve = fn or resolve_redirect
-
-
-def source_url(url: str) -> str | None:
-    if urlparse(url).hostname not in REDIRECT_HOSTS:
-        return url
-    return _resolve(url)
+MAX_SOURCES = 12      # 작성 모델에 넘기는 페이지 수
+MIN_SOURCES = 5       # 이보다 적으면 작성 모델이 직접 추가 검색 (stage write_search)
+SOURCE_CHARS = 12000  # 페이지당 넘기는 본문 길이
+MIN_PAGE_CHARS = 500  # 이보다 짧은 본문은 스크립트 렌더링·차단 페이지로 보고 뺀다
+MIN_FACTS = 5
 
 
 def _revision(note: str | None) -> str:
     return f"\nREVISION REQUEST from the human reviewer (must be addressed): {note}\n" if note else ""
 
 
-def research(topic: dict, note: str | None, rules: str | None = None, travel: str = "") -> list[dict]:
+# ---------------- 1·2. 출처 ----------------
+
+def search_sources(topic: dict, note: str | None, rules: str | None = None, travel: str = "") -> list[dict]:
+    """Gemini 검색으로 읽을 페이지 후보 [{url, title}] — 모델이 고른 목록 + 검색 연동이 실제로 연 페이지."""
     text = prompt(
-        "fact_research",
+        "source_search",
         rules=rules,
         today=date.today().isoformat(),
         title=topic["title"],
@@ -99,44 +73,82 @@ def research(topic: dict, note: str | None, rules: str | None = None, travel: st
         revision_note=_revision(note),
         travel_context=travel,
     )
-    data, _ = llm.generate_json("research", text)
-    facts = []
-    for i, f in enumerate(data.get("facts", []) if isinstance(data, dict) else [], 1):
-        url = str(f.get("url", "")).strip()
-        if not f.get("text") or not url.startswith("http"):
-            log.warning("출처 없는 사실 제외: %s", f.get("text", "")[:80])
-            continue
-        url = source_url(url)
-        if not url:
-            log.warning("출처 주소를 확인하지 못해 제외 (검색 연동 리디렉션): %s", f["text"][:80])
-            continue
-        facts.append({"id": f"F{i}", "text": f["text"].strip(), "url": url,
-                      "source_title": f.get("source_title", ""), "kind": f.get("kind", "other")})
-    if len(facts) < 5:
-        raise llm.LLMError(f"출처 있는 사실이 부족합니다 ({len(facts)}건)")
-    # 모델이 준 id 대신 순번을 쓰므로 이후 단계는 이 목록 기준
-    return facts
+    data, result = llm.generate_json("sources", text)
+    picked = data.get("sources", []) if isinstance(data, dict) else []
+    candidates = [{"url": str(s.get("url", "")).strip(), "title": s.get("title", "")} for s in picked if isinstance(s, dict)]
+    return candidates + [{"url": g["url"], "title": g.get("title", "")} for g in result.grounding_urls]
 
 
-def write_script(topic: dict, facts: list[dict], note: str | None, rules: str | None = None, travel: str = "") -> dict:
-    lo, hi = load_yaml("channels.yaml")["shortform"]["duration_sec"]
+def fetch_sources(candidates: list[dict], sponsor: dict | None = None) -> list[dict]:
+    """후보를 실제 주소로 바꾸고 받아 와서 쓸 수 있는 페이지만 [{id, url, title, text}] 로 돌려준다."""
+    sponsor_host = sponsors.official_host(sponsor) if sponsor else None
+    if sponsor:  # 병원에 관한 사실(제공 시술·언어 등)은 광고주 공식 사이트만 출처로 쓸 수 있다
+        candidates = [{"url": sponsor["official_url"], "title": sponsor["name_en"]}] + candidates
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        urls = list(pool.map(lambda c: web.source_url(c["url"]) if c["url"].startswith("http") else None, candidates))
+    seen, todo = set(), []
+    for cand, url in zip(candidates, urls):
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        if web.is_clinic_host(url) and web.host(url) != sponsor_host:
+            log.info("병원 사이트로 보여 출처에서 제외: %s", url)
+            continue
+        todo.append({"url": url, "title": cand["title"]})
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        pages = list(pool.map(lambda s: web.get(s["url"]), todo))
+    sources = []
+    for s, (status, text) in zip(todo, pages):
+        if status != 200 or len(text) < MIN_PAGE_CHARS:
+            log.info("출처 제외 (%s, 본문 %d자): %s", status or "연결 오류", len(text), s["url"])
+            continue
+        sources.append({"id": f"S{len(sources) + 1}", **s, "text": text})
+        if len(sources) >= MAX_SOURCES:
+            break
+    return sources
+
+
+def sources_text(sources: list[dict]) -> str:
+    return "\n\n".join(f"[{s['id']}] {s['title'] or s['url']}\nURL: {s['url']}\n<page>\n{s['text'][:SOURCE_CHARS]}\n</page>"
+                       for s in sources)
+
+
+# ---------------- 3. 작성 ----------------
+
+def write_draft(topic: dict, sources: list[dict], note: str | None, rules: str | None = None,
+                travel: str = "") -> tuple[dict, str]:
+    channels = load_yaml("channels.yaml")
+    lo, hi = channels["shortform"]["duration_sec"]
+    words_lo, words_hi = channels["blog"]["words"]
+    search = len(sources) < MIN_SOURCES
     text = prompt(
-        "shortform_script",
+        "write_draft",
         rules=rules,
-        duration=f"{lo}-{hi}",
         title=topic["title"],
         angle=topic["angle"],
         hook=topic.get("hook", ""),
-        facts=facts_text(facts),
+        keywords=", ".join(topic.get("keywords", [])),
         revision_note=_revision(note),
         travel_context=travel,
+        duration=f"{lo}-{hi}",
+        min_words=str(words_lo),
+        max_words=str(words_hi),
+        sources=sources_text(sources) or "(no usable pages were found)",
+        search_note=(". There are few usable pages, so you may also use web search to find more pages from the "
+                     "preferred source types in the rules (never clinic websites). For a fact from a page you found "
+                     "yourself, give \"url\" (the exact page URL) instead of \"source\", and copy the quote from that page."
+                     if search else "."),
     )
-    data, _ = llm.generate_json("shortform", text)
-    if not data.get("lines"):
-        raise llm.LLMError("대본에 lines 가 없습니다")
-    for line in data["lines"]:  # 모델이 [["F1","F2"]] 나 "F1, F2" 로 줄 때가 있다
+    data, result = llm.generate_json("write_search" if search else "write", text)
+    if not isinstance(data, dict) or not (data.get("shortform") or {}).get("lines"):
+        raise llm.LLMError("작성 결과에 대본(shortform.lines)이 없습니다")
+    if not (data.get("blog") or {}).get("markdown"):
+        raise llm.LLMError("작성 결과에 블로그 markdown 이 없습니다")
+    for line in data["shortform"]["lines"]:  # 모델이 [["F1","F2"]] 나 "F1, F2" 로 줄 때가 있다
         line["fact_ids"] = _fact_ids(line.get("fact_ids"))
-    return data
+    # 제목은 title 로 따로 붙으므로 본문 맨 앞의 H1 은 뺀다 (제목 중복 방지)
+    data["blog"]["markdown"] = re.sub(r"\A\s*#\s[^\n]*\n+", "", data["blog"]["markdown"])
+    return data, result.model
 
 
 def _fact_ids(value) -> list[str]:
@@ -147,32 +159,36 @@ def _fact_ids(value) -> list[str]:
     return []
 
 
-def write_blog(topic: dict, facts: list[dict], note: str | None, rules: str | None = None, travel: str = "") -> dict:
-    lo, hi = load_yaml("channels.yaml")["blog"]["words"]
-    text = prompt(
-        "blog_post",
-        rules=rules,
-        min_words=str(lo),
-        max_words=str(hi),
-        title=topic["title"],
-        angle=topic["angle"],
-        keywords=", ".join(topic.get("keywords", [])),
-        facts=facts_text(facts),
-        revision_note=_revision(note),
-        travel_context=travel,
-    )
-    data, _ = llm.generate_json("blog", text)
-    if not data.get("markdown"):
-        raise llm.LLMError("블로그 markdown 이 없습니다")
-    # 제목은 title 로 따로 붙으므로 본문 맨 앞의 H1 은 뺀다 (제목 중복 방지)
-    data["markdown"] = re.sub(r"\A\s*#\s[^\n]*\n+", "", data["markdown"])
-    return data
+# ---------------- 4. 사실 확인 ----------------
 
-
-def precheck(draft: dict, rules: str | None = None) -> dict:
-    text = prompt("compliance_check", rules=rules, script=script_text(draft), blog=blog_text(draft))
-    data, result = llm.generate_json("compliance", text)
-    return {"model": result.model, "issues": data.get("issues", []), "summary": data.get("summary", "")}
+def verify_facts(raw: list, sources: list[dict]) -> list[dict]:
+    """원문 인용이 해당 페이지에 실제로 있는 사실만 남긴다. 작성 모델이 직접 찾은 페이지(url)는 받아 와서 확인한다.
+    (버린 사실을 대본·블로그가 참조하면 02b 가 '존재하지 않는 사실 참조'로 차단한다)"""
+    by_id = {s["id"]: s for s in sources}
+    by_url = {s["url"]: s for s in sources}
+    facts, seen = [], set()
+    for f in raw if isinstance(raw, list) else []:
+        fid = str(f.get("id", "")) if isinstance(f, dict) else ""
+        if not re.fullmatch(r"F\d+", fid) or fid in seen or not f.get("text"):
+            continue
+        src = by_id.get(str(f.get("source", ""))) or by_url.get(str(f.get("url", "")))
+        url = str(f.get("url", "")).strip()
+        if src is None and url.startswith("http") and not web.is_clinic_host(url):
+            status, page = web.get(url)
+            if status == 200 and len(page) >= MIN_PAGE_CHARS:
+                src = {"id": f"S{len(sources) + 1}", "url": url, "title": f.get("source_title", ""), "text": page}
+                sources.append(src)
+                by_url[url] = src
+        if src is None:
+            log.warning("출처 없는 사실 제외 [%s]: %s", fid, f["text"][:80])
+            continue
+        if not web.quote_in_page(str(f.get("quote", "")), src["text"]):
+            log.warning("인용문이 페이지에 없어 제외 [%s] %s: %s", fid, src["url"], str(f.get("quote", ""))[:80])
+            continue
+        seen.add(fid)
+        facts.append({"id": fid, "text": f["text"].strip(), "url": src["url"], "source_title": src["title"],
+                      "quote": f["quote"].strip(), "kind": f.get("kind", "other")})
+    return facts
 
 
 def used_fact_ids(draft: dict) -> set[str]:
@@ -198,18 +214,20 @@ def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -
         travel = attractions.context(topic, home=sponsor) if topic.get("course") else ""
     else:  # 여행 축: 관광지 속성·코스 규칙·맛집 트렌드
         travel = attractions.context(topic)
-    facts = research(topic, note, rules, travel)
-    draft = {"topic": topic, "facts": facts}
-    draft["shortform"] = write_script(topic, facts, note, rules, travel)
-    draft["blog"] = write_blog(topic, facts, note, rules, travel)
+    sources = fetch_sources(search_sources(topic, note, rules, travel), sponsor)
+    log.info("출처 %d곳 확보: %s", len(sources), topic["title"])
+    written, writer = write_draft(topic, sources, note, rules, travel)
+    facts = verify_facts(written.get("facts"), sources)
+    if len(facts) < MIN_FACTS:
+        raise llm.LLMError(f"페이지로 확인된 사실이 부족합니다 ({len(facts)}건, 출처 {len(sources)}곳)")
+    draft = {"topic": topic, "facts": facts, "shortform": written["shortform"], "blog": written["blog"],
+             "writer": writer, "sources": [{k: s[k] for k in ("id", "url", "title")} for s in sources]}
     if sponsor:
         draft["sponsor"] = sponsor
         add_disclosures(draft, sponsor)
-    known = {f["id"] for f in facts}
-    unknown = used_fact_ids(draft) - known
+    unknown = used_fact_ids(draft) - {f["id"] for f in facts}
     if unknown:
-        log.warning("존재하지 않는 사실 id 참조: %s (02b 에서 차단됨)", sorted(unknown))
-    draft["precheck"] = precheck(draft, rules)
+        log.warning("확인되지 않은 사실 참조: %s (02b 에서 차단됨)", sorted(unknown))
     return draft
 
 
@@ -231,7 +249,7 @@ def create(week: str, index: int, topic: dict) -> str:
     draft.update({"id": draft_id, "week": week, "content_type": topic["axis"], "created_at": now_iso(),
                   "revisions": [], "regenerated": 0})
     write_files(path, draft)
-    log.info("초안 생성: %s (사실 %d건)", draft_id, len(draft["facts"]))
+    log.info("초안 생성: %s (사실 %d건, 출처 %d곳, %s)", draft_id, len(draft["facts"]), len(draft["sources"]), draft["writer"])
     return draft_id
 
 

@@ -27,6 +27,7 @@ from datetime import date
 from pathlib import Path
 
 from pipeline.common import (
+    blog_text,
     draft_hash,
     move_draft,
     content_dir,
@@ -39,6 +40,7 @@ from pipeline.common import (
     now_iso,
     run_cli,
     save_json,
+    script_text,
 )
 
 log = get_logger("03_review")
@@ -116,6 +118,51 @@ def load_batch(stage: str) -> list[str]:
     return load_json(path)["ids"]
 
 
+ISSUE_ICON = {"block": "⛔", "caution": "⚠️", "pending": "⏳"}
+MAX_ISSUES = 3
+
+
+def _issues(review: dict | None) -> list[dict]:
+    order = {"block": 0, "pending": 1, "caution": 2}
+    found = [f for f in (review or {}).get("findings", []) if f["severity"] in order]
+    return sorted(found, key=lambda f: order[f["severity"]])
+
+
+def review_doc(path: Path) -> Path:
+    """휴대폰에서 읽는 검수용 파일 (텔레그램 첨부): 걸린 항목 → 대본 → 블로그 → 사실별 원문 인용·출처."""
+    draft, review = load_draft(path), load_review(path)
+    out = [f"# {draft['id']}", "", f"자동 검수: {GRADE_ICON[(review or {}).get('grade')]} {(review or {}).get('grade') or '미실시'}"]
+    issues = _issues(review)
+    if issues:
+        out += ["", "## 검수에서 걸린 항목"]
+        out += [f"- {ISSUE_ICON[f['severity']]} {f['message']}" + (f"\n  > {f['quote']}" if f["quote"] else "") for f in issues]
+    if (review or {}).get("always_human"):
+        out += ["", "👤 사람 확인 필요: " + ", ".join(review["always_human"])]
+    out += ["", "## 숏폼 대본", "", script_text(draft), "", "## 블로그", "", blog_text(draft), "", "## 사실과 원문 인용"]
+    for f in draft.get("facts", []):
+        out.append(f"- [{f['id']}] {f['text']}\n  > {f.get('quote', '')}\n  {f['url']}")
+    doc = path / f"{draft['id']}.md"
+    doc.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return doc
+
+
+def _draft_summary(path: Path, draft: dict, review: dict | None) -> list[str]:
+    """번호 줄 아래에 붙는 요약: 블로그 구성 · 걸린 항목 · 대본 전문."""
+    blog = draft.get("blog") or {}
+    sections = re.findall(r"(?m)^##\s+(.+)$", blog.get("markdown", ""))
+    out = [f"   📝 블로그: {blog.get('title', '')}" + (f" — {blog['meta_description']}" if blog.get("meta_description") else "")]
+    if sections:
+        out.append("      " + " · ".join(s.strip() for s in sections[:8]))
+    issues = _issues(review)
+    for f in issues[:MAX_ISSUES]:
+        out.append(f"   {ISSUE_ICON[f['severity']]} {f['message'][:140]}")
+    if len(issues) > MAX_ISSUES:
+        out.append(f"   … 외 {len(issues) - MAX_ISSUES}건 (첨부 파일)")
+    out.append("   🎬 대본:")
+    out += [f"      · {ln.get('voice', '')}" for ln in (draft.get("shortform") or {}).get("lines", [])]
+    return out
+
+
 def list_message(stage: str) -> str:
     ids = build_batch(stage)
     if not ids:
@@ -123,8 +170,10 @@ def list_message(stage: str) -> str:
     lines = []
     if stage == "drafts":
         lines.append(f"[초안 검수 {len(ids)}건 (숏폼+블로그)] 답장 예: `1,3 승인` · `2 수정: 가격 출처 다시` · `4 폐기` · `전체 승인`")
+        lines.append("초안별 전문(블로그·사실별 원문 인용)은 첨부 파일로 보냅니다.")
     else:
         lines.append(f"[게시 전 확인 {len(ids)}건] 답장 예: `게시 OK` · `1,2 게시 OK` · `3 폐기`")
+    attachments = []
     for i, draft_id in enumerate(ids, 1):
         path = content_dir(stage) / draft_id
         draft, review = load_draft(path), load_review(path)
@@ -138,16 +187,21 @@ def list_message(stage: str) -> str:
             blocked = (draft.get("platforms") or {}).get("blocked") or {}
             if blocked:
                 line += " · " + ", ".join(blocked) + " 게시 불가"
+        if review and review.get("always_human"):
+            line += f" 👤{', '.join(review['always_human'])}"
+        elif not review:
+            line += " 자동검수 전"
+        if stage == "drafts":
+            lines += ["", line] + _draft_summary(path, draft, review)
+            attachments.append(review_doc(path))
+            continue
         if review:
-            issues = [f for f in review["findings"] if f["severity"] in ("block", "caution", "pending")]
+            issues = _issues(review)
             if issues:
                 line += f" {issues[0]['message']}" + (f" 외 {len(issues) - 1}건" if len(issues) > 1 else "")
-            if review.get("always_human"):
-                line += f" 👤{', '.join(review['always_human'])}"
-        else:
-            line += " 자동검수 전"
         lines.append(line)
-        lines.append(f"   📄 {path / 'script.md'}  📝 {path / 'blog.md'}")
+    # Hermes 가 MEDIA: 줄을 텔레그램 첨부 파일로 보낸다 (경로에 공백이 있어 백틱으로 감싼다)
+    lines += [""] + [f"MEDIA:`{doc}`" for doc in attachments] if attachments else []
     return "\n".join(lines)
 
 

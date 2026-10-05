@@ -2,9 +2,13 @@
 # 모델 교체는 여기서만 한다. 사용 가능 여부 확인: python -m pipeline.llm check
 #
 # provider: gemini (GEMINI_API_KEY) | anthropic (ANTHROPIC_API_KEY)
+#           | claude_cli  (같은 머신의 Claude Code CLI `claude -p` — Pro 로그인, 키 불필요)
 #           | claude_code (API 호출 없음 — 검수 요청 파일을 Claude Code 세션이 처리, 02c_external_review.py)
 # search: true 면 Gemini Google 검색 연동(grounding) 사용
-# 원칙: 생성(Gemini)과 검수(Claude)는 다른 회사 모델 (기획서 6-0)
+# 원칙: 작성(Claude)과 검수(Gemini)는 다른 회사 모델 (기획서 6-0)
+#
+# 역할 (2026-10-06 변경): Gemini 는 찾기·검수, Claude 는 읽고 쓰기.
+#   Gemini 가 쓰기까지 하면 출처 페이지에 없는 내용을 사실로 적는 문제가 반복돼 작성을 Claude 로 옮겼다.
 
 stages:
   topics:          # 01 주간 주제 조사
@@ -19,39 +23,30 @@ stages:
     search: true
     temperature: 0.3
 
-  research:        # 02 사실 수집 (모든 사실에 출처 URL)
+  sources:         # 02 출처 찾기 — 읽을 페이지 후보만 고른다 (사실은 쓰지 않음)
     provider: gemini
     model: gemini-3.1-pro-preview
     search: true
     temperature: 0.2
 
-  shortform:       # 02 숏폼 대본 (사실 목록만 사용, 검색 없음)
-    provider: gemini
-    model: gemini-3.8-flash
-    temperature: 0.7
+  write:           # 02 작성 — 받아 둔 페이지 본문만 보고 사실·대본·블로그 (도구 없음)
+    provider: claude_cli
+    # model: sonnet          # 생략하면 Claude Code 기본 모델
+    tools: []
+    timeout_sec: 1500
 
-  blog:            # 02 블로그 글
-    provider: gemini
-    model: gemini-3.1-pro-preview
-    temperature: 0.6
+  write_search:    # 02 작성 — 쓸 만한 페이지가 부족할 때만 Claude 가 직접 추가 검색
+    provider: claude_cli
+    tools: [WebSearch, WebFetch]
+    timeout_sec: 1500
 
-  compliance:      # 02 법규 1차 자동 점검 (생성 모델 자체 점검)
+  # 검수 단계는 작성 모델(Claude)과 다른 회사 모델이 맡는다.
+  source_check:    # 02b ② 출처 본문 대조
     provider: gemini
     model: gemini-3.8-flash
     temperature: 0.0
 
-  # 검수 단계는 생성 모델(Gemini)과 다른 회사 모델이 맡는다.
-  # 현재: ANTHROPIC_API_KEY 없이 Claude Code 가 검수 (Hermes 가 페이지 수집까지 하고 요청 파일을 올림).
-  # API 로 바꾸려면 아래 주석 처리된 설정으로 교체하고 ANTHROPIC_API_KEY 를 등록한다.
-  source_check:    # 02b ② 출처 본문 대조
-    provider: claude_code
-    # provider: anthropic
-    # model: claude-haiku-4-5
-    # max_tokens: 4096
-
   cross_review:    # 02b ③ 교차 모델 검수
-    provider: claude_code
-    # provider: anthropic
-    # model: claude-opus-5
-    # effort: high
-    # max_tokens: 16000
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    temperature: 0.0

@@ -13,17 +13,15 @@ config/models.yaml 에서 검수 단계가 provider: claude_code 면 ②의 본�
 from __future__ import annotations
 
 import argparse
-import html
 import importlib
 import re
-import urllib.error
-import urllib.request
 from urllib.parse import urlparse
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from pipeline import llm, sponsors
+from pipeline import llm, sponsors, web
+from pipeline.web import fetch_page, html_to_text  # noqa: F401 — 테스트·02c 가 이 모듈 이름으로 쓴다
 from pipeline.common import (
     CONFIG_DIR,
     blog_text,
@@ -45,9 +43,7 @@ from pipeline.common import (
 log = get_logger("02b_auto_review")
 
 GRADE_ICON = {"pass": "✅", "caution": "⚠️", "pending": "⏳", "block": "⛔"}
-FETCH_TIMEOUT = 20
 PAGE_CHARS = 15000
-USER_AGENT = "Mozilla/5.0 (compatible; skin-marketing-source-check/1.0)"
 AI_DISCLOSURE = re.compile(r"AI[- ]generated", re.I)
 BLOG_DISCLOSURE = re.compile(r"produced with AI assistance", re.I)
 FACT_REF = re.compile(r"\[(F\d+)\]")
@@ -102,10 +98,6 @@ COSMETIC_PATTERNS = re.compile(
 NEGATION = re.compile(r"\b(?:not|never|no|can't|cannot|can not|don't|doesn't|isn't|aren't|won't)\b[^.]*$", re.I)
 
 PRICE = re.compile(r"[$₩฿]|\b(?:USD|KRW|SGD|THB|CAD|won|dollars?)\b|\bprice|\bcost", re.I)
-
-# 병원 자체 사이트는 출처로 쓰지 않는다 (_rules.md) — 도메인으로 추정하므로 ⚠️ 주의 (사람이 판단)
-CLINIC_HOST = re.compile(r"clinic|derma|hospital|plastic|surgery|aesthetic|medispa", re.I)
-MEDICAL_REFERENCE_HOSTS = ("mayoclinic.org", "clevelandclinic.org")  # 병원명이 들어간 공신력 있는 의학 정보원
 
 
 def load_banned(path: Path | None = None) -> list[tuple[str, re.Pattern]]:
@@ -228,12 +220,9 @@ def check_clinic_sources(draft: dict, used: set[str]) -> list[Finding]:
     sponsor_host = sponsors.official_host(draft["sponsor"]) if draft.get("sponsor") else None
     by_host: dict[str, list[str]] = defaultdict(list)
     for f in draft.get("facts", []):
-        host = (urlparse(f.get("url", "")).hostname or "").removeprefix("www.")
-        if f["id"] not in used or not CLINIC_HOST.search(host) or host == sponsor_host:
-            continue
-        if any(host == h or host.endswith("." + h) for h in MEDICAL_REFERENCE_HOSTS):
-            continue
-        by_host[host].append(f["id"])
+        host = web.host(f.get("url", ""))
+        if f["id"] in used and host != sponsor_host and web.is_clinic_host(host):
+            by_host[host].append(f["id"])
     return [Finding("rules", "caution", f"병원 사이트로 보이는 출처 [{','.join(ids)}] — 논문·정부·학회 출처로 교체 권장", host)
             for host, ids in by_host.items()]
 
@@ -267,30 +256,6 @@ def check_no_sponsor_names(texts: dict[str, str]) -> list[Finding]:
 
 
 # ---------------- ② 출처 검증 ----------------
-
-def fetch_page(url: str) -> tuple[int, str]:
-    """(HTTP 상태, 본문 텍스트). 연결 실패는 상태 0."""
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"})
-    try:
-        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
-            raw = resp.read(2_000_000)
-            charset = resp.headers.get_content_charset() or "utf-8"
-            ctype = resp.headers.get_content_type()
-            status = resp.status
-    except urllib.error.HTTPError as e:
-        return e.code, ""
-    except (urllib.error.URLError, OSError, ValueError):
-        return 0, ""
-    if ctype == "application/pdf":
-        return status, ""  # PDF 본문 대조는 사람 확인
-    return status, html_to_text(raw.decode(charset, errors="replace"))
-
-
-def html_to_text(page: str) -> str:
-    page = re.sub(r"(?is)<(script|style|noscript|svg|nav|footer|header)\b.*?</\1>", " ", page)
-    page = re.sub(r"(?s)<[^>]+>", " ", page)
-    return re.sub(r"\s+", " ", html.unescape(page)).strip()
-
 
 def check_sources(draft: dict, fetch=fetch_page) -> tuple[list[Finding], list[dict]]:
     """사용된 사실만 검증. 404·연결 실패·본문 불일치는 차단, 봇 차단(401/403/429)·PDF 는 주의."""
@@ -428,7 +393,11 @@ def review_with_regeneration(path: Path, fetch=fetch_page) -> dict:
     result = review(path, fetch)
     if result["grade"] == "block" and result["regenerated"] == 0:
         log.info("차단 → 자동 재생성 1회: %s", path.name)
-        importlib.import_module("pipeline.02_draft").revise(path.name, regeneration_note(result), auto=True)
+        try:
+            importlib.import_module("pipeline.02_draft").revise(path.name, regeneration_note(result), auto=True)
+        except llm.RateLimited:
+            (path / "review.json").unlink(missing_ok=True)  # 검수 전 상태로 되돌려 다음 실행 때 다시 검수·재생성
+            raise
         result = review(path, fetch)
     return result
 
