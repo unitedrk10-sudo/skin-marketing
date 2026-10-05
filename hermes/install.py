@@ -26,7 +26,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# (이름, 스케줄, 단계) — 단계: {"cmd": [...], "on_fail": None(중단·종료 코드 전달) | "메시지"(stderr 에 남기고 계속),
+# (이름, 스케줄, 단계) — 스케줄은 '10m'·'every 1h' 같은 간격 또는 cron 식 (로컬 시간, "0 9 * * 1" 형식은 Hermes 가 거부)
+# 단계: {"cmd": [...], "on_fail": None(중단·종료 코드 전달) | "메시지"(stderr 에 남기고 계속),
 #                               "quiet": True(출력을 stderr 로 — 텔레그램에 안 감)}
 # "{python}", "{claude}", "{git}" 은 설치 시 실제 경로로 바뀐다.
 def _py(*args: str) -> dict:
@@ -34,20 +35,20 @@ def _py(*args: str) -> dict:
 
 
 JOBS: list[tuple[str, str | None, list[dict]]] = [
-    ("skin-law-sync", "every monday 8am", [_py("pipeline.law_sync")]),
+    ("skin-law-sync", "0 8 * * 1", [_py("pipeline.law_sync")]),
     # 주간 주제: 먼저 코드 업데이트 (law_sync 가 갱신한 legal/ 은 버리고 받음 — 다음 동기화 때 다시 생성됨)
-    ("skin-weekly-topics", "every monday 9am", [
+    ("skin-weekly-topics", "0 9 * * 1", [
         {"cmd": ["{git}", "checkout", "-q", "--", "legal/"], "on_fail": "", "quiet": True},
         {"cmd": ["{git}", "pull", "-q", "--ff-only"], "on_fail": "(코드 업데이트 실패 — 기존 코드로 진행)", "quiet": True},
         _py("pipeline.01_topics", "--from-seed", "6"),  # 초기 주제 목록 소진 후 자동으로 Gemini 조사
     ]),
     ("skin-worker", "every 10m", [_py("pipeline.worker", "run")]),
-    ("skin-traffic-report", "every monday 10am", [_py("pipeline.tracker", "report", "--days", "7")]),
+    ("skin-traffic-report", "0 10 * * 1", [_py("pipeline.tracker", "report", "--days", "7")]),
     # 블로그: 승인된 글이 바뀌었을 때만 Cloudflare Pages 배포 (없으면 조용)
     ("skin-site", "every 1h", [_py("pipeline.site", "deploy")]),
-    ("skin-weekly-report", "every sunday 8pm", [_py("pipeline.07_report")]),
+    ("skin-weekly-report", "0 20 * * 0", [_py("pipeline.07_report")]),
     # 코스 주변 피부과 목록 갱신 (심평원 공공데이터, 30일 지난 것만, 키 없으면 조용)
-    ("skin-clinics", "every monday 7am", [_py("pipeline.clinics", "refresh")]),
+    ("skin-clinics", "0 7 * * 1", [_py("pipeline.clinics", "refresh")]),
     # 월간 유입 분석 (영업용 데이터셋·리포트, 추적기 미설정·클릭 없으면 조용)
     ("skin-analytics", "0 11 1 * *", [_py("pipeline.analytics", "report")]),  # 매월 1일 11:00 (지난달)
     # 점검용 (크론 아님): 크론과 같은 환경에서 키·모델·claude 확인
@@ -136,22 +137,33 @@ def install_skill(skills_dir: Path, repo: Path, python: str) -> Path:
     return path
 
 
-def register_jobs(deliver: str) -> None:
+def register_jobs(deliver: str, only: set[str] | None = None) -> None:
     hermes = shutil.which("hermes")
     if not hermes:
         print("⚠️  hermes 명령이 없어 크론 등록을 건너뜁니다. hermes/README.md 의 명령으로 직접 등록하세요.")
         return
-    existing = subprocess.run([hermes, "cron", "list"], capture_output=True, text=True,
+    def listed() -> str:
+        return subprocess.run([hermes, "cron", "list"], capture_output=True, text=True,
                               encoding="utf-8", errors="replace").stdout
+
+    existing = listed()
+    failed = []
     for name, schedule, _steps in JOBS:
-        if schedule is None:
+        if schedule is None or (only and name not in only):
             continue
         if name in existing:
             print(f"크론 있음: {name} (건너뜀)")
             continue
         subprocess.run([hermes, "cron", "create", schedule, "--no-agent", "--script", f"{name}.py",
-                        "--deliver", deliver, "--name", name], check=True)
-        print(f"크론 등록: {name} ({schedule})")
+                        "--deliver", deliver, "--name", name])
+        # hermes 는 생성에 실패해도 종료 코드 0 일 수 있어 목록으로 확인한다
+        if name in listed():
+            print(f"크론 등록: {name} ({schedule})")
+        else:
+            failed.append(name)
+            print(f"⚠️  크론 등록 실패: {name} ({schedule}) — 위 hermes 메시지 확인")
+    if failed:
+        raise SystemExit(f"크론 등록 실패: {', '.join(failed)}")
 
 
 def main() -> int:
@@ -160,7 +172,13 @@ def main() -> int:
     parser.add_argument("--claude", default=os.environ.get("CLAUDE_BIN") or shutil.which("claude") or "")
     parser.add_argument("--hermes-home", type=Path, default=default_hermes_home())
     parser.add_argument("--deliver", default=os.environ.get("HERMES_DELIVER", "telegram"))
+    parser.add_argument("--jobs", help="이 크론만 등록 (쉼표 구분, 예: skin-worker,skin-weekly-topics). "
+                                       "키·배포가 준비 안 된 크론은 빼 두면 실패 알림이 안 온다. 기본: 전부")
     args = parser.parse_args()
+    only = {j.strip() for j in args.jobs.split(",") if j.strip()} if args.jobs else None
+    unknown = (only or set()) - {name for name, schedule, _ in JOBS if schedule}
+    if unknown:
+        parser.error(f"없는 크론: {', '.join(sorted(unknown))}")
     print(f"저장소: {REPO}\npython: {args.python}\nHermes: {args.hermes_home}")
 
     # 1. 준비
@@ -184,7 +202,7 @@ def main() -> int:
     # 3. 스킬
     print(f"스킬: {install_skill(args.hermes_home / 'skills', REPO, args.python)}")
     # 4. 크론 등록
-    register_jobs(args.deliver)
+    register_jobs(args.deliver, only)
 
     check = args.hermes_home / "scripts" / "skin-check.py"
     print(f"""
