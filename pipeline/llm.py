@@ -26,6 +26,9 @@ KEY_ENV = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 # API 를 부르지 않고 검수 요청 파일로 내보내 Claude Code 세션이 처리하는 단계 (02c_external_review.py)
 EXTERNAL = "claude_code"
 RETRIES = 3
+# 응답이 오지 않는 호출을 끊는다 (없으면 워커가 Hermes 1시간 제한까지 멈추고 잠금 때문에 다음 실행도 건너뜀).
+# pro + 검색 연동은 2분 안팎 걸린다. 초과하면 재시도.
+REQUEST_TIMEOUT_SEC = 300
 
 
 class LLMError(RuntimeError):
@@ -77,7 +80,8 @@ def _gemini(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=_api_key("gemini"))
+    client = genai.Client(api_key=_api_key("gemini"),
+                          http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_SEC * 1000))  # ms
     config = types.GenerateContentConfig(
         system_instruction=system,
         temperature=cfg.get("temperature"),
@@ -102,7 +106,7 @@ def _gemini(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult
 def _anthropic(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult:
     import anthropic
 
-    client = anthropic.Anthropic(api_key=_api_key("anthropic"))
+    client = anthropic.Anthropic(api_key=_api_key("anthropic"), timeout=REQUEST_TIMEOUT_SEC)
     kwargs: dict = {
         "model": cfg["model"],
         "max_tokens": cfg.get("max_tokens", 16000),
