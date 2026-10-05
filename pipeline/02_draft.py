@@ -144,11 +144,32 @@ def write_draft(topic: dict, sources: list[dict], note: str | None, rules: str |
         raise llm.LLMError("작성 결과에 대본(shortform.lines)이 없습니다")
     if not (data.get("blog") or {}).get("markdown"):
         raise llm.LLMError("작성 결과에 블로그 markdown 이 없습니다")
+    _tidy(data)
+    return data, result.model
+
+
+def _tidy(data: dict) -> None:
     for line in data["shortform"]["lines"]:  # 모델이 [["F1","F2"]] 나 "F1, F2" 로 줄 때가 있다
         line["fact_ids"] = _fact_ids(line.get("fact_ids"))
     # 제목은 title 로 따로 붙으므로 본문 맨 앞의 H1 은 뺀다 (제목 중복 방지)
     data["blog"]["markdown"] = re.sub(r"\A\s*#\s[^\n]*\n+", "", data["blog"]["markdown"])
-    return data, result.model
+
+
+def repair_draft(written: dict, facts: list[dict], removed: set[str], rules: str | None = None) -> dict:
+    """확인되지 않아 버린 사실을 참조하는 문장만 고친다 — 초안 전체를 다시 쓰는 자동 재생성보다 싸고 안전하다."""
+    text = prompt(
+        "repair_draft",
+        rules=rules,
+        removed=", ".join(sorted(removed)),
+        facts="\n".join(f"[{f['id']}] {f['text']}" for f in facts),
+        shortform=written["shortform"],
+        blog=written["blog"],
+    )
+    data, _ = llm.generate_json("write", text)
+    if not isinstance(data, dict) or not (data.get("shortform") or {}).get("lines") or not (data.get("blog") or {}).get("markdown"):
+        raise llm.LLMError("수선 결과에 대본·블로그가 없습니다")
+    _tidy(data)
+    return {**written, "shortform": data["shortform"], "blog": data["blog"]}
 
 
 def _fact_ids(value) -> list[str]:
@@ -220,6 +241,10 @@ def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -
     facts = verify_facts(written.get("facts"), sources)
     if len(facts) < MIN_FACTS:
         raise llm.LLMError(f"페이지로 확인된 사실이 부족합니다 ({len(facts)}건, 출처 {len(sources)}곳)")
+    removed = used_fact_ids(written) - {f["id"] for f in facts}
+    if removed:  # 버린 사실을 본문이 참조하면 그 문장만 고친다 (안 고쳐지면 02b 가 차단)
+        log.info("확인되지 않은 사실 %s 참조 → 해당 문장만 수선", sorted(removed))
+        written = repair_draft(written, facts, removed, rules)
     draft = {"topic": topic, "facts": facts, "shortform": written["shortform"], "blog": written["blog"],
              "writer": writer, "sources": [{k: s[k] for k in ("id", "url", "title")} for s in sources]}
     if sponsor:

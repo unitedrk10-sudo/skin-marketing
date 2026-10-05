@@ -245,6 +245,35 @@ def test_writer_found_page_is_fetched_and_checked(env):
     assert [f["id"] for f in facts] == ["F1"] and [s["url"] for s in sources] == [extra]  # 병원 사이트는 받지 않는다
 
 
+def test_sentences_citing_unverified_facts_are_repaired(env):
+    good = [{"id": f"F{i}", "source": "S1", "quote": QUOTE, "text": f"fact {i}"} for i in range(1, 6)]
+    bad = {"id": "F6", "source": "S1", "quote": "a sentence that is not on the page at all", "text": "made up"}
+    env.responses["write"] = write_result(good + [bad], blog=blog(f"It works [F1]. It lasts years [F6].\n\n{DISCLOSURE}"))
+    fake = env
+
+    def backend(stage, cfg, system, prompt):
+        if "removed some facts" in prompt:
+            assert "F6" in prompt and "[F1] fact 1" in prompt and "[F6]" not in prompt.split("REMAINING FACTS")[1].split("CURRENT")[0]
+            fake.calls.append(("repair", prompt))
+            return llm.LLMResult(text=json.dumps({"shortform": script(), "blog": blog()}), model="fake", stage=stage)
+        return fake(stage, cfg, system, prompt)
+
+    llm.set_backend(backend)
+    draft = common.load_draft(common.content_dir("drafts") / make_draft(env))
+    assert [c[0] for c in fake.calls][-1] == "repair"
+    assert "[F6]" not in draft["blog"]["markdown"] and [f["id"] for f in draft["facts"]] == ["F1", "F2", "F3", "F4", "F5"]
+
+
+def test_no_repair_when_all_cited_facts_verified(env):
+    make_draft(env)
+    assert not any("removed some facts" in p for _, p in env.calls)
+
+
+def test_medical_societies_are_not_clinic_sites():
+    assert not web.is_clinic_host("https://www.plasticsurgery.org/cosmetic-procedures/laser-skin-resurfacing")
+    assert web.is_clinic_host("https://www.seoul-plastic-surgery.co.kr/rejuran")
+
+
 def test_too_few_verified_facts_fails_the_draft(env):
     env.responses["write"] = write_result([{"id": "F1", "source": "S1", "quote": "not on the page at all, made up", "text": "x"}])
     with pytest.raises(llm.LLMError, match="사실이 부족"):
