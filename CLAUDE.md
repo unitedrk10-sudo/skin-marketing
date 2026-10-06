@@ -30,7 +30,7 @@
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` (병원 권역 중심 여행 코스 글: `--course`, sponsors.yaml `zone` 필요) / 목록 점검 `python -m pipeline.sponsors check`
 - 블로그 사이트: `python -m pipeline.site build|deploy` (site/dist → Cloudflare Pages)
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
-- 영상: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered, `GOOGLE_TTS_API_KEY` + ffmpeg) / 게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
+- 영상: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered, Gemini TTS — `GEMINI_API_KEY` 그대로, 목소리 Kore `config/voice.yaml`, 모델 models.yaml `tts` + ffmpeg) / 게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
 - Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 

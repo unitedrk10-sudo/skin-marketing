@@ -1,9 +1,11 @@
-# 영상 TTS 목소리 — 04_render_video 가 읽는다 (구현 예정). 채널 전체에 같은 목소리 고정 (기획서 4장).
-# 무료 기간: Google Cloud TTS 무료 한도 (월 100만 자 — 상업적 사용 가능)
-# 스폰서 유입 후: ElevenLabs 유료(Starter 이상, 상업적 사용 가능) 샘플 중 선택 — 후보: Matilda / Sarah / Alice
-# 무료 ElevenLabs 요금제는 상업적 사용 불가 → 쓰지 않는다.
+# 영상 TTS 목소리 — 04_render_video 가 읽는다. 채널 전체에 같은 목소리 고정 (기획서 4장).
+#
+# provider: gemini (2026-10-06 결정) — Gemini API 의 TTS 모델, 키는 GEMINI_API_KEY 그대로. 모델명은 config/models.yaml 의 tts 단계.
+#   Google Cloud TTS(provider: google, GOOGLE_TTS_API_KEY)는 API 키를 받지 않아(401 "API keys are not supported") 쓰지 않는다.
+# 목소리 후보 비교(2026-10-06): Aoede·Kore·Sulafat·Charon·Sadaltager·Iapetus 중 Kore 선택 —
+#   단단하고 또렷한 여성 목소리, 의료 정보 설명에 신뢰감. AI 설명자이며 의사·환자로 말하지 않는다.
 
-provider: google
-voice: en-US-Chirp3-HD-Aoede     # 미국식, 차분한 여성 설명형 (2026-09-28 결정)
+provider: gemini
+voice: Kore
 language: en-US
-speaking_rate: 1.0               # 대본 속도 (초당 약 2.3단어 기준으로 작성됨)
+speaking_rate: 1.0               # 1.0 이 아니면 ffmpeg atempo 로 조절 (대본은 초당 약 2.3단어 기준)

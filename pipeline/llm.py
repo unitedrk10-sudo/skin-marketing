@@ -114,6 +114,42 @@ def _gemini(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult
     return LLMResult(text=text, model=cfg["model"], stage=stage, grounding_urls=urls)
 
 
+def speech(stage: str, text: str, voice: str) -> tuple[bytes, str]:
+    """Gemini TTS — (오디오 바이트, MIME). 모델은 models.yaml 의 stage(예: tts), 목소리는 config/voice.yaml.
+    MIME 은 audio/wav 이거나 원시 PCM(audio/l16; rate=24000) — 변환은 호출하는 쪽(04_render_video)이 한다."""
+    from google import genai
+    from google.genai import types
+
+    cfg = stage_config(stage)
+    if cfg["provider"] != "gemini":
+        raise LLMError(f"stage '{stage}': 음성은 gemini provider 만 지원합니다")
+    # 대본 한 줄은 보통 10초 안에 끝난다 — 멈춘 호출을 5분 기다리지 않게 단계별로 짧게 (models.yaml timeout_sec, 최소 10초)
+    timeout = max(10, int(cfg.get("timeout_sec", REQUEST_TIMEOUT_SEC)))
+    client = genai.Client(api_key=_api_key("gemini"), http_options=types.HttpOptions(timeout=timeout * 1000))
+    config = types.GenerateContentConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
+            prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice))),
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
+    last: Exception | None = None
+    for attempt in range(RETRIES):
+        try:
+            resp = client.models.generate_content(model=cfg["model"], contents=text, config=config)
+            part = resp.candidates[0].content.parts[0].inline_data
+            if not part or not part.data:
+                raise LLMError(f"Gemini 음성 응답 없음 (stage={stage})")
+            return part.data, part.mime_type or ""
+        except LLMError:
+            raise
+        except Exception as e:  # noqa: BLE001 — 네트워크·5xx·429
+            last = e
+            log.warning("stage=%s 음성 생성 실패 (%d/%d): %s", stage, attempt + 1, RETRIES, type(e).__name__)
+            if attempt + 1 < RETRIES:
+                time.sleep(2 ** (attempt + 1))
+    raise LLMError(f"stage={stage} 음성 생성 실패: {last}")
+
+
 # ---- Claude (anthropic) ----
 
 def _anthropic(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult:
@@ -243,6 +279,10 @@ def _check() -> int:
         return 1
     for stage in (s for s in stages if s not in external):
         try:
+            if stages[stage].get("audio"):  # 음성 단계 — 짧은 문장을 실제로 읽혀 본다
+                data, mime = speech(stage, "Test.", load_yaml("voice.yaml").get("voice", "Kore"))
+                print(f"{stage}: OK ({stages[stage]['model']}, {mime}, {len(data)} bytes)")
+                continue
             r = generate(stage, 'Reply with exactly: {"ok": true}')
             print(f"{stage}: OK ({r.model})")
         except LLMError as e:

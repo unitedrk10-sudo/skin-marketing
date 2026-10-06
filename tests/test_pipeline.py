@@ -96,6 +96,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_CONTENT_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("SKIN_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("SKIN_SPONSORS_FILE", str(tmp_path / "sponsors.yaml"))  # 기본: 스폰서 없음
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)  # 워커가 실제 Gemini TTS 로 렌더링하지 않게
     fake = FakeLLM()
     llm.set_backend(fake)
     web.set_fetcher(ok_fetch)  # 출처 페이지 수집도 네트워크 없이
@@ -1865,7 +1866,7 @@ def test_render_moves_to_rendered_with_outputs(env, monkeypatch):
         draft_id = make_draft(env)
         review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
         _approve(env, draft_id)
-        monkeypatch.setenv("GOOGLE_TTS_API_KEY", "k")
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
         assert render_mod.main([]) == 0
     finally:
         render_mod.set_tts(None)
@@ -1879,8 +1880,38 @@ def test_render_moves_to_rendered_with_outputs(env, monkeypatch):
     assert not list(common.draft_dirs("approved"))
 
 
-def test_render_is_silent_without_tts_key(env, monkeypatch, capsys):
+@pytest.mark.parametrize("audio,mime,rate,fmt,tempo", [
+    (b"RIFF....WAVEfmt ", "audio/wav", 1.0, False, False),                 # WAV 는 헤더대로
+    (b"\x00\x01" * 10, "audio/l16; rate=24000; channels=1", 1.0, True, False),  # 원시 PCM 은 형식을 알려 준다
+    (b"\x00\x01" * 10, "audio/l16; rate=24000", 1.1, True, True),          # 속도 조절은 atempo
+])
+def test_gemini_tts_converts_to_mp3(monkeypatch, audio, mime, rate, fmt, tempo):
+    seen = {}
+    monkeypatch.setattr(llm, "speech", lambda stage, text, voice: seen.update(stage=stage, voice=voice) or (audio, mime))
+
+    def fake_run(cmd):
+        seen["cmd"] = cmd
+        Path(cmd[-1]).write_bytes(b"ID3mp3")
+        return ""
+
+    monkeypatch.setattr(render_mod, "_run", fake_run)
+    assert render_mod._gemini_tts("Hello.", {"provider": "gemini", "voice": "Kore", "speaking_rate": rate}) == b"ID3mp3"
+    assert seen["stage"] == "tts" and seen["voice"] == "Kore"
+    assert ("s16le" in seen["cmd"]) == fmt and ("24000" in seen["cmd"]) == fmt
+    assert any(c.startswith("atempo=") for c in seen["cmd"]) == tempo
+
+
+def test_tts_uses_gemini_key_and_kore_voice(monkeypatch):
+    voice = common.load_yaml("voice.yaml")
+    assert voice["provider"] == "gemini" and voice["voice"] == "Kore"
+    assert llm.stage_config("tts")["provider"] == "gemini" and llm.stage_config("tts")["audio"]
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.delenv("GOOGLE_TTS_API_KEY", raising=False)
+    assert render_mod.tts_configured()  # 별도 TTS 키 없이 Gemini 키로
+
+
+def test_render_is_silent_without_tts_key(env, monkeypatch, capsys):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert render_mod.main([]) == 0 and capsys.readouterr().out == ""
 
 

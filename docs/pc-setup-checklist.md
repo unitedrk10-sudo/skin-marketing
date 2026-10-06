@@ -28,7 +28,7 @@
 |---|---|---|
 | `GEMINI_API_KEY` | Google AI Studio (5만원 크레딧 계정) | 초안 생성 불가 (필수) |
 | `LAW_API_OC` | 국가법령정보 Open API (등록 완료) | 법령 동기화 불가 |
-| `GOOGLE_TTS_API_KEY` | Google Cloud (0단계) | 영상 렌더링 건너뜀 |
+| ~~`GOOGLE_TTS_API_KEY`~~ | 불필요 — 영상 음성은 Gemini TTS 로 `GEMINI_API_KEY` 사용 (2026-10-06) | - |
 | `DATA_GO_KR_KEY` | data.go.kr (0단계 승인 후) | 코스 주변 병원 목록 없음 |
 | `TRACKER_URL`, `TRACKER_TOKEN` | 5단계 배포 후 | 링크 추적 없음 (원래 주소로 연결) |
 | `CF_API_TOKEN`, `CF_ACCOUNT_ID` | Cloudflare (Account Analytics Read) | 주제 추천에 조회수 미반영 |
