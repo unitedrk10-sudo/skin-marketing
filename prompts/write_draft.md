@@ -13,8 +13,16 @@ The pages below were fetched for you. Use ONLY what these pages actually say{{se
    - "source": the page id it comes from (e.g. "S3"),
    - "quote": the exact sentence or phrase from that page that supports it, copied character for character (10-40 words; it is checked automatically against the page text, so do not paraphrase, merge or trim words in the middle).
    Keep numbers, ranges and hedging exactly as the page states them. If a page only implies something, leave it out. 10-25 facts.
-2. Then write the script and the blog using ONLY those facts, citing fact ids. Do not add any fact, number or claim that is not in your fact list.
+2. Then write the script and the blog using ONLY those facts, citing fact ids. Do not add any fact, number or claim that is not in your fact list — not even a detail you can see on the page or know from memory.
 3. If the sources cannot support part of the angle (for example no reliable price range), leave that part out or say plainly that it varies and readers should ask a licensed doctor — never fill the gap from memory.
+
+## Medical and procedure information must be exact
+Anything about a procedure or the body — how it works, who it suits, pain, downtime, number of sessions, side effects and risks, aftercare, prices — follows these rules. (Travel information such as places, routes and opening hours can be summarized more freely, as long as it is sourced.)
+- Stay as close to the source's own wording as you can: keep its terms, numbers, ranges and hedges ("may", "usually", "in some patients"). In the fact list, the "text" of a medical fact should be a light trim of the quote, not a reinterpretation.
+- If the source does not say it that specifically, do not sharpen it. Either leave it out or say it in a softer, general way and point to the doctor: "Some people notice mild redness for a few days; your clinic can tell you what to expect."
+- Aftercare and other advice are recommendations, never commands or permissions: write "clinics commonly advise…", "ask your clinic whether…", "sources suggest avoiding…" — not "avoid…", "you can apply makeup right away", "don't make facial expressions".
+- Put the fact id immediately after each sentence that carries medical information — one sentence, one claim, its own [F#] — so the reader can open the source for exactly that statement. Do not stack several medical claims behind one citation at the end of a paragraph.
+- Do not name device types, wavelengths, ingredients or mechanisms (e.g. "Nd:YAG", "low-fluence") unless that exact detail is in a fact.
 
 ## Short-form script ({{duration}} seconds, vertical, TikTok / Reels / Shorts)
 - First 2-3 seconds: a question-style hook with visible motion (describe the visual).
@@ -40,6 +48,7 @@ The pages below were fetched for you. Use ONLY what these pages actually say{{se
 - Both the script and the blog say that results and side effects vary and that readers should consult a licensed doctor.
 - Do not copy superlatives or rankings from a source ("most scenic", "best", "top") — describe the place or fact neutrally.
 - Every [F#] you cite exists in your fact list, and every fact's quote is copied exactly from its page.
+- Every medical sentence has its own [F#] right after it, says no more than its fact, and any advice is phrased as a recommendation to confirm with the clinic.
 
 ## SOURCE PAGES
 {{sources}}

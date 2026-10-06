@@ -171,9 +171,11 @@ def draft_message(path: Path, number: int, total: int) -> str:
             out.append(f"   자막: {ln['caption']}")
     out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}  {' '.join(sf.get('hashtags', []))}")
     out += ["", f"📝 블로그: {blog.get('title', '')}", blog.get("meta_description", ""), "", blog.get("markdown", "").strip()]
-    urls = list(dict.fromkeys(f["url"] for f in draft.get("facts", [])))
-    if urls:
-        out += ["", "📚 출처"] + [f"- {u}" for u in urls]
+    ids_by_url: dict[str, list[str]] = {}
+    for f in draft.get("facts", []):
+        ids_by_url.setdefault(f["url"], []).append(f["id"])
+    if ids_by_url:  # 본문의 [F#] 로 바로 찾아볼 수 있게
+        out += ["", "📚 출처"] + [f"- {','.join(ids)}: {u}" for u, ids in ids_by_url.items()]
     return "\n".join(out)
 
 
