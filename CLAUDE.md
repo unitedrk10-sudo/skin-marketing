@@ -37,7 +37,8 @@
 ## 구조 메모
 - 초안 = `content/<상태>/<draft_id>/` 폴더 (`draft.json`, `script.md`, `blog.md`, `review.json`, `history.json`, 텔레그램 첨부용 `<draft_id>.md`). `content/` 는 운영 데이터라 git 에 올리지 않는다.
 - 대본·블로그는 02_draft 의 사실 목록(`facts`, 사실마다 출처 URL + 페이지 원문 인용 `quote`)만 사용하고 `[F#]` / `fact_ids` 로 참조한다. 인용문이 받아 둔 페이지에 없는 사실은 작성 직후 코드가 버린다(`web.quote_in_page`). 02b 는 이 참조를 기준으로 출처를 다시 검증한다.
-- 출처 페이지: 병원 사이트로 보이는 도메인(`web.is_clinic_host`)은 수집 단계에서 빼고(스폰서 글의 광고주 공식 사이트만 예외), 그래도 들어오면 02b 가 ⚠️. Gemini 검색 연동의 리디렉션 주소는 실제 주소로 바꿔 저장(`web.source_url`).
+- 출처 페이지: 병원 사이트로 보이는 도메인(`web.is_clinic_host`)은 수집 단계에서 빼고(스폰서 글의 광고주 공식 사이트만 예외), 그래도 들어오면 02b 가 ⚠️.
+- 병원 공통 실무 정보 (중간안, 2026-10-06): Gemini 가 `clinic_pages` 로 병원 페이지를 따로 찾고(`fetch_clinic_pages`, 병원 3곳 미만이면 안 씀, 스폰서 글엔 안 씀), Claude 는 상담 절차·언어 지원·예약·패키지 구성 같은 비의료 정보만 kind `practice` 로 — 서로 다른 병원 3곳 이상 인용(`verify_practice`). 블로그엔 링크 없이 `[clinic websites]`, 출처 목록·JSON-LD 에 병원 주소 없음, 텔레그램 검수엔 근거 주소 표시 + 👤 사람 확인. 원칙·이유는 기획서 12-3-1 (다른 계정 댓글 링크 금지 포함). Gemini 검색 연동의 리디렉션 주소는 실제 주소로 바꿔 저장(`web.source_url`).
 - Claude CLI(`llm._claude_cli`): 프롬프트는 stdin, 저장소 밖 임시 폴더에서 `--tools ""`(추가 검색 단계만 WebSearch·WebFetch)·`--strict-mcp-config`·`--no-session-persistence` 로 실행. 사용량 한도·시간 초과는 `llm.RateLimited` → 워커가 요청을 버리지 않고 다음 실행 때 재시도.
 - 텔레그램 검수 메시지(`03_review.list_message`): 초안별 대본 전문·블로그 구성·걸린 항목 + `MEDIA:` 첨부(`review_doc` 가 만든 `<draft_id>.md`). PC 경로는 보내지 않는다.
 - 금지 표현은 `config/banned_terms.txt`, 병원명·연락처·체험담 등 패턴은 `02b_auto_review.py` 의 `RULE_PATTERNS`. 화장품 글(`content_type: skincare`)은 `COSMETIC_PATTERNS`(화장품법 §13 의약품 오인 표현)도 검사.

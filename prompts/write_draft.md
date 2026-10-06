@@ -24,6 +24,13 @@ Anything about a procedure or the body — how it works, who it suits, pain, dow
 - Put the fact id immediately after each sentence that carries medical information — one sentence, one claim, its own [F#] — so the reader can open the source for exactly that statement. Do not stack several medical claims behind one citation at the end of a paragraph.
 - Do not name device types, wavelengths, ingredients or mechanisms (e.g. "Nd:YAG", "low-fluence") unless that exact detail is in a fact.
 
+## Clinic pages (practical information only)
+CLINIC PAGES (C1, C2, …) are different clinics' own websites. You may use them ONLY for general practical information about how clinics in Korea work — consultation steps, language support, how booking works, how sessions or packages are usually structured, payment or documents. Never for anything medical (how a procedure works, results, pain, downtime, side effects, prices of a specific clinic).
+- A practical fact is allowed only when at least THREE different clinic pages say the same thing. Give it "kind": "practice" and, instead of one "source"/"quote", a "sources" list with one entry per clinic page: [{"source": "C1", "quote": "exact words from C1"}, {"source": "C3", "quote": "…"}, {"source": "C4", "quote": "…"}]. Each quote is checked against its page.
+- Write it as a general statement, e.g. "Many Seoul clinics describe the first visit as a consultation before any treatment [F7]." Never name, describe or hint at a particular clinic.
+- If fewer than three clinic pages agree, leave the point out.
+{{clinic_pages}}
+
 ## Short-form script ({{duration}} seconds, vertical, TikTok / Reels / Shorts)
 - First 2-3 seconds: a question-style hook with visible motion (describe the visual).
 - A neutral AI explainer voice (TTS). The narrator never speaks as a patient.
@@ -56,7 +63,8 @@ Anything about a procedure or the body — how it works, who it suits, pain, dow
 Return ONLY JSON, no prose, no code fence:
 {
   "facts": [
-    {"id": "F1", "source": "S1", "quote": "exact words copied from the page", "text": "the fact in your own words", "kind": "mechanism|suitability|pain|downtime|sessions|price|risk|travel|regulation|other"}
+    {"id": "F1", "source": "S1", "quote": "exact words copied from the page", "text": "the fact in your own words", "kind": "mechanism|suitability|pain|downtime|sessions|price|risk|travel|regulation|other"},
+    {"id": "F9", "kind": "practice", "text": "a practical point several clinics share", "sources": [{"source": "C1", "quote": "…"}, {"source": "C2", "quote": "…"}, {"source": "C4", "quote": "…"}]}
   ],
   "shortform": {
     "title": "video title, max 70 chars, main keyword first",

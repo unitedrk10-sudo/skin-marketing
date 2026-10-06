@@ -52,6 +52,11 @@ MIN_SOURCES = 5       # 이보다 적으면 작성 모델이 직접 추가 검�
 SOURCE_CHARS = 12000  # 페이지당 넘기는 본문 길이
 MIN_PAGE_CHARS = 500  # 이보다 짧은 본문은 스크립트 렌더링·차단 페이지로 보고 뺀다
 MIN_FACTS = 5
+# 병원 사이트는 단일 출처로 쓰지 않는다. 실무 정보(상담 절차·언어 지원·예약·패키지 구성)만, 서로 다른 병원
+# MIN_CLINIC_AGREE 곳 이상이 같은 내용일 때 kind "practice" 사실로 — 블로그엔 링크 없이 "several clinic websites".
+MAX_CLINIC_PAGES = 6
+MIN_CLINIC_AGREE = 3
+CLINIC_CHARS = 6000
 
 
 def _revision(note: str | None) -> str:
@@ -60,8 +65,10 @@ def _revision(note: str | None) -> str:
 
 # ---------------- 1·2. 출처 ----------------
 
-def search_sources(topic: dict, note: str | None, rules: str | None = None, travel: str = "") -> list[dict]:
-    """Gemini 검색으로 읽을 페이지 후보 [{url, title}] — 모델이 고른 목록 + 검색 연동이 실제로 연 페이지."""
+def search_sources(topic: dict, note: str | None, rules: str | None = None,
+                   travel: str = "") -> tuple[list[dict], list[dict]]:
+    """Gemini 검색으로 읽을 페이지 후보 [{url, title}] — 모델이 고른 목록 + 검색 연동이 실제로 연 페이지.
+    두 번째 값은 실무 정보(상담 절차·언어 지원·예약 등)용 병원 페이지 후보 (여러 병원 공통일 때만 쓴다)."""
     text = prompt(
         "source_search",
         rules=rules,
@@ -74,9 +81,39 @@ def search_sources(topic: dict, note: str | None, rules: str | None = None, trav
         travel_context=travel,
     )
     data, result = llm.generate_json("sources", text)
-    picked = data.get("sources", []) if isinstance(data, dict) else []
-    candidates = [{"url": str(s.get("url", "")).strip(), "title": s.get("title", "")} for s in picked if isinstance(s, dict)]
-    return candidates + [{"url": g["url"], "title": g.get("title", "")} for g in result.grounding_urls]
+
+    def listed(key: str) -> list[dict]:
+        items = data.get(key, []) if isinstance(data, dict) else []
+        return [{"url": str(s.get("url", "")).strip(), "title": s.get("title", "")} for s in items if isinstance(s, dict)]
+
+    grounded = [{"url": g["url"], "title": g.get("title", "")} for g in result.grounding_urls]
+    return listed("sources") + grounded, listed("clinic_pages")
+
+
+def fetch_clinic_pages(candidates: list[dict]) -> list[dict]:
+    """실무 정보용 병원 페이지 [{id: C#, url, title, text}] — 병원(도메인)마다 1쪽.
+    서로 다른 병원이 MIN_CLINIC_AGREE 곳 미만이면 공통 정보를 확인할 수 없으므로 빈 목록."""
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        urls = list(pool.map(lambda c: web.source_url(c["url"]) if c["url"].startswith("http") else None, candidates))
+    hosts, todo = set(), []
+    for cand, url in zip(candidates, urls):
+        if url and web.host(url) not in hosts:
+            hosts.add(web.host(url))
+            todo.append({"url": url, "title": cand["title"]})
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        pages = list(pool.map(lambda s: web.get(s["url"]), todo))
+    out = []
+    for s, (status, text) in zip(todo, pages):
+        if status == 200 and len(text) >= MIN_PAGE_CHARS and len(out) < MAX_CLINIC_PAGES:
+            out.append({"id": f"C{len(out) + 1}", **s, "text": text})
+    return out if len(out) >= MIN_CLINIC_AGREE else []
+
+
+def clinic_pages_text(pages: list[dict]) -> str:
+    if not pages:
+        return "(No clinic pages for this topic — do not write practical clinic facts.)"
+    return "CLINIC PAGES:\n" + "\n\n".join(f"[{p['id']}] {p['title'] or 'clinic page'}\n<page>\n{p['text'][:CLINIC_CHARS]}\n</page>"
+                                          for p in pages)
 
 
 def fetch_sources(candidates: list[dict], sponsor: dict | None = None) -> list[dict]:
@@ -116,7 +153,7 @@ def sources_text(sources: list[dict]) -> str:
 # ---------------- 3. 작성 ----------------
 
 def write_draft(topic: dict, sources: list[dict], note: str | None, rules: str | None = None,
-                travel: str = "") -> tuple[dict, str]:
+                travel: str = "", clinic_pages: list[dict] | None = None) -> tuple[dict, str]:
     channels = load_yaml("channels.yaml")
     lo, hi = channels["shortform"]["duration_sec"]
     words_lo, words_hi = channels["blog"]["words"]
@@ -135,6 +172,7 @@ def write_draft(topic: dict, sources: list[dict], note: str | None, rules: str |
         min_words=str(words_lo),
         max_words=str(words_hi),
         sources=sources_text(sources) or "(no usable pages were found)",
+        clinic_pages=clinic_pages_text(clinic_pages or []),
         search_note=(". There are few usable pages, so you may also use web search to find more pages from the "
                      "preferred source types in the rules (never clinic websites). For a fact from a page you found "
                      "yourself, give \"url\" (the exact page URL) instead of \"source\", and copy the quote from that page."
@@ -183,15 +221,39 @@ def _fact_ids(value) -> list[str]:
 
 # ---------------- 4. 사실 확인 ----------------
 
-def verify_facts(raw: list, sources: list[dict]) -> list[dict]:
+def verify_practice(f: dict, clinic_pages: list[dict]) -> dict | None:
+    """병원 공통 실무 정보: 서로 다른 병원 페이지 MIN_CLINIC_AGREE 곳 이상의 인용이 각 페이지에 실제로 있어야 한다."""
+    by_id = {p["id"]: p for p in clinic_pages}
+    ok, hosts = [], set()
+    for entry in f.get("sources") or []:
+        page = by_id.get(str((entry or {}).get("source", "")))
+        quote = str((entry or {}).get("quote", ""))
+        if page and web.host(page["url"]) not in hosts and web.quote_in_page(quote, page["text"]):
+            hosts.add(web.host(page["url"]))
+            ok.append((page["url"], quote.strip()))
+    if len(ok) < MIN_CLINIC_AGREE:
+        log.warning("병원 공통 정보 근거 부족 (%d곳) → 제외 [%s]: %s", len(ok), f.get("id"), str(f.get("text", ""))[:80])
+        return None
+    return {"id": f["id"], "text": f["text"].strip(), "kind": "practice", "source_title": "several clinic websites",
+            "url": ok[0][0], "quote": ok[0][1], "urls": [u for u, _ in ok], "quotes": [q for _, q in ok]}
+
+
+def verify_facts(raw: list, sources: list[dict], clinic_pages: list[dict] | None = None) -> list[dict]:
     """원문 인용이 해당 페이지에 실제로 있는 사실만 남긴다. 작성 모델이 직접 찾은 페이지(url)는 받아 와서 확인한다.
-    (버린 사실을 대본·블로그가 참조하면 02b 가 '존재하지 않는 사실 참조'로 차단한다)"""
+    (버린 사실을 대본·블로그가 참조하면 02b 가 '존재하지 않는 사실 참조'로 차단한다)
+    kind "practice" 는 병원 공통 실무 정보 — verify_practice (병원 페이지 C# 는 다른 사실의 출처로 쓸 수 없다)."""
     by_id = {s["id"]: s for s in sources}
     by_url = {s["url"]: s for s in sources}
     facts, seen = [], set()
     for f in raw if isinstance(raw, list) else []:
         fid = str(f.get("id", "")) if isinstance(f, dict) else ""
         if not re.fullmatch(r"F\d+", fid) or fid in seen or not f.get("text"):
+            continue
+        if f.get("kind") == "practice":
+            fact = verify_practice(f, clinic_pages or [])
+            if fact:
+                seen.add(fid)
+                facts.append(fact)
             continue
         src = by_id.get(str(f.get("source", ""))) or by_url.get(str(f.get("url", "")))
         url = str(f.get("url", "")).strip()
@@ -236,10 +298,13 @@ def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -
         travel = attractions.context(topic, home=sponsor) if topic.get("course") else ""
     else:  # 여행 축: 관광지 속성·코스 규칙·맛집 트렌드
         travel = attractions.context(topic)
-    sources = fetch_sources(search_sources(topic, note, rules, travel), sponsor)
-    log.info("출처 %d곳 확보: %s", len(sources), topic["title"])
-    written, writer = write_draft(topic, sources, note, rules, travel)
-    facts = verify_facts(written.get("facts"), sources)
+    candidates, clinic_candidates = search_sources(topic, note, rules, travel)
+    sources = fetch_sources(candidates, sponsor)
+    # 스폰서 글에는 광고주 외 다른 병원이 들어가면 안 되므로 병원 공통 정보를 쓰지 않는다
+    clinic_pages = [] if sponsor else fetch_clinic_pages(clinic_candidates)
+    log.info("출처 %d곳 확보 (병원 공통 정보용 %d곳): %s", len(sources), len(clinic_pages), topic["title"])
+    written, writer = write_draft(topic, sources, note, rules, travel, clinic_pages)
+    facts = verify_facts(written.get("facts"), sources, clinic_pages)
     if len(facts) < MIN_FACTS:
         raise llm.LLMError(f"페이지로 확인된 사실이 부족합니다 ({len(facts)}건, 출처 {len(sources)}곳)")
     removed = used_fact_ids(written) - {f["id"] for f in facts}
@@ -247,7 +312,8 @@ def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -
         log.info("확인되지 않은 사실 %s 참조 → 해당 문장만 수선", sorted(removed))
         written = repair_draft(written, facts, removed, rules)
     draft = {"topic": topic, "facts": facts, "shortform": written["shortform"], "blog": written["blog"],
-             "writer": writer, "sources": [{k: s[k] for k in ("id", "url", "title")} for s in sources]}
+             "writer": writer, "sources": [{k: s[k] for k in ("id", "url", "title")} for s in sources],
+             "clinic_pages": [{k: p[k] for k in ("id", "url", "title")} for p in clinic_pages]}  # 검수용 (게시 안 함)
     if sponsor:
         draft["sponsor"] = sponsor
         add_disclosures(draft, sponsor)

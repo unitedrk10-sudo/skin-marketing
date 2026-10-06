@@ -34,6 +34,7 @@ from pipeline.common import (
     move_draft,
     content_dir,
     draft_dirs,
+    PRACTICE_KIND,
     get_logger,
     is_medical_fact,
     load_draft,
@@ -171,6 +172,12 @@ def draft_message(path: Path, number: int, total: int) -> str:
     for text, urls in medical:
         out.append(f"• {text}")
         out += [f"   ↳ {u}" for u in urls]
+    practice = medical_sentences(draft, lambda f: f.get("kind") == PRACTICE_KIND)
+    if practice:  # 블로그에는 병원 링크 없이 "[clinic websites]" 로만 나간다
+        out += ["", f"🏥 병원 사이트 공통 정보 ({len(practice)}문장) — 블로그엔 병원명·링크 없이 게시, 근거 병원 확인용"]
+        for text, urls in practice:
+            out.append(f"• {text}")
+            out += [f"   ↳ {u}" for u in urls]
     out += ["", "🎬 숏폼 대본"]
     for i, ln in enumerate(sf.get("lines", []), 1):
         refs = f"  [{','.join(ln['fact_ids'])}]" if ln.get("fact_ids") else ""
@@ -186,12 +193,13 @@ SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(])|\n+")
 MD_NOISE = re.compile(r"^[\s>*#-]+|\*\*|__|\s*\[F\d+\]")
 
 
-def medical_sentences(draft: dict) -> list[tuple[str, list[str]]]:
-    """블로그·대본에서 의료 사실(여행 정보가 아닌 사실)을 인용한 문장과 그 출처 주소 — 사람이 출처와 대조할 목록."""
+def medical_sentences(draft: dict, which=is_medical_fact) -> list[tuple[str, list[str]]]:
+    """블로그·대본에서 의료 사실(which 로 바꿀 수 있다)을 인용한 문장과 그 출처 주소 — 사람이 출처와 대조할 목록."""
     facts = {f["id"]: f for f in draft.get("facts", [])}
 
     def urls(ids: list[str]) -> list[str]:
-        return list(dict.fromkeys(facts[i]["url"] for i in ids if i in facts and is_medical_fact(facts[i])))
+        return list(dict.fromkeys(u for i in ids if i in facts and which(facts[i])
+                                  for u in facts[i].get("urls") or [facts[i]["url"]]))
 
     out: list[tuple[str, list[str]]] = []
     for sentence in SENTENCE_END.split((draft.get("blog") or {}).get("markdown", "")):

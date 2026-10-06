@@ -32,10 +32,12 @@ STATES = ("topics", "drafts", "approved", "rendered", "ready_to_publish", "publi
 # 사실 종류 중 여행 정보 — 그 밖(시술 원리·대상·통증·회복·횟수·위험·가격·규정)은 의료 정보로 본다.
 # 의료 정보는 블로그에서 문장 옆 출처 링크(site.py), 텔레그램 검수에서 문장별 대조 목록(03_review)으로 보여준다.
 TRAVEL_FACT_KINDS = {"travel"}
+# 여러 병원 사이트가 공통으로 말하는 실무 정보 (상담 절차·언어 지원·예약 등) — 의료 정보 아님, 블로그엔 링크 없이 표시
+PRACTICE_KIND = "practice"
 
 
 def is_medical_fact(fact: dict) -> bool:
-    return fact.get("kind") not in TRAVEL_FACT_KINDS
+    return fact.get("kind") not in TRAVEL_FACT_KINDS | {PRACTICE_KIND}
 
 
 def content_dir(state: str | None = None) -> Path:

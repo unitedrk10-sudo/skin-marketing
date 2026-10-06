@@ -28,8 +28,8 @@ from urllib.parse import urlparse
 import markdown
 
 from pipeline import clinics, og, sponsors, tracker
-from pipeline.common import (ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json, load_yaml,
-                             run_cli, save_json, slugify)
+from pipeline.common import (PRACTICE_KIND, ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json,
+                             load_yaml, run_cli, save_json, slugify)
 
 log = get_logger("site")
 
@@ -103,6 +103,9 @@ def _numbered_sources(md: str, facts: list[dict]) -> tuple[str, list[dict]]:
         fact = by_id.get(m.group(1))
         if not fact:
             return ""
+        if fact.get("kind") == PRACTICE_KIND:  # 여러 병원 공통 정보 — 특정 병원을 링크·출처 목록에 올리지 않는다
+            return ('<sup class="ref" title="Based on what several Seoul clinic websites describe in common">'
+                    '[clinic websites]</sup>')
         if fact["url"] not in number_of_url:
             sources.append({"url": fact["url"], "title": fact.get("source_title") or hostname(fact["url"])})
             number_of_url[fact["url"]] = len(sources)
