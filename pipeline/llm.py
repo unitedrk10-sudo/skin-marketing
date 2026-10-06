@@ -97,6 +97,8 @@ def _gemini(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult
         system_instruction=system,
         temperature=cfg.get("temperature"),
         tools=[types.Tool(google_search=types.GoogleSearch())] if cfg.get("search") else None,
+        # 함수 호출은 쓰지 않는다 — 켜 두면 매 호출 stderr 에 AFC 경고가 찍혀 Hermes 실패 알림 첫 줄을 가린다
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
     )
     resp = client.models.generate_content(model=cfg["model"], contents=prompt, config=config)
     text = resp.text or ""

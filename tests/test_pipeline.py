@@ -762,12 +762,28 @@ def test_worker_keeps_request_when_writer_is_rate_limited(worker_env):
 
     llm.set_backend(limited.__get__(worker_env))
     message, failures = worker_mod.run(review_runner=fake_claude())
-    assert any("보류" in f for f in failures)
-    assert len(list(worker_mod.requests_dir().glob("*.json"))) == 1  # 버리지 않고 다음 실행 때 재시도
+    assert not failures and "⏳ Claude 사용량 한도" in message  # 실패가 아니다 — 대기 안내 한 번
+    assert len(list(worker_mod.requests_dir().glob("*.json"))) == 1  # 버리지 않고 나중에 재시도
     assert not (worker_mod.requests_dir() / "failed").exists()
+    assert worker_mod.claude_hold() is not None
+    assert worker_mod.run(review_runner=fake_claude()) == ("", [])  # 대기 중에는 조용히 건너뛴다 (알림·비용 없음)
     llm.set_backend(worker_env)
+    worker_mod.hold_file().unlink()  # 초기화 시각이 지났다고 치고
     message, failures = worker_mod.run(review_runner=fake_claude())
     assert not failures and not list(worker_mod.requests_dir().glob("*.json"))
+    assert not worker_mod.hold_file().exists()
+
+
+@pytest.mark.parametrize("error,now,until", [
+    ("You've hit your session limit · resets 11:30am (Asia/Seoul)", "2026-10-06T09:44", "2026-10-06T11:32"),
+    ("usage limit · resets 1pm", "2026-10-06T22:10", "2026-10-07T13:02"),   # 이미 지났으면 다음 날
+    ("Claude AI usage limit reached", "2026-10-06T09:44", "2026-10-06T10:16"),  # 시각을 못 읽으면 30분
+])
+def test_claude_hold_until_reset_time(worker_env, error, now, until):
+    from datetime import datetime as dt
+    assert worker_mod.set_hold(error, dt.fromisoformat(now)) == dt.fromisoformat(until)
+    assert worker_mod.claude_hold(dt.fromisoformat(now)) == dt.fromisoformat(until)
+    assert worker_mod.claude_hold(dt.fromisoformat(until)) is None
 
 
 @pytest.mark.parametrize("stdout,code,expect", [
