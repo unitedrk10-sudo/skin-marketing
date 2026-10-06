@@ -14,7 +14,7 @@ Absolutely forbidden:
 
 Accuracy:
 - EVERY fact, number, price range, downtime, session count and medical claim MUST come from a source URL. If you cannot source it, leave it out.
-- Prefer primary/authoritative sources: peer-reviewed papers (PubMed), government pages (KHIDI, MOHW, visitkorea, FDA), professional societies (AAD), then reputable media. Never cite a clinic's own website.
+- Prefer primary/authoritative sources: peer-reviewed papers (PubMed), government pages (KHIDI, MOHW, visitkorea, FDA), professional societies (AAD), then reputable media. Never cite a single clinic's own website. The only exception is general practical information (consultation steps, language support, booking, how packages are structured) that at least three different clinics' sites say in common — written as a general statement, never medical, never naming or linking a clinic.
 - Product facts (what a device or injectable is, its ingredients, approvals) may cite the manufacturer's official product page — manufacturers, not clinics.
 - When readers need to find or check a clinic, point to official registries instead of any clinic: Medical Korea's list of registered medical institutions for foreign patients (https://www.medicalkorea.or.kr/en/registeredhospitals) and the Korean government's medical-license information. Never recommend or link an individual clinic.
 - Price information is always a range for the category (e.g., "typically ranges from ... in Seoul"), never a single clinic's price list.

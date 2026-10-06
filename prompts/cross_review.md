@@ -10,6 +10,7 @@ Checklist to apply:
 - Comparative / superlative wording, including implied comparisons between countries' clinics
 - Missing mention of side effects, individual variation, or consulting a doctor
 - Anything that identifies or promotes a specific clinic or doctor
+- Facts with kind "practice" are general practices several clinics share (consultation steps, language support, booking): flag them if they carry any medical claim, or if the sentence names or hints at a particular clinic
 - Missing AI disclosure
 
 FACTS (with sources) the draft was allowed to use:

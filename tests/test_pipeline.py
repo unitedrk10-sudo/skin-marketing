@@ -281,6 +281,50 @@ def test_medical_societies_are_not_clinic_sites():
     assert web.is_clinic_host("https://www.seoul-plastic-surgery.co.kr/rejuran")
 
 
+CONSULT = "The first visit starts with a consultation before any treatment is scheduled."
+
+
+def _clinic_pages(n):
+    return [{"id": f"C{i}", "url": f"https://clinic{i}.example/en/faq", "title": "FAQ", "text": f"Welcome. {CONSULT} " * 20}
+            for i in range(1, n + 1)]
+
+
+def test_practice_fact_needs_three_different_clinics():
+    pages = _clinic_pages(3) + [{"id": "C4", "url": "https://clinic1.example/en/other", "title": "", "text": CONSULT * 20}]
+    raw = [
+        {"id": "F1", "kind": "practice", "text": "Many clinics start with a consultation.",
+         "sources": [{"source": "C1", "quote": CONSULT}, {"source": "C2", "quote": CONSULT}, {"source": "C3", "quote": CONSULT}]},
+        {"id": "F2", "kind": "practice", "text": "same clinic twice",  # C4 는 C1 과 같은 병원 → 2곳뿐
+         "sources": [{"source": "C1", "quote": CONSULT}, {"source": "C4", "quote": CONSULT}, {"source": "C2", "quote": "not on page at all ok"}]},
+        {"id": "F3", "source": "C1", "quote": CONSULT, "text": "single clinic as a normal source"},  # 병원 페이지는 일반 출처가 아니다
+    ]
+    facts = draft_mod.verify_facts(raw, [], pages)
+    assert [f["id"] for f in facts] == ["F1"]
+    assert facts[0]["kind"] == "practice" and len(facts[0]["urls"]) == 3 and facts[0]["source_title"] == "several clinic websites"
+
+
+def test_clinic_pages_need_three_clinics_and_skip_sponsored(env):
+    pages = {f"https://clinic{i}.example/faq": (200, CONSULT * 20) for i in range(1, 3)}
+    web.set_fetcher(lambda url: pages.get(url, (0, "")))
+    assert draft_mod.fetch_clinic_pages([{"url": u, "title": ""} for u in pages]) == []  # 2곳뿐 → 공통 정보 못 씀
+    pages["https://clinic3.example/faq"] = (200, CONSULT * 20)
+    assert len(draft_mod.fetch_clinic_pages([{"url": u, "title": ""} for u in pages])) == 3
+
+
+def test_practice_facts_publish_without_clinic_links(env):
+    facts = [{"id": "F1", "url": "https://www.aad.org/a", "source_title": "AAD", "kind": "downtime"},
+             {"id": "F2", "url": "https://clinic1.example/en/faq", "urls": ["https://clinic1.example/en/faq"],
+              "source_title": "several clinic websites", "kind": "practice"}]
+    out, sources = site_mod._numbered_sources("Redness may last days [F1]. Clinics start with a consultation [F2].", facts)
+    assert "clinic1.example" not in out and "[clinic websites]" in out
+    assert [s["url"] for s in sources] == ["https://www.aad.org/a"]  # 출처 목록·JSON-LD 에도 병원 주소 없음
+    draft = {"facts": facts, "shortform": script(fact_ids=("F1",)), "blog": blog(f"Clinics start with a consultation [F2]. Ok [F1].\n\n{DISCLOSURE}")}
+    msgs, human = review_mod.check_rules(draft)
+    assert not any("병원 사이트" in m.message for m in msgs) and "병원 사이트 공통 정보 포함" in human
+    assert human_mod.medical_sentences(draft, lambda f: f.get("kind") == "practice") == [
+        ("Clinics start with a consultation.", ["https://clinic1.example/en/faq"])]
+
+
 def test_too_few_verified_facts_fails_the_draft(env):
     env.responses["write"] = write_result([{"id": "F1", "source": "S1", "quote": "not on the page at all, made up", "text": "x"}])
     with pytest.raises(llm.LLMError, match="사실이 부족"):

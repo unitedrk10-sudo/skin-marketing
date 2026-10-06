@@ -25,6 +25,7 @@ from pipeline import llm, sponsors, web
 from pipeline.web import fetch_page, html_to_text  # noqa: F401 — 테스트·02c 가 이 모듈 이름으로 쓴다
 from pipeline.common import (
     CONFIG_DIR,
+    PRACTICE_KIND,
     blog_text,
     content_dir,
     draft_dirs,
@@ -214,6 +215,8 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
     for fid in sorted(refs - known):
         findings.append(Finding("rules", "block", f"존재하지 않는 사실 참조 {fid} (출처 없는 주장)"))
     findings += check_clinic_sources(draft, refs)
+    if any(f.get("kind") == PRACTICE_KIND and f["id"] in refs for f in draft.get("facts", [])):
+        human.add("병원 사이트 공통 정보 포함")
     if not FACT_REF.search(texts["blog"]):
         findings.append(Finding("rules", "block", "[blog] 사실 참조 [F#] 가 하나도 없음"))
     for i, ln in enumerate(sf.get("lines", []), 1):
@@ -228,6 +231,8 @@ def check_clinic_sources(draft: dict, used: set[str]) -> list[Finding]:
     by_host: dict[str, list[str]] = defaultdict(list)
     for f in draft.get("facts", []):
         host = web.host(f.get("url", ""))
+        if f.get("kind") == PRACTICE_KIND:
+            continue  # 여러 병원 공통 실무 정보 — 작성 단계에서 3곳 이상 확인, 링크 없이 게시 (사람 확인 항목으로 따로)
         if f["id"] in used and host != sponsor_host and web.is_clinic_host(host):
             by_host[host].append(f["id"])
     return [Finding("rules", "caution", f"병원 사이트로 보이는 출처 [{','.join(ids)}] — 논문·정부·학회 출처로 교체 권장", host)
