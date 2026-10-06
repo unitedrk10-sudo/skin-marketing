@@ -767,9 +767,25 @@ def test_worker_sends_each_draft_then_summary(worker_env):
     message, failures = worker_mod.run(review_runner=fake_claude(), sender=lambda text: sent.append(text) or True)
     assert not failures and len(sent) == 2
     assert sent[0].startswith("[초안 1/2]") and "🎬 숏폼 대본" in sent[0] and "📝 블로그: Rejuran explained" in sent[0]
-    assert "It uses polynucleotides [F1]." in sent[0] and f"- F1,F2,F3,F4,F5,F6: {URL}" in sent[0]  # 블로그 전문·사실별 출처
+    # 남은 지적 → 의료 문장과 출처 → 대본 순, 블로그 전문은 요청할 때만
+    assert sent[0].index("🔎 남은 지적") < sent[0].index("🩺 의료 정보 확인") < sent[0].index("🎬 숏폼 대본")
+    assert f"• It uses polynucleotides.\n   ↳ {URL}" in sent[0] and f"• (대본) Rejuran uses polynucleotides.\n   ↳ {URL}" in sent[0]
+    assert "Results vary; ask a licensed doctor." not in sent[0] and "`1번 블로그 보여줘`" in sent[0]
     assert "↑ 초안 전문은 위 메시지에" in message and "MEDIA:" not in message and "🎬" not in message  # 요약만
     assert "1. What is Rejuran?" in message
+
+
+def test_medical_sentences_list_only_medical_citations():
+    draft = {"facts": [{"id": "F1", "url": "https://www.aad.org/a", "kind": "downtime"},
+                       {"id": "F2", "url": "https://english.visitkorea.or.kr/x", "kind": "travel"}],
+             "blog": {"markdown": "## Recovery\n\n- **Redness** may last 1-3 days [F1]. The palace opens at 9:00 [F2]. "
+                                  "Ask your clinic.\n\nBoth [F1][F2] apply."},
+             "shortform": {"lines": [{"voice": "Redness may last days.", "fact_ids": ["F1"]},
+                                     {"voice": "Palace opens at nine.", "fact_ids": ["F2"]}]}}
+    assert human_mod.medical_sentences(draft) == [
+        ("Redness may last 1-3 days.", ["https://www.aad.org/a"]),  # 마크다운 기호·[F#] 제거
+        ("Both apply.", ["https://www.aad.org/a"]),                    # 여행 출처는 빼고 의료 출처만
+        ("(대본) Redness may last days.", ["https://www.aad.org/a"])]
 
 
 def test_worker_falls_back_to_attachments_when_send_fails(worker_env):
@@ -814,7 +830,8 @@ def test_claude_hold_until_reset_time(worker_env, error, now, until):
 
 
 @pytest.mark.parametrize("stdout,code,expect", [
-    (json.dumps({"is_error": False, "result": '{"ok": true}', "modelUsage": {"claude-sonnet-5": {}}}), 0, "ok"),
+    (json.dumps({"is_error": False, "result": '{"ok": true}',  # 보조 작업용 Haiku 가 먼저 나와도 실제 작성 모델을 기록
+                 "modelUsage": {"claude-haiku-4-5": {"outputTokens": 40}, "claude-sonnet-5": {"outputTokens": 5000}}}), 0, "ok"),
     (json.dumps({"is_error": True, "result": "Claude AI usage limit reached|1759712400"}), 1, llm.RateLimited),
     (json.dumps({"is_error": True, "result": "Invalid model name"}), 1, llm.LLMError),
     ("not json", 1, llm.LLMError),

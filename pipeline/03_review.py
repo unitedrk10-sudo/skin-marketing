@@ -35,6 +35,7 @@ from pipeline.common import (
     content_dir,
     draft_dirs,
     get_logger,
+    is_medical_fact,
     load_draft,
     load_json,
     load_review,
@@ -164,22 +165,44 @@ def draft_message(path: Path, number: int, total: int) -> str:
     if fixes:
         out.append(f"🛠 {fixes[-1]} — 아래는 고친 뒤에도 남은 지적")
     issues = _issues(review)
-    if issues:
-        out += ["", "🔎 검수에서 걸린 항목"] + [f"{ISSUE_ICON[f['severity']]} {f['message']}" for f in issues]
+    out += ["", "🔎 남은 지적" + ("" if issues else ": 없음")] + [f"{ISSUE_ICON[f['severity']]} {f['message']}" for f in issues]
+    medical = medical_sentences(draft)
+    out += ["", f"🩺 의료 정보 확인 ({len(medical)}문장) — 문장과 출처가 맞는지 봐 주세요"]
+    for text, urls in medical:
+        out.append(f"• {text}")
+        out += [f"   ↳ {u}" for u in urls]
     out += ["", "🎬 숏폼 대본"]
     for i, ln in enumerate(sf.get("lines", []), 1):
         refs = f"  [{','.join(ln['fact_ids'])}]" if ln.get("fact_ids") else ""
         out.append(f"{i}. {ln.get('voice', '')}{refs}")
-        if ln.get("caption"):
-            out.append(f"   자막: {ln['caption']}")
-    out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}  {' '.join(sf.get('hashtags', []))}")
-    out += ["", f"📝 블로그: {blog.get('title', '')}", blog.get("meta_description", ""), "", blog.get("markdown", "").strip()]
-    ids_by_url: dict[str, list[str]] = {}
-    for f in draft.get("facts", []):
-        ids_by_url.setdefault(f["url"], []).append(f["id"])
-    if ids_by_url:  # 본문의 [F#] 로 바로 찾아볼 수 있게
-        out += ["", "📚 출처"] + [f"- {','.join(ids)}: {u}" for u, ids in ids_by_url.items()]
+    out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}")
+    sections = re.findall(r"(?m)^##\s+(.+)$", blog.get("markdown", ""))
+    out += ["", f"📝 블로그: {blog.get('title', '')}" + (f" ({' · '.join(s.strip() for s in sections)})" if sections else ""),
+            f"   여행·일반 문장은 생략했습니다. 전문: `{number}번 블로그 보여줘`"]
     return "\n".join(out)
+
+
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(])|\n+")
+MD_NOISE = re.compile(r"^[\s>*#-]+|\*\*|__|\s*\[F\d+\]")
+
+
+def medical_sentences(draft: dict) -> list[tuple[str, list[str]]]:
+    """블로그·대본에서 의료 사실(여행 정보가 아닌 사실)을 인용한 문장과 그 출처 주소 — 사람이 출처와 대조할 목록."""
+    facts = {f["id"]: f for f in draft.get("facts", [])}
+
+    def urls(ids: list[str]) -> list[str]:
+        return list(dict.fromkeys(facts[i]["url"] for i in ids if i in facts and is_medical_fact(facts[i])))
+
+    out: list[tuple[str, list[str]]] = []
+    for sentence in SENTENCE_END.split((draft.get("blog") or {}).get("markdown", "")):
+        found = urls(re.findall(r"\[(F\d+)\]", sentence))
+        if found:
+            out.append((re.sub(r"\s+", " ", MD_NOISE.sub("", sentence)).strip(), found))
+    for ln in (draft.get("shortform") or {}).get("lines", []):
+        found = urls(ln.get("fact_ids", []))
+        if found:
+            out.append((f"(대본) {ln.get('voice', '')}", found))
+    return out
 
 
 def draft_messages(stage: str = "drafts") -> list[str]:
