@@ -1,8 +1,10 @@
 """3. 사람 검수 처리 — 텔레그램 답장을 해석해 파일 상태를 옮긴다 (기획서 6-1, 6-2).
 
-상태 이동은 이 스크립트만 한다. 허용 이동: drafts→approved, drafts→rejected, rendered→ready_to_publish, rendered→rejected.
+상태 이동은 이 스크립트만 한다. 허용 이동: drafts→approved, drafts→rejected, rendered→ready_to_publish, rendered→rejected,
+approved→rejected (승인 철회 — 영상 렌더링·블로그 게시 전에 거둬들일 때).
 
-    python -m pipeline.03_review list [--stage drafts|rendered]        # 검수 요청 메시지 출력 + 번호표 저장
+    python -m pipeline.03_review list [--stage drafts|rendered|approved]   # 검수 요청 메시지 출력 + 번호표 저장
+    python -m pipeline.03_review apply "2 폐기" --stage approved            # 승인 철회 (먼저 list --stage approved)
     python -m pipeline.03_review apply "1,3,4 승인" [--stage drafts]
     python -m pipeline.03_review apply "2 수정: 가격 출처 다시"
     python -m pipeline.03_review apply "5 폐기"
@@ -45,7 +47,8 @@ from pipeline.common import (
 
 log = get_logger("03_review")
 
-ALLOWED_MOVES = {("drafts", "approved"), ("drafts", "rejected"), ("rendered", "ready_to_publish"), ("rendered", "rejected")}
+ALLOWED_MOVES = {("drafts", "approved"), ("drafts", "rejected"), ("rendered", "ready_to_publish"), ("rendered", "rejected"),
+                 ("approved", "rejected")}
 GRADE_ICON = {"pass": "✅", "caution": "⚠️", "pending": "⏳", "block": "⛔", None: "❔"}
 NUMS = r"(\d+(?:\s*[,，]\s*\d+|\s*~\s*\d+|\s*-\s*\d+|\s+\d+)*)"
 
@@ -202,12 +205,14 @@ def list_message(stage: str, compact: bool = False) -> str:
     """검수 요청 메시지. compact=True: 초안 전문을 따로 보낸 뒤의 요약 (번호·등급·대표 지적·답장 예시만)."""
     ids = build_batch(stage)
     if not ids:
-        return "검수 대기 없음" if stage == "drafts" else "게시 전 확인 대기 없음"
+        return {"drafts": "검수 대기 없음", "approved": "승인된 초안 없음"}.get(stage, "게시 전 확인 대기 없음")
     lines = []
     if stage == "drafts":
         lines.append(f"[초안 검수 {len(ids)}건 (숏폼+블로그)] 답장 예: `1,3 승인` · `2 수정: 가격 출처 다시` · `4 폐기` · `전체 승인`")
         lines.append("↑ 초안 전문은 위 메시지에 하나씩 보냈습니다." if compact else
                      "초안별 전문(블로그·사실별 원문 인용)은 첨부 파일로 보냅니다.")
+    elif stage == "approved":
+        lines.append(f"[승인됨 {len(ids)}건 — 영상·블로그 게시 전] 철회하려면: `2 폐기` (영상 렌더링 전까지만)")
     else:
         lines.append(f"[게시 전 확인 {len(ids)}건] 답장 예: `게시 OK` · `1,2 게시 OK` · `3 폐기`")
     attachments = []
@@ -283,7 +288,7 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
     commands = parse_reply(reply)
     batch = load_batch(stage)
     # 전부 검증한 뒤에 실행한다 (한 줄이 틀려 일부만 처리되는 일이 없도록)
-    stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered"}, "publish_ok": {"rendered"},
+    stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered", "approved"}, "publish_ok": {"rendered"},
                 "sponsor_ok": {"drafts"}}
     hint = {"approve": "렌더링 영상은 `게시 OK` 로 답해주세요",
             "revise": "렌더링 영상 수정(재렌더링)은 아직 미구현입니다",
@@ -341,10 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="텔레그램 검수 답장 처리")
     sub = parser.add_subparsers(dest="cmd", required=True)
     ls = sub.add_parser("list")
-    ls.add_argument("--stage", choices=["drafts", "rendered"], default="drafts")
+    ls.add_argument("--stage", choices=["drafts", "rendered", "approved"], default="drafts")
     ap = sub.add_parser("apply")
     ap.add_argument("reply")
-    ap.add_argument("--stage", choices=["drafts", "rendered"], default="drafts")
+    ap.add_argument("--stage", choices=["drafts", "rendered", "approved"], default="drafts")
     ap.add_argument("--confirm", action="store_true", help="`전체 승인` 시 ⚠️/⛔ 건도 승인")
     args = parser.parse_args(argv)
 

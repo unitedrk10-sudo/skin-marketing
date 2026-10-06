@@ -47,6 +47,11 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - 병원에 보낼 최종본은 "N번 보여줘" 와 같은 방법으로 `script.md`, `blog.md` 를 보낸다.
 - 종료 코드 2 (`❓`): 메시지를 보여주고 다시 물어본다.
 
+## 2-1. 승인 철회 ("승인한 거 취소해줘", "N번 글 내려줘" — 영상·블로그 게시 전)
+- 먼저 목록: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review list --stage approved` → 번호를 보여주고 어느 글인지 **확인받은 뒤** 실행:
+  `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<N 폐기>" --stage approved`
+- 이미 렌더링된 영상은 `[게시 전 확인 …]` 단계에서 `N 폐기`. 게시가 끝난 글은 여기서 내릴 수 없다고 안내한다.
+
 ## 3. 게시 전 확인 (직전 봇 메시지가 `[게시 전 확인 …]` 일 때)
 - 영상 보기: "N번 영상 보여줘" → `{{REPO}}/content/rendered/<draft_id>/video.mp4` 를 첨부한다 (번호는 최근 게시 전 확인 메시지 기준).
 - `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
