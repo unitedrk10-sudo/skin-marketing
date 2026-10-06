@@ -177,7 +177,9 @@ def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRe
         if LIMIT_WORDS.search(detail):
             raise RateLimited(f"Claude 사용량 한도: {detail[:200]}")
         raise LLMError(f"claude -p 실패 (stage={stage}): {detail[:300]}")
-    model = next(iter(out.get("modelUsage") or {}), cfg.get("model") or "claude")
+    # Claude Code 는 보조 작업에 다른 모델(Haiku)도 쓴다 — 출력을 가장 많이 만든 모델이 실제 작성 모델
+    usage = out.get("modelUsage") or {}
+    model = max(usage, key=lambda m: (usage[m] or {}).get("outputTokens", 0)) if usage else (cfg.get("model") or "claude")
     return LLMResult(text=text, model=model, stage=stage)
 
 

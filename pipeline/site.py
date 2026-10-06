@@ -28,7 +28,8 @@ from urllib.parse import urlparse
 import markdown
 
 from pipeline import clinics, og, sponsors, tracker
-from pipeline.common import ROOT, content_dir, draft_dirs, get_logger, load_draft, load_json, load_yaml, run_cli, save_json, slugify
+from pipeline.common import (ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json, load_yaml,
+                             run_cli, save_json, slugify)
 
 log = get_logger("site")
 
@@ -91,9 +92,6 @@ def collect_posts() -> list[dict]:
 
 # ---------------- 본문 변환 ----------------
 
-TRAVEL_KINDS = {"travel"}  # 여행 정보는 글 아래 출처 목록으로, 그 밖(의료·가격·규정)은 문장 옆에서 출처로 바로 간다
-
-
 def _numbered_sources(md: str, facts: list[dict]) -> tuple[str, list[dict]]:
     """[F#] → 출처 번호. 같은 URL 은 한 번호로 묶는다. 의료 정보는 번호가 출처 페이지로 바로 연결된다 (출처 도메인 표시)."""
     by_id = {f["id"]: f for f in facts}
@@ -108,7 +106,7 @@ def _numbered_sources(md: str, facts: list[dict]) -> tuple[str, list[dict]]:
             sources.append({"url": fact["url"], "title": fact.get("source_title") or hostname(fact["url"])})
             number_of_url[fact["url"]] = len(sources)
         n = number_of_url[fact["url"]]
-        if fact.get("kind") in TRAVEL_KINDS:
+        if not is_medical_fact(fact):  # 여행 정보는 글 아래 출처 목록으로
             return f'<sup class="ref"><a href="#src-{n}">[{n}]</a></sup>'
         url = html.escape(fact["url"], quote=True)
         title = html.escape(f"Source: {fact.get('source_title') or hostname(fact['url'])}", quote=True)
