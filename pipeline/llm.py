@@ -144,7 +144,8 @@ def _anthropic(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRes
 
 # ---- Claude Code CLI (claude -p) ----
 
-LIMIT_WORDS = re.compile(r"usage limit|rate limit|limit reached|limit will reset|overloaded|too many requests", re.I)
+LIMIT_WORDS = re.compile(r"usage limit|session limit|weekly limit|rate limit|limit reached|limit will reset|resets \d|"
+                         r"hit your .{0,20}limit|overloaded|too many requests", re.I)
 
 
 def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult:
