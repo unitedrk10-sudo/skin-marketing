@@ -503,6 +503,21 @@ def test_review_message_readable_on_phone(env):
     assert f"> {QUOTE}" in doc and URL in doc  # 사실별 원문 인용·출처
 
 
+def test_approved_draft_can_be_withdrawn_before_publishing(env):
+    first, second = _two_reviewed_drafts(env)
+    human_mod.list_message("drafts")
+    human_mod.apply("전체 승인", confirm=True)
+    msg = human_mod.list_message("approved")
+    assert msg.startswith("[승인됨 2건") and "1. What is Rejuran?" in msg
+    with pytest.raises(human_mod.ReplyError):
+        human_mod.apply("1 승인", stage="approved")  # 승인됨 단계에서는 철회(폐기)만
+    out = human_mod.apply("2 폐기", stage="approved")
+    assert "rejected" in out[0] and (common.content_dir("rejected") / second / "draft.json").exists()
+    assert (common.content_dir("approved") / first).exists()
+    rows = (common.log_dir() / "review_agreement.csv").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 3  # 헤더 + 승인 2건 — 철회는 자동/사람 일치 기록에 넣지 않는다
+
+
 def test_invalid_reply_moves_nothing(env):
     first, _ = _two_reviewed_drafts(env)
     human_mod.list_message("drafts")
