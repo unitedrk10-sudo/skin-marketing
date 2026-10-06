@@ -1,6 +1,7 @@
 """4. 숏폼 영상 렌더링 — 승인된 초안(approved)의 대본으로 음성(TTS) + 자막 세로 영상(1080x1920)을 만들고 rendered 로 옮긴다.
 
-  - 음성: Google Cloud Text-to-Speech (환경변수 GOOGLE_TTS_API_KEY, 목소리는 config/voice.yaml — 채널 전체 같은 목소리)
+  - 음성: Gemini TTS (llm.speech, GEMINI_API_KEY 그대로, 모델은 models.yaml tts, 목소리는 config/voice.yaml — 채널 전체 같은
+          목소리 Kore). voice.yaml provider: google 이면 예전 Google Cloud TTS (GOOGLE_TTS_API_KEY — API 키를 받지 않아 현재 미사용)
   - 영상: ffmpeg (libass) — 브랜드 배경 + 줄마다 큰 자막 + 화면 하단에 계속 떠 있는 표시 줄
           ("AI-generated content", 스폰서 글이면 광고 표시 — 02_draft 가 넣은 on_screen_disclosure 그대로)
   - b-roll(대본의 visual)은 아직 자동으로 붙이지 않는다 → render.json 에 줄별 시간과 함께 남겨 사람이 편집할 때 쓴다
@@ -16,12 +17,15 @@ import argparse
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+from pipeline import llm
 from pipeline.common import content_dir, draft_dirs, get_logger, load_draft, load_yaml, move_draft, now_iso, run_cli, save_json
 
 log = get_logger("04_render_video")
@@ -40,7 +44,29 @@ class RenderError(RuntimeError):
 # ---------------- 음성 ----------------
 
 def tts_configured() -> bool:
-    return bool(os.environ.get("GOOGLE_TTS_API_KEY"))
+    provider = (load_yaml("voice.yaml") or {}).get("provider", "gemini")
+    return bool(os.environ.get("GEMINI_API_KEY" if provider == "gemini" else "GOOGLE_TTS_API_KEY"))
+
+
+def _gemini_tts(text: str, voice: dict) -> bytes:
+    """Gemini TTS (llm.speech) → mp3. 응답은 WAV 또는 원시 PCM(24kHz 16bit mono)이라 ffmpeg 로 변환한다."""
+    try:
+        audio, mime = llm.speech("tts", text, voice["voice"])
+    except llm.LLMError as e:
+        raise RenderError(f"TTS 실패: {e}") from e
+    rate = float(voice.get("speaking_rate", 1.0))
+    with tempfile.TemporaryDirectory(prefix="skin-tts-") as tmp:
+        src, out = Path(tmp) / "in", Path(tmp) / "out.mp3"
+        src.write_bytes(audio)
+        fmt = [] if "wav" in mime or audio[:4] == b"RIFF" else ["-f", "s16le", "-ar", _pcm_rate(mime), "-ac", "1"]
+        tempo = ["-filter:a", f"atempo={rate}"] if rate != 1.0 else []
+        _run(["ffmpeg", "-y", "-v", "error", *fmt, "-i", str(src), *tempo, str(out)])
+        return out.read_bytes()
+
+
+def _pcm_rate(mime: str) -> str:
+    m = re.search(r"rate=(\d+)", mime)
+    return m.group(1) if m else "24000"
 
 
 def _google_tts(text: str, voice: dict) -> bytes:
@@ -60,13 +86,17 @@ def _google_tts(text: str, voice: dict) -> bytes:
         raise RenderError(f"TTS 실패: {e}") from e
 
 
-_tts = _google_tts
+def _default_tts(text: str, voice: dict) -> bytes:
+    return (_gemini_tts if voice.get("provider", "gemini") == "gemini" else _google_tts)(text, voice)
+
+
+_tts = _default_tts
 
 
 def set_tts(fn) -> None:
-    """테스트용: TTS 함수 교체 (None 이면 Google TTS)."""
+    """테스트용: TTS 함수 교체 (None 이면 voice.yaml 의 provider)."""
     global _tts
-    _tts = fn or _google_tts
+    _tts = fn or _default_tts
 
 
 # ---------------- ffmpeg ----------------
@@ -206,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=3, help="한 번에 렌더링할 최대 건수 (TTS 비용·시간 제한)")
     args = parser.parse_args(argv)
     if not tts_configured():
-        log.info("GOOGLE_TTS_API_KEY 미설정 — 렌더링 건너뜀")
+        log.info("TTS 키 미설정 (voice.yaml provider: gemini → GEMINI_API_KEY) — 렌더링 건너뜀")
         return 0
     if args.id:
         path = content_dir("approved") / args.id

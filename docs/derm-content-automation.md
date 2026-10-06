@@ -15,7 +15,7 @@
 | 쓰기 (LLM) | **Claude Code CLI** (`claude -p`, Pro 로그인 — API 키 없음) | 코드가 받아 둔 출처 페이지 본문만 보고 사실 목록·숏폼 대본·블로그 작성 (2026-10-06 결정) |
 | 자동 검수 | **다른 회사 모델** (Gemini API) + 규칙 코드 | 작성 모델(Claude)과 다른 회사 모델로 출처 대조·교차 검수 (6-0 참고) |
 | 사람 검수 | **Telegram** (Hermes 메신저 게이트웨이) | 자동 검수 결과 기반 승인·수정, 영상 게시 전 확인 |
-| TTS | 미정 (ElevenLabs / Google Cloud TTS 등) | 채널 전체 동일 목소리 고정 |
+| TTS | **Gemini TTS** (`gemini-3.8-flash-tts`, 목소리 Kore — 2026-10-06 결정, Gemini 키 그대로) | 채널 전체 동일 목소리 고정. Google Cloud TTS 는 API 키를 받지 않아 제외 |
 | 예약 게시 | 미정 (Buffer / Later / Metricool 등) | 공식 연동 지원 도구만 사용 |
 
 **원칙**
@@ -440,7 +440,7 @@ Hermes → 텔레그램 메시지 예시 (휴대폰에서 바로 판단하도록
 
 > 예산·정보 제공 기간 로드맵(12개월 가정): `docs/budget.md` (2026-09-28)
 
-- TTS 서비스·목소리 최종 선택
+- ~~TTS 서비스·목소리 최종 선택~~ → Gemini TTS + Kore (2026-10-06, 6종 샘플 비교: Aoede·Kore·Sulafat·Charon·Sadaltager·Iapetus)
 - 영상 합성 방식: ffmpeg 스크립트 vs Remotion vs 캡컷 템플릿
 - 예약 게시 도구 선택 (Buffer / Later / Metricool)
 - ~~블로그 플랫폼~~ → **자체 정적 사이트 (Cloudflare Pages, `pipeline/site.py`)로 결정 (2026-09-28)**: AI 인용 자산 + 스폰서 트랙의 주 무대(틱톡 브랜디드 금지). 승인된 글 자동 게시

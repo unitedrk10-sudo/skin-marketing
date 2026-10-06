@@ -40,6 +40,12 @@ stages:
     tools: [WebSearch, WebFetch]
     timeout_sec: 1500
 
+  tts:             # 04 영상 음성 — Gemini TTS (GEMINI_API_KEY 그대로). 목소리·속도는 config/voice.yaml
+    provider: gemini
+    model: gemini-3.8-flash-tts
+    audio: true
+    timeout_sec: 60  # 한 줄은 보통 5~10초 — 실제 운영에서 응답 없이 멈춘 호출이 있어 짧게 끊고 재시도
+
   # 검수 단계는 작성 모델(Claude)과 다른 회사 모델이 맡는다.
   source_check:    # 02b ② 출처 본문 대조
     provider: gemini
