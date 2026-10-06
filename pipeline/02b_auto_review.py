@@ -96,7 +96,8 @@ COSMETIC_PATTERNS = re.compile(
     r"|medical[- ]grade|prescription[- ]strength|clinically\s+proven|like\s+(?:botox|a\s+laser|an\s+injection|a\s+skin\s+booster))\b"
     r"|치료|재생시켜|의약품\s?수준", re.I)
 
-NEGATION = re.compile(r"\b(?:not|never|no|can't|cannot|can not|don't|doesn't|isn't|aren't|won't)\b[^.]*$", re.I)
+NEGATION = re.compile(r"\b(?:not|never|no|none|nothing|neither|nor|without|can't|cannot|can not|don't|doesn't|isn't|aren't|"
+                      r"won't)\b[^.]*$", re.I)
 # 효과 보장 금지어 중 부정문이면 허용하는 것 (비교·최상급·전후 사진은 부정문이어도 차단)
 NEGATABLE = re.compile(r"guarantee|risk[- ]?free|painless|permanent|cure|miracle|100%", re.I)
 
