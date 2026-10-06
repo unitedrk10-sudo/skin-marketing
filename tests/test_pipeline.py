@@ -347,6 +347,8 @@ def test_rule_violations_block(voice, expected):
     "Keep strict sun protection for four weeks before and after treatment.",  # 시기 표현 (전후 사진 아님)
     "Results can't be guaranteed, and lasers aren't risk-free.",  # 부정문 단서 표현
     "The fall foliage is at its best in late October.",  # 관용 표현
+    "That part is best confirmed directly with your treating clinic.",  # 권고 (best + 과거분사)
+    "None of this is a guarantee of a pain-free session.",  # none 부정문
 ])
 def test_allowed_phrases_pass(voice):
     msgs, _ = rules_for(script={"voice": voice})
