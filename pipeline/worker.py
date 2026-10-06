@@ -20,11 +20,13 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import IO
 
@@ -130,6 +132,38 @@ def send_each(messages: list[str], sender=None) -> bool:
     return bool(messages) and all(sender(m) for m in messages)
 
 
+RESET_AT = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)?", re.I)
+HOLD_DEFAULT = timedelta(minutes=30)
+
+
+def hold_file() -> Path:
+    return content_dir() / "claude_hold.json"  # requests/ 밖에 둔다 (워커가 요청으로 읽지 않게)
+
+
+def claude_hold(now: datetime | None = None) -> datetime | None:
+    """Claude 사용량 한도로 쉬는 중이면 다시 시도할 시각, 아니면 None."""
+    path = hold_file()
+    if not path.exists():
+        return None
+    until = datetime.fromisoformat(load_json(path)["until"])
+    return until if (now or datetime.now()) < until else None
+
+
+def set_hold(error: str, now: datetime | None = None) -> datetime:
+    """한도 메시지의 초기화 시각("resets 11:30am")까지 쉰다 (+2분 여유). 시각을 못 읽으면 30분."""
+    now = now or datetime.now()
+    m = RESET_AT.search(error)
+    until = now + HOLD_DEFAULT
+    if m:
+        hour, minute = int(m.group(1)) % 12 if m.group(3) else int(m.group(1)), int(m.group(2) or 0)
+        hour += 12 if (m.group(3) or "").lower() == "pm" else 0
+        until = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        until += timedelta(days=1) if until <= now else timedelta(0)
+    until += timedelta(minutes=2)
+    save_json(hold_file(), {"until": until.isoformat(timespec="minutes"), "reason": error[:200], "at": now_iso()})
+    return until
+
+
 def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     """반환: (텔레그램으로 보낼 메시지 — 없으면 "", 실패 목록)"""
     review_mod = importlib.import_module("pipeline.02b_auto_review")
@@ -137,14 +171,21 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     human_mod = importlib.import_module("pipeline.03_review")
     changed, failures = False, []
 
+    if claude_hold():  # 사용량 한도로 쉬는 중 — Claude 를 부를 수 있는 단계(작성·재생성)는 조용히 건너뛴다
+        log.info("Claude 사용량 한도 대기 중 (%s 까지) — 건너뜀", claude_hold().strftime("%H:%M"))
+        return "", []
+    hold_file().unlink(missing_ok=True)
+    notices: list[str] = []
+
     for path in sorted(requests_dir().glob("*.json")):
         req = load_json(path)
         try:
             _process(req)
             path.unlink()
-        except llm.RateLimited as e:  # 사용량 한도·시간 초과 — 요청을 그대로 두고 다음 실행 때 다시
-            failures.append(f"{req.get('kind')} 요청 보류 (다음 실행 때 재시도): {e}")
+        except llm.RateLimited as e:  # 사용량 한도·시간 초과 — 요청을 그대로 두고 초기화 시각 이후 다시
+            until = set_hold(str(e))
             log.warning("요청 보류: %s — %s", path.name, e)
+            notices.append(f"⏳ Claude 사용량 한도 — 초안 작성은 {until:%H:%M} 이후 자동으로 다시 시작합니다.")
             break  # 같은 한도에 걸릴 나머지 요청도 다음 실행으로
         except Exception as e:  # noqa: BLE001 — 한 요청 실패가 나머지를 막지 않게
             failures.append(f"{req.get('kind')} 요청 실패: {e}")
@@ -154,10 +195,15 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             path.replace(failed / path.name)
         changed = True
 
-    for path in review_mod.unreviewed_drafts():
+    for path in [] if claude_hold() else review_mod.unreviewed_drafts():
         try:
             review_mod.review_with_regeneration(path)
             changed = True
+        except llm.RateLimited as e:  # 차단 → 재생성하다 한도 (02b 가 검수 기록을 지워 다음에 다시 한다)
+            until = set_hold(str(e))
+            log.warning("재생성 보류: %s — %s", path.name, e)
+            notices.append(f"⏳ Claude 사용량 한도 — 차단된 초안 재생성은 {until:%H:%M} 이후 다시 합니다.")
+            break
         except Exception as e:  # noqa: BLE001
             failures.append(f"{path.name} 자동 검수 실패: {e}")
             log.exception("자동 검수 실패: %s", path.name)
@@ -178,6 +224,8 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         summary = human_mod.list_message("drafts", compact=True)
         sent = summary != "검수 대기 없음" and send_each(human_mod.draft_messages("drafts"), sender)
         message = summary if sent else human_mod.list_message("drafts")
+    if notices:  # 한도 대기 안내는 실패가 아니다 — 대기에 들어갈 때 한 번만 나간다 (이후 실행은 조용히 건너뜀)
+        message = "\n".join(dict.fromkeys(notices)) + ("\n\n" + message if message else "")
 
     render_mod = importlib.import_module("pipeline.04_render_video")
     if render_mod.tts_configured() and render_mod.pending():  # 승인된 초안 → 영상 (한 번에 2건, TTS 비용·시간 제한)
