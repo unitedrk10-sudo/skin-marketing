@@ -34,6 +34,7 @@ log = get_logger("01_topics")
 RECENT_LIMIT = 60
 WAVE_BONUS = {1: 0.3, 2: 0.1}   # seed 의 wave(시의성·기초 주제)는 가산점으로만 — 순서는 수요 점수가 정한다
 MAX_PER_FOCUS = 2               # 한 주에 같은 시술·관광지 주제는 최대 2개 (다양성)
+EXTRA_CANDIDATES = 4            # Gemini 에게 더 받아 두고 쿼터(config/channels.yaml topic_quota)대로 고른다
 
 
 def recent_titles() -> list[str]:
@@ -52,9 +53,11 @@ def validate(topics: list[dict], axes: list[str]) -> list[dict]:
         if not t.get("title") or not t.get("angle"):
             log.warning("제목·앵글 없는 주제 제외: %s", t)
             continue
-        if t.get("axis") not in axes:
-            log.warning("알 수 없는 축 %r → procedure 로 처리", t.get("axis"))
+        if not t.get("axis"):
             t["axis"] = "procedure"
+        if t["axis"] not in axes:  # 다루지 않기로 한 축 (예: 관광지만 다루는 travel_guide)
+            log.info("다루지 않는 축 %r 주제 제외: %s", t["axis"], t["title"])
+            continue
         t.setdefault("keywords", [])
         t.setdefault("sources", [])
         t["has_price"] = bool(t.get("has_price"))
@@ -77,28 +80,42 @@ def annotate(topics: list[dict], tables: dict[str, dict[str, dict]], bonus: dict
     """주제마다 수요 점수·근거를 붙이고 점수 순으로 정렬한다 (bonus: 주제 index → 가산점)."""
     for i, t in enumerate(topics):
         score, focus, why = demand.topic_score(t, tables)
-        hot = t.pop("trend", None)  # 트렌드 스캔의 신규 장소
-        if hot:
-            hot_score = demand.EMERGING_PRIOR + demand.TREND_BOOST * hot["score"]
-            label = f"🔥 신규 트렌드: {hot['name']} ({round(hot['score'] * 100)})"
-            if hot_score > score:
-                score, focus, why = hot_score, t["seed_id"], label
-            else:
-                why = f"{why} · {label}"
         t["demand"] = {"score": round(score + (bonus or {}).get(i, 0), 3), "focus": focus, "reason": why}
     return sorted(topics, key=lambda t: -t["demand"]["score"])  # 동점은 원래 순서
 
 
-def diverse(topics: list[dict], count: int) -> list[dict]:
-    """점수 순으로 고르되 같은 시술·관광지는 MAX_PER_FOCUS 개까지 — 모자라면 나머지로 채운다."""
+def quota(count: int) -> list[tuple[str, list[str], int]]:
+    """config/channels.yaml topic_quota → [(이름, 축 목록, 개수)]. 합이 count 와 다르면 비율대로 맞춘다."""
+    groups = [(name, g["axes"], int(g["count"])) for name, g in (load_yaml("channels.yaml").get("topic_quota") or {}).items()]
+    total = sum(n for _, _, n in groups)
+    if not groups or total == count:
+        return groups
+    scaled = [(name, axes, round(n * count / total)) for name, axes, n in groups]
+    name, axes, n = scaled[0]  # 반올림 차이는 첫 그룹(시술 정보)에서 맞춘다
+    return [(name, axes, n + count - sum(x[2] for x in scaled))] + scaled[1:]
+
+
+def pick(topics: list[dict], count: int) -> list[dict]:
+    """유형별 쿼터만큼 점수 순으로 고르고(같은 시술·관광지는 MAX_PER_FOCUS 개까지), 모자라면 나머지에서 채운다.
+    결과는 수요 점수 순."""
     picked, per = [], Counter()
-    for t in topics:
-        focus = t["demand"]["focus"]
-        if per[focus] < MAX_PER_FOCUS or focus.endswith(":other"):
+
+    def take(pool: list[dict], n: int, limit: bool = True) -> None:
+        for t in pool:
+            if n <= 0:
+                return
+            focus = t["demand"]["focus"]
+            if t in picked or (limit and per[focus] >= MAX_PER_FOCUS and not focus.endswith(":other")):
+                continue
             picked.append(t)
             per[focus] += 1
-    rest = [t for t in topics if t not in picked]
-    return (picked + rest)[:count]
+            n -= 1
+
+    for _name, axes, n in quota(count):
+        take([t for t in topics if t.get("axis") in axes], n)
+    take(topics, count - len(picked))                 # 한 유형 후보가 모자라면 다른 유형으로
+    take(topics, count - len(picked), limit=False)    # 그래도 모자라면 같은 시술·관광지 제한 없이
+    return sorted(picked, key=lambda t: -t["demand"]["score"])
 
 
 def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None = None) -> dict | None:
@@ -107,7 +124,6 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
     seeds = load_yaml("seed_topics.yaml").get("topics", [])
     used = used_seed_ids()
     fresh = [s for s in seeds if s["id"] not in used]
-    hot = [t for t in trends.emerging_topics(trends.latest()) if t["seed_id"] not in used]  # 이번 주 뜨는 신규 장소
     if not fresh:
         return None
     candidates = []
@@ -116,11 +132,13 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
         topic["sources"] = [x if isinstance(x, dict) else {"url": x, "title": ""} for x in s.get("sources", [])]
         topic["seed_id"] = s["id"]
         candidates.append(topic)
+    candidates = validate(candidates, axes)  # 다루지 않는 축은 여기서 빠진다
     tables = tables or demand.all_scores()
-    bonus = {i: WAVE_BONUS.get(s.get("wave", 9), 0) for i, s in enumerate(fresh)}
-    ranked = annotate(candidates + hot, tables, bonus)
+    wave = {s["id"]: s.get("wave", 9) for s in fresh}  # 필터 뒤에도 주제에 맞게 붙도록 id 로 찾는다
+    bonus = {i: WAVE_BONUS.get(wave[t["seed_id"]], 0) for i, t in enumerate(candidates)}
+    ranked = annotate(candidates, tables, bonus)
     return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [],
-            "topics": validate(diverse(ranked, count), axes)}
+            "topics": pick(ranked, count)}
 
 
 def telegram_message(week: str, topics: list[dict]) -> str:
@@ -138,12 +156,13 @@ def build(week: str, count: int) -> dict:
     axes = channels["content_axes"]
     recent = recent_titles()
     tables = demand.all_scores()
+    asked = count + EXTRA_CANDIDATES  # 쿼터에 맞춰 고를 여유분
     text = prompt(
         "topic_research",
         today=date.today().isoformat(),
         week=week,
-        count=str(count),
-        axes="\n".join(f"- {a}" for a in axes),
+        count=str(asked),
+        quota="\n".join(f"- {', '.join(a)}: {round(n * asked / count)}+" for _, a, n in quota(count)),
         channels=str({k: channels[k] for k in ("audience", "shortform", "blog")}),
         recent_titles="\n".join(f"- {t}" for t in recent) or "(none yet)",
         demand=demand.prompt_block(tables),
@@ -157,7 +176,7 @@ def build(week: str, count: int) -> dict:
         "created_at": now_iso(),
         "model": result.model,
         "grounding_urls": result.grounding_urls,
-        "topics": annotate(topics, tables),
+        "topics": pick(annotate(topics, tables), count),
     }
 
 
