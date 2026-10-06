@@ -39,6 +39,7 @@ REGISTRY_URL = "https://www.medicalkorea.or.kr/en/registeredhospitals"
 REGISTRY_AXES = {"procedure", "price_guide", "how_to", "procedure_travel", "travel_guide", "review_curation", "trend"}
 REGISTRY_KEY = "_registry"
 CLINIC_LIST_AXES = {"procedure_travel", "travel_guide"}  # 코스 주변 피부과 목록을 붙이는 글 (중립 여행 글만)
+CLINIC_KEY = "_clinic"  # 주변 병원 목록의 병원별 사이트 링크 (tracked_links.json 키: _clinic:<draft_id>:<병원 id>)
 FACT_REF = re.compile(r"\s?\[(F\d+)\]")
 FAQ_HEADING = re.compile(r"^##\s+.*\b(FAQ|Frequently Asked Questions)\b", re.I | re.M)
 SAFE_HREF = re.compile(r"^(https?://|/|#|mailto:)", re.I)
@@ -273,12 +274,19 @@ def registry_box(registry_url: str | None) -> str:
             f'registry</a>. We don\'t recommend or rank individual clinics.</aside>')
 
 
-def clinic_directory_html(post: dict) -> str:
-    """여행 글 코스 주변 피부과 전부 (심평원 공공데이터, 거리순, 추천·순위 없음, 광고주 표시). pipeline/clinics.py"""
-    draft = post["draft"]
-    text = " ".join([draft["blog"].get("title", ""), " ".join((draft.get("topic") or {}).get("keywords", [])),
+def _post_text(draft: dict) -> str:
+    return " ".join([draft["blog"].get("title", ""), " ".join((draft.get("topic") or {}).get("keywords", [])),
                      draft["blog"].get("markdown", "")])
-    stops = clinics.directory(text)
+
+
+def clinic_link_key(draft_id: str, cid: str) -> str:
+    return f"{CLINIC_KEY}:{draft_id}:{cid}"
+
+
+def clinic_directory_html(post: dict, clinic_urls: dict[str, str] | None = None) -> str:
+    """여행 글 코스 주변 피부과 전부 (심평원 공공데이터, 거리순, 추천·순위 없음, 광고주 표시). pipeline/clinics.py
+    clinic_urls: 병원 id → 추적 링크. 없으면 병원 사이트로 바로 — 어느 쪽이든 모든 병원에 같은 'website' 링크."""
+    stops = clinics.directory(_post_text(post["draft"]))
     if not stops:
         return ""
     esc = html.escape
@@ -289,8 +297,11 @@ def clinic_directory_html(post: dict) -> str:
             ad = c["advertiser"]
             tag = f' <span class="badge">Advertiser</span>' if ad else ""
             maps = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(f"{c['name']} {c['addr']}")
+            site = (clinic_urls or {}).get(clinics.clinic_id(c)) or clinics.website(c)
+            site_link = f' · <a href="{esc(site)}" rel="nofollow noopener" target="_blank">website</a>' if site else ""
             rows.append(f'<li>{esc(c["name"])}{tag} <span class="meta">{esc(c["type"])} · {esc(c["district"])} · '
-                        f'{c["distance_m"]} m · <a href="{esc(maps)}" rel="nofollow noopener" target="_blank">map</a></span></li>')
+                        f'{c["distance_m"]} m · <a href="{esc(maps)}" rel="nofollow noopener" target="_blank">map</a>'
+                        f'{site_link}</span></li>')
         shown = len(stop["clinics"])
         count = (f"all {stop['total']}" if shown == stop["total"] else f"the {shown} closest of {stop['total']}")
         parts.append(f'<details><summary>Near {esc(stop["name"])}: {count} clinics offering dermatology within '
@@ -300,6 +311,7 @@ def clinic_directory_html(post: dict) -> str:
             f'<p class="meta">Every clinic listed in the Korean government\'s public health-insurance facility data (HIRA) '
             f'with a dermatology department within the radius, sorted by distance only (as of {esc(fetched)}). '
             f'We do not recommend, rank or review clinics; names are shown in Korean as registered. '
+            f'Website links are the addresses listed in the same public data, shown for every clinic that has one. '
             f'"Advertiser" marks clinics that pay us for labeled ads — it does not change their place in the list. '
             f'Check a clinic\'s status on the official registry before booking.</p>{"".join(parts)}</section>')
 
@@ -368,7 +380,7 @@ def geo_ad_script(cfg: dict) -> str:
 
 
 def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None,
-                ad_url: str | None = None) -> str:
+                ad_url: str | None = None, clinic_urls: dict[str, str] | None = None) -> str:
     draft = post["draft"]
     blog = draft["blog"]
     sponsor = draft.get("sponsor")
@@ -384,7 +396,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
 <p class="meta">{badge}{esc(post['date'][:10])} · {esc(cfg['byline'])} · Based on publicly available sources</p>
 {body_html}
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
-{clinic_directory_html(post) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
+{clinic_directory_html(post, clinic_urls) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
 {route_ad_html(cfg, ad_sponsor, ad_url)}
 <section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article>{geo_ad_script(cfg) if ad_sponsor else ""}"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
@@ -527,6 +539,28 @@ def load_tracked_links() -> dict[str, dict]:
     return {k: (v if isinstance(v, dict) else {"url": v}) for k, v in raw.items()}
 
 
+def _clinic_links(post: dict, mapping: dict[str, dict], title: str) -> bool:
+    """주변 병원 목록의 병원 사이트마다 추적 링크 (https 사이트만 — 추적기가 https 만 받는다, 나머지는 바로 연결).
+    병원별로 기록하지만 리포트·영업 자료에는 지역·시술 단위 합산으로만 쓴다 (pipeline.analytics)."""
+    changed = False
+    draft = post["draft"]
+    for stop in clinics.directory(_post_text(draft)):
+        for c in stop["clinics"]:
+            site = clinics.website(c)
+            key = clinic_link_key(draft["id"], clinics.clinic_id(c))
+            if not site.startswith("https://") or key in mapping:
+                continue
+            try:
+                link = tracker.add_link(None, site, f"clinic list: {title}"[:120])
+            except tracker.TrackerError as e:
+                log.warning("병원 목록 링크 추적 생성 실패 (바로 연결): %s — %s", c["name"], e)
+                continue
+            mapping[key] = {"url": f"{link['url']}?s=blog", "code": link["code"], **link_meta(post, "clinic"),
+                            "placement": "clinic_dir", "attraction": stop["attraction"], "clinic": c["name"]}
+            changed = True
+    return changed
+
+
 def tracked_links(posts: list[dict]) -> dict[str, dict]:
     """글별 추적 링크 (?s=blog): 스폰서 글 → 병원 공식 사이트, 중립 시술·여행 글 → 등록기관 목록 (글마다 따로 세서
     어떤 글·시술이 병원 찾기로 이어졌는지 본다). 추적기 미설정이면 기존 목록만 — 링크는 원래 주소로 나간다."""
@@ -550,6 +584,8 @@ def tracked_links(posts: list[dict]) -> dict[str, dict]:
                 "url": f"{link['url']}?s=blog", "code": link["code"], **link_meta(p, "sponsor"),
                 "sponsor_id": ad["id"], "contract": ad["contract"]["type"], "placement": "route_ad"}
             changed = True
+        if not draft.get("sponsor") and draft.get("content_type") in CLINIC_LIST_AXES:
+            changed |= _clinic_links(p, mapping, title)
         if key in mapping:
             if "kind" not in mapping[key]:  # 예전 형식 → 메타데이터 보강 (링크는 그대로)
                 mapping[key] = {**mapping[key], **link_meta(p, kind)}
@@ -595,7 +631,9 @@ def build(out: Path | None = None) -> dict:
         registry = (links.get(registry_key(p["draft"]["id"])) or links.get(REGISTRY_KEY) or {}).get("url")
         ad = route_ad_sponsor(p)
         ad_url = (links.get(route_ad_key(p["draft"]["id"], ad["id"])) or {}).get("url") if ad else None
-        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url))
+        prefix = clinic_link_key(p["draft"]["id"], "")
+        clinic_urls = {k[len(prefix):]: v["url"] for k, v in links.items() if k.startswith(prefix)}
+        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls))
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))

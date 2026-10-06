@@ -23,7 +23,9 @@ from pipeline.common import ROOT, get_logger, load_yaml, run_cli
 
 log = get_logger("analytics")
 
-KIND_LABEL = {"registry": "의도(등록기관 목록)", "sponsor": "도착(스폰서 병원)", "pilot": "도착(파일럿 병원)", "other": "기타 링크"}
+KIND_LABEL = {"registry": "의도(등록기관 목록)", "sponsor": "도착(스폰서 병원)", "pilot": "도착(파일럿 병원)",
+              "clinic": "도착(주변 병원 목록)", "other": "기타 링크"}
+# 주변 병원 목록(clinic)은 병원마다 링크가 있지만 리포트·CSV 에는 병원명 없이 글·지역·시술 단위 합산으로만 낸다.
 CSV_FIELDS = ["day", "week", "code", "kind", "contract", "sponsor_id", "draft_id", "slug", "title", "axis", "procedures", "attractions",
               "source", "country", "clicks", "unique_visitors"]
 
@@ -81,7 +83,8 @@ def enrich(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict]
                     "contract": meta.get("contract") or "", "sponsor_id": r.get("sponsor_id") or meta.get("sponsor_id") or "",
                     "draft_id": meta.get("draft_id", ""), "slug": meta.get("slug", ""), "title": meta.get("title", ""),
                     "axis": meta.get("axis", ""), "procedures": "|".join(tag(meta, procedures)),
-                    "attractions": "|".join(tag(meta, attractions if attractions is not None else load_catalog("attractions"))),
+                    "attractions": meta.get("attraction") or  # 병원 목록 링크는 그 정류장(관광지)으로 정확히
+                                   "|".join(tag(meta, attractions if attractions is not None else load_catalog("attractions"))),
                     "source": r["source"], "country": r.get("country") or "XX",
                     "clicks": int(r["clicks"]), "unique_visitors": int(r.get("unique_visitors") or 0)})
     return out
@@ -90,11 +93,17 @@ def enrich(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict]
 def published_counts(links: dict[str, dict], end: date) -> Counter:
     """기간 말까지 게시된 글 수 (추적 링크가 있는 글) — 글당 평균의 분모. 클릭 0 인 글도 센다."""
     counts = Counter()
+    clinic_posts = set()
     for v in links.values():
         if v.get("placement") == "route_ad":
             continue  # 코스 광고 카드는 글이 아니라 자리 — 글당 평균 분모에서 뺀다 (클릭은 도착으로 센다)
-        if v.get("kind") and (v.get("date") or "0000")[:10] <= end.isoformat():
-            counts["pilot" if v["kind"] == "sponsor" and v.get("contract") == "pilot" else v["kind"]] += 1
+        if not v.get("kind") or (v.get("date") or "0000")[:10] > end.isoformat():
+            continue
+        if v.get("placement") == "clinic_dir":
+            clinic_posts.add(v.get("draft_id"))  # 병원마다 링크가 있으므로 글 수로 센다
+            continue
+        counts["pilot" if v["kind"] == "sponsor" and v.get("contract") == "pilot" else v["kind"]] += 1
+    counts["clinic"] = len(clinic_posts)
     return counts
 
 
@@ -122,7 +131,7 @@ def analyze(rows: list[dict], links: dict[str, dict], procedures: dict[str, dict
     total = sum(kinds.values())
     return {
         "total": total, "kinds": kinds, "posts": posts,
-        "per_post": {k: (kinds[k] / posts[k] if posts[k] else None) for k in ("registry", "sponsor", "pilot")},
+        "per_post": {k: (kinds[k] / posts[k] if posts[k] else None) for k in ("registry", "sponsor", "pilot", "clinic")},
         "ai": _sum(by_source.get("ai", Counter())),
         "by_procedure": sorted(((procedures.get(p, {}).get("name", "Other" if p == "other" else p), c)
                                 for p, c in by_proc.items()), key=lambda x: -_sum(x[1])),
@@ -151,31 +160,34 @@ def render(result: dict, start: date, end: date) -> str:
     k, total = result["kinds"], result["total"]
     arrivals = k["sponsor"] + k["pilot"]
     lines = [f"# 유입 데이터 분석 {start} ~ {end}", "",
-             "측정 범위: 관심 → **의도**(등록기관 목록 클릭) → **도착**(스폰서·파일럿 병원 사이트 클릭). "
-             "병원 안의 전환(상담·예약·결제)은 병원 자체 측정 영역. 봇·미리보기 제외.", "",
+             "측정 범위: 관심 → **의도**(등록기관 목록 클릭) → **도착**(스폰서·파일럿 병원 사이트, 주변 병원 목록의 병원 "
+             "사이트 클릭). 병원 안의 전환(상담·예약·결제)은 병원 자체 측정 영역. 봇·미리보기 제외.", "",
              "## 요약", "| 항목 | 값 |", "|---|---|",
              f"| 전체 클릭 (사람) | {total} |",
              f"| 의도: 등록기관 목록 클릭 | {k['registry']} |",
              f"| 도착: 스폰서 병원 사이트 | {k['sponsor']} |",
              f"| 도착: 파일럿 병원 사이트 | {k['pilot']} |",
+             f"| 도착: 주변 병원 목록 → 병원 사이트 (전체 병원 합산) | {k['clinic']} |",
              f"| AI 검색 답변(ChatGPT·Perplexity·Gemini 등)에서 넘어온 클릭 | {result['ai']} ({_pct(result['ai'], total)}) |", "",
              "## 영업 벤치마크 (글당 평균)", "| 글 종류 | 게시 글 수 | 기간 클릭 | 글당 평균 |", "|---|---|---|---|"]
-    for kind in ("registry", "sponsor", "pilot"):
+    for kind in ("registry", "sponsor", "pilot", "clinic"):
         lines.append(f"| {KIND_LABEL[kind]} | {result['posts'][kind]} | {k[kind]} | {_avg(result['per_post'][kind])} |")
     lines += ["", "- 중립 글 1개가 평균 몇 명을 '병원 찾기'로 보냈는지(의도)와, 스폰서·파일럿 글 1개가 평균 몇 명을 "
               "병원 사이트에 도착시켰는지(도착)를 비교한다. 병원 제안서의 '글 1개당 예상 도착 수' 근거.",
               f"- 도착 합계 {arrivals} (병원이 GA4 등에서 utm_source=skinbound 로 직접 확인 가능).", "",
               "## 시술별 관심도 (시술 = config/procedures.yaml 키워드 분류)",
-              "| 시술 | 의도 | 도착(스폰서) | 도착(파일럿) | 합계 |", "|---|---|---|---|---|"]
-    lines += [f"| {name} | {c['registry']} | {c['sponsor']} | {c['pilot']} | {_sum(c)} |" for name, c in result["by_procedure"]] or ["| - | 0 | 0 | 0 | 0 |"]
+              "| 시술 | 의도 | 도착(스폰서) | 도착(파일럿) | 도착(병원 목록) | 합계 |", "|---|---|---|---|---|---|"]
+    lines += [f"| {name} | {c['registry']} | {c['sponsor']} | {c['pilot']} | {c['clinic']} | {_sum(c)} |"
+              for name, c in result["by_procedure"]] or ["| - | 0 | 0 | 0 | 0 | 0 |"]
     lines += ["", "## 관광지·지역별 (여행 글이 병원 찾기·병원 도착으로 이어진 정도, config/attractions.yaml 분류)",
-              "| 관광지·지역 | 의도 | 도착 | 합계 |", "|---|---|---|---|"]
-    lines += [f"| {name} | {c['registry']} | {c['sponsor'] + c['pilot']} | {_sum(c)} |" for name, c in result["by_attraction"]] or ["| - | 0 | 0 | 0 |"]
+              "| 관광지·지역 | 의도 | 도착(스폰서·파일럿) | 도착(병원 목록, 전체 병원 합산) | 합계 |", "|---|---|---|---|---|"]
+    lines += [f"| {name} | {c['registry']} | {c['sponsor'] + c['pilot']} | {c['clinic']} | {_sum(c)} |"
+              for name, c in result["by_attraction"]] or ["| - | 0 | 0 | 0 | 0 |"]
     lines += ["", "## 글별 (상위 30)", "| 종류 | 글 | 병원 | 클릭 | 하루 고유 방문 합계 |", "|---|---|---|---|---|"]
     lines += [f"| {KIND_LABEL.get(kind, kind)} | {title} | {sponsor or '-'} | {v['clicks']} | {v['unique']} |"
               for (kind, title, sponsor), v in result["by_post"][:30]] or ["| - | - | - | 0 | 0 |"]
     lines += ["", "## 채널별", "| 채널 | 의도 | 도착 | 합계 | 비율 |", "|---|---|---|---|---|"]
-    lines += [f"| {tracker.SOURCE_LABEL.get(s, s)} | {c['registry']} | {c['sponsor'] + c['pilot']} | {_sum(c)} | {_pct(_sum(c), total)} |"
+    lines += [f"| {tracker.SOURCE_LABEL.get(s, s)} | {c['registry']} | {c['sponsor'] + c['pilot'] + c['clinic']} | {_sum(c)} | {_pct(_sum(c), total)} |"
               for s, c in result["by_source"]] or ["| - | 0 | 0 | 0 | - |"]
     lines += ["", "## 국가별 (상위 20)", "| 국가 | 클릭 | 비율 |", "|---|---|---|"]
     lines += [f"| {c} | {n} | {_pct(n, total)} |" for c, n in result["by_country"]] or ["| - | 0 | - |"]
@@ -186,6 +198,8 @@ def render(result: dict, start: date, end: date) -> str:
               "- 앱 내 브라우저는 리퍼러를 안 보내는 경우가 있어 일부가 '직접/앱'으로 잡힌다.",
               "- 파일럿(무상) 병원 수치는 소수 병원의 초기 자료다. 영업 자료로 쓸 때 기간·병원 수·글 수를 함께 밝히고 "
               "특정 병원명을 다른 병원 제안서에 넣지 않는다 (병원 동의 없는 공개 금지).",
+              "- 주변 병원 목록 클릭은 목록의 모든 병원에 똑같이 건 링크의 **합산**이다. 병원별 수치는 영업 자료에 쓰지 않는다 "
+              "(무료로 보낸 유입을 근거로 계약하면 송객 대가로 보일 수 있다 — 변호사 확인 전까지).",
               "- 요금은 정액 — 이 수치로 클릭·환자 수 연동 과금을 하지 않는다 (의료법 §27③)."]
     return "\n".join(lines) + "\n"
 
@@ -201,7 +215,8 @@ def write_csv(rows: list[dict], path: Path) -> None:
 def summary_line(result: dict, name: str) -> str:
     k = result["kinds"]
     top = ", ".join(f"{n} {_sum(c)}" for n, c in result["by_procedure"][:3]) or "-"
-    return (f"📊 유입 분석 {name}: 의도(등록기관) {k['registry']} · 도착(스폰서 {k['sponsor']} / 파일럿 {k['pilot']})"
+    return (f"📊 유입 분석 {name}: 의도(등록기관) {k['registry']} · 도착(스폰서 {k['sponsor']} / 파일럿 {k['pilot']}"
+            f" / 병원 목록 {k['clinic']})"
             f" · 시술 상위: {top}")
 
 
