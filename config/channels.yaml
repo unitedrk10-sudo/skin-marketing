@@ -8,12 +8,13 @@ shortform:
   duration_sec: [30, 60]
   hook_sec: 3             # 첫 2~3초 질문형 훅
   channels:
+    # 영상 1편을 세 채널에 각각 올리므로 빈도는 같다 (2026-10-06)
     tiktok:    {per_week: 5, aspect: "9:16", notes: "빠른 컷, 트렌드 사운드 금지(라이선스)"}
-    instagram: {per_week: 4, aspect: "9:16", notes: "방한 전 탐색층, 저장 유도"}
-    youtube:   {per_week: 4, aspect: "9:16", notes: "검색 키워드를 제목 앞쪽에"}
+    instagram: {per_week: 5, aspect: "9:16", notes: "방한 전 탐색층, 저장 유도"}
+    youtube:   {per_week: 5, aspect: "9:16", notes: "검색 키워드를 제목 앞쪽에"}
 
 blog:
-  per_week: 2
+  per_week: 5             # 초안 1편 = 대본 + 블로그, 승인된 블로그는 모두 게시된다
   words: [1200, 2000]
 
 content_axes:             # 기획서 3장
@@ -22,11 +23,20 @@ content_axes:             # 기획서 3장
   - how_to               # 이용 가이드
   - trend                # 트렌드
   - review_curation      # 후기 큐레이션 (병원별 X)
-  - procedure_travel     # 시술 × 여행 (정보만)
-  - travel_guide         # 관광지 소개·코스 (AI 검색 유입 통로, config/attractions.yaml, 시술 후 주의점 포함)
+  - procedure_travel     # 시술 × 여행 (정보만) — 관광지 정보는 이 축 안에서만 (config/attractions.yaml, 트렌드)
   - skincare             # 재생·진정 화장품·홈케어 (화장품법 §13: 의약품 오인 표현 금지, 협찬이면 스폰서 트랙)
+# travel_guide(관광지만 다루는 글)는 2026-10-06 제외: 숏폼은 초기 영상으로 계정 주제가 분류되므로
+# 시술 정보를 볼 사람을 모으려면 시술 계열에 집중한다. 이 목록에 없는 축의 주제는 후보에서 빠진다.
 
-topics_per_week: 6
+topics_per_week: 6        # 주 5편 게시 + 예비 1
+# 주제 후보 유형별 개수 (합 = topics_per_week). 유형 안에서는 수요 점수 순, 모자라면 다른 유형으로 채운다.
+topic_quota:
+  info:                   # 시술 정보
+    axes: [procedure, price_guide, how_to, trend, review_curation, skincare]
+    count: 4
+  procedure_travel:       # 시술 × 여행 (시술 일정·회복과 엮은 여행 정보)
+    axes: [procedure_travel]
+    count: 2
 
 # 스폰서(병원 광고) 콘텐츠를 올릴 수 있는 채널 — 플랫폼 정책 (2026-09 확인, 기획서 12-1-1)
 # 06_publish 는 allowed: false 채널에 스폰서 콘텐츠를 올리지 않고, requires 설정을 켠 채로만 게시한다.

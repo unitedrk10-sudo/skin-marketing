@@ -3,10 +3,11 @@
 관광지 수요 점수(pipeline.demand)에 더해지는 두 가지:
   1. 트렌드 스캔 (content/trends/<주차>.json): 알려진 관광지별 trend 0~100 + 목록에 없는 신규 장소·행사(emerging).
      음식·카페 트렌드(food): 뜨는 메뉴·디저트·카페 거리·시장, 독립 출처가 보도한 식당·카페 — 근처 관광지 점수를 올리고,
-     여행 글 프롬프트에 출처와 함께 들어가며, 주제 아이디어가 있으면 travel_guide 후보가 된다.
+     시술 × 여행(procedure_travel) 글 프롬프트에 출처와 함께 들어간다.
      출처 URL 없는 항목은 버린다. 스캔이 21일보다 오래되면 반영하지 않는다 (지난 유행으로 추천하지 않게).
   2. 계절 (config/attractions.yaml season: 월 목록): 이번 달·다음 달이 시즌이면 가산점 (여행자는 1~2달 전에 검색·계획).
-신규 장소는 주제 후보(travel_guide)로 바로 올라간다 (01_topics). 반복해서 뜨면 attractions.yaml 에 정식 추가한다.
+신규 장소·맛집은 주제 후보로 직접 올리지 않는다 (관광지만 다루는 글은 2026-10-06 제외) — 주제 조사 프롬프트의
+수요 정보와 시술 × 여행 글의 참고 정보로만 쓴다. 반복해서 뜨면 attractions.yaml 에 정식 추가한다.
 
     python -m pipeline.trends scan [--week 2026-W40]    # 스캔 후 요약 출력
     python -m pipeline.trends show                      # 최근 스캔 + 이번 시즌 관광지
@@ -161,19 +162,6 @@ def in_season(attraction: dict, today: date | None = None) -> bool:
     today = today or date.today()
     months = set(attraction.get("season") or [])
     return bool(months & {today.month, today.month % 12 + 1})
-
-
-def emerging_topics(data: dict | None) -> list[dict]:
-    """신규 트렌드 장소·음식·카페 → 01_topics 주제 후보 (travel_guide)."""
-    out = []
-    items = (data or {}).get("emerging", []) + [f for f in (data or {}).get("food", []) if f.get("topic")]
-    for e in items:
-        t = e["topic"]
-        out.append({"title": t["title"], "axis": "travel_guide", "angle": t["angle"], "keywords": t["keywords"],
-                    "hook": t["hook"], "has_price": False, "why_now": f"Trending: {e['why']}",
-                    "sources": [{"url": u, "title": ""} for u in e["sources"]], "seed_id": e["id"],
-                    "trend": {"name": e["name"], "score": e["trend"] / 100}})
-    return out
 
 
 def summary(data: dict | None, today: date | None = None) -> str:

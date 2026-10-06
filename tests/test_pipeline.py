@@ -4,6 +4,7 @@ import importlib
 import json
 import re
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -1103,8 +1104,8 @@ def test_seed_week_limits_same_procedure():
     topics = [{"title": f"Rejuran {i}", "keywords": [], "axis": "procedure", "angle": "a"} for i in range(4)]
     topics.append({"title": "Botox basics", "keywords": [], "axis": "procedure", "angle": "a"})
     tables = demand_mod.all_scores()
-    picked = topics_mod.diverse(topics_mod.annotate(topics, tables), 3)
-    assert [t["title"] for t in picked] == ["Rejuran 0", "Rejuran 1", "Botox basics"]
+    picked = topics_mod.pick(topics_mod.annotate(topics, tables), 3)
+    assert sorted(t["title"] for t in picked) == ["Botox basics", "Rejuran 0", "Rejuran 1"]
 
 
 def test_demand_blends_our_traffic(site_env, monkeypatch):
@@ -1298,7 +1299,8 @@ def test_observation_day_places():
     for aid in ("jjimjilbang", "gyeongbokgung", "k_hiking", "nami_day_trip", "jeju"):
         assert not catalog[aid]["observation_ok"], aid
     axes = common.load_yaml("channels.yaml")["content_axes"]
-    assert "travel_guide" in axes and "travel_guide" in site_mod.REGISTRY_AXES
+    assert "travel_guide" not in axes and "procedure_travel" in axes  # 관광지만 다루는 글은 하지 않는다 (2026-10-06)
+    assert "travel_guide" in site_mod.REGISTRY_AXES  # 이미 게시된 글의 등록기관 안내는 유지
 
 
 def test_travel_context_only_for_travel_axes(env):
@@ -1330,7 +1332,24 @@ def test_travel_topics_compete_on_attraction_demand(env):
     assert demand_mod.topic_score({"title": "Your first consultation"}, tables)[1] == "procedures:other"
     assert "Places & areas:" in demand_mod.prompt_block(tables)
     week = topics_mod.from_seed("2026-W40", 6, tables)
-    assert any(t["axis"] == "travel_guide" for t in week["topics"])
+    assert not any(t["axis"] == "travel_guide" for t in week["topics"])  # 관광 전용 주제는 후보에서 빠진다
+    assert any(t["axis"] == "procedure_travel" for t in week["topics"])  # 관광지 수요는 시술 × 여행으로
+
+
+def test_weekly_topics_follow_axis_quota(env):
+    week = topics_mod.from_seed("2026-W40", 6)
+    axes = Counter(t["axis"] for t in week["topics"])
+    assert len(week["topics"]) == 6 and axes["procedure_travel"] == 2 and sum(axes.values()) - axes["procedure_travel"] == 4
+    scores = [t["demand"]["score"] for t in week["topics"]]
+    assert scores == sorted(scores, reverse=True)  # 메시지는 수요 점수 순
+
+
+def test_quota_fills_from_other_groups_when_short():
+    topics = [{"axis": "procedure", "title": f"p{i}", "demand": {"score": 1 - i / 10, "focus": f"procedures:p{i}"}}
+              for i in range(6)] + [{"axis": "procedure_travel", "title": "t", "demand": {"score": 0.1, "focus": "x:t"}}]
+    picked = topics_mod.pick(topics, 6)
+    assert [t["title"] for t in picked] == ["p0", "p1", "p2", "p3", "p4", "t"]  # 여행 1개뿐 → 시술로 채움
+    assert topics_mod.quota(12) == [("info", topics_mod.quota(6)[0][1], 8), ("procedure_travel", ["procedure_travel"], 4)]
 
 
 # ---- 관광지 트렌드 ----
@@ -1380,13 +1399,23 @@ def test_trend_and_season_raise_attraction_scores(env):
     assert "Trending right now" in block and "Seoul Autumn Pop-up" in block
 
 
-def test_emerging_places_become_topic_candidates(env):
-    env.responses["trends"] = TREND_SCAN
+def test_trending_places_are_not_topic_candidates(env):
+    """관광지만 다루는 글은 하지 않으므로 트렌드 장소·맛집은 주제 후보가 아니라 수요 정보로만 쓴다."""
+    env.responses["trends"] = FOOD_SCAN
     trends_mod.scan("2026-W40")
     week = topics_mod.from_seed("2026-W40", 40)
-    popup = [t for t in week["topics"] if t["seed_id"].startswith("trend-")]
-    assert popup and popup[0]["axis"] == "travel_guide" and popup[0]["sources"][0]["url"] == "https://news.example/popup"
-    assert "🔥" in popup[0]["demand"]["reason"]
+    assert not any(t["seed_id"].startswith("trend-") for t in week["topics"])
+    assert "Seoul Autumn Pop-up" in demand_mod.prompt_block(demand_mod.all_scores())  # 주제 조사 프롬프트에는 들어감
+
+
+def test_seed_wave_bonus_follows_the_topic_after_filtering(env):
+    week = topics_mod.from_seed("2026-W40", 40)
+    seeds = {s["id"]: s for s in common.load_yaml("seed_topics.yaml")["topics"]}
+    tables = demand_mod.all_scores()
+    for t in week["topics"]:
+        base = demand_mod.topic_score(t, tables)[0]
+        expected = base + topics_mod.WAVE_BONUS.get(seeds[t["seed_id"]].get("wave", 9), 0)
+        assert t["demand"]["score"] == round(expected, 3), t["seed_id"]
 
 
 def test_old_trend_scan_is_ignored(env):
@@ -1418,8 +1447,6 @@ def test_food_trends_feed_places_prompts_and_topics(env):
     block = attractions_mod.context({"title": "Seongsu-dong guide", "axis": "travel_guide", "keywords": ["seongsu"]})
     assert "TRENDING FOOD & CAFES" in block and "Seongsu salt-bread cafes" in block and "Dubai chewy cookie" in block
     assert "https://news.example/saltbread" in block
-    ids = [t["seed_id"] for t in trends_mod.emerging_topics(data)]
-    assert "trend-food-seongsu-salt-bread-cafes" in ids and not any("cookie" in i for i in ids)   # 주제 아이디어 있는 것만
     assert "🍜 Seongsu salt-bread cafes" in trends_mod.summary(data)
     assert "unpaid editorial example" in common.read_prompt("_rules")
 
