@@ -38,22 +38,44 @@ def is_clinic_host(url_or_host: str) -> bool:
     return bool(CLINIC_HOST.search(h))
 
 
+PDF_MAX_BYTES = 15_000_000
+PDF_MAX_PAGES = 40
+
+
 def fetch_page(url: str) -> tuple[int, str]:
-    """(HTTP 상태, 본문 텍스트). 연결 실패는 상태 0."""
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*"})
+    """(HTTP 상태, 본문 텍스트). 연결 실패는 상태 0. PDF(FDA 문서·논문 등)는 글자를 뽑는다."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/pdf,*/*"})
     try:
         with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
-            raw = resp.read(2_000_000)
-            charset = resp.headers.get_content_charset() or "utf-8"
             ctype = resp.headers.get_content_type()
+            pdf = ctype == "application/pdf" or urlparse(url).path.lower().endswith(".pdf")
+            raw = resp.read(PDF_MAX_BYTES if pdf else 2_000_000)
+            charset = resp.headers.get_content_charset() or "utf-8"
             status = resp.status
     except urllib.error.HTTPError as e:
         return e.code, ""
     except (urllib.error.URLError, OSError, ValueError):
         return 0, ""
-    if ctype == "application/pdf":
-        return status, ""  # PDF 본문 대조는 사람 확인
+    if pdf or raw[:5] == b"%PDF-":
+        return status, pdf_to_text(raw)
     return status, html_to_text(raw.decode(charset, errors="replace"))
+
+
+def pdf_to_text(raw: bytes) -> str:
+    """PDF 앞쪽 PDF_MAX_PAGES 쪽의 글자. 스캔 이미지뿐인 PDF·깨진 파일은 빈 문자열 (→ 사람이 확인)."""
+    import io
+    import logging
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+    logging.getLogger("pypdf").setLevel(logging.ERROR)  # 글꼴 인코딩 경고는 추출 결과와 무관
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        text = " ".join((page.extract_text() or "") for page in reader.pages[:PDF_MAX_PAGES])
+    except Exception:  # noqa: BLE001 — 암호화·손상 PDF
+        return ""
+    return re.sub(r"\s+", " ", text).strip()
 
 
 _fetcher = fetch_page

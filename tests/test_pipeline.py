@@ -1874,3 +1874,7 @@ def test_site_share_images_and_icons(sponsored, tmp_path, monkeypatch):
     first = (dist / "og" / "rejuran.png").read_bytes()
     site_mod.build()
     assert (dist / "og" / "rejuran.png").read_bytes() == first          # 같은 입력 → 같은 이미지 (변경 없으면 배포 안 함)
+
+
+def test_pdf_text_extraction_handles_broken_files():
+    assert web.pdf_to_text(b"%PDF-1.4 not really a pdf") == ""  # 손상·스캔 PDF → 빈 본문 (사람 확인)

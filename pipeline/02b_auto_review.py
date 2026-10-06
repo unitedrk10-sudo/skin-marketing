@@ -290,7 +290,7 @@ def check_sources(draft: dict, fetch=fetch_page) -> tuple[list[Finding], list[di
             findings.append(Finding("sources", "block", f"출처 접속 실패({status or '연결 오류'}) [{ids}]", url))
             continue
         if len(page) < 200:
-            findings.append(Finding("sources", "caution", f"출처 본문 추출 불가(PDF·스크립트 렌더링 등) — 사람이 확인 [{ids}]", url))
+            findings.append(Finding("sources", "caution", f"출처 본문 추출 불가(스캔 PDF·스크립트 렌더링 등) — 사람이 확인 [{ids}]", url))
             continue
         if external:  # 본문 대조는 Claude Code 가 한다 — 수집한 본문을 넘긴다
             entry["page_excerpt"] = page[:PAGE_CHARS]
