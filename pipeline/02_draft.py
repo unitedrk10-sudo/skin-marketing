@@ -322,6 +322,38 @@ def revise(draft_id: str, note: str, auto: bool = False) -> str:
     return draft_id
 
 
+def fix(draft_id: str, findings: list[dict]) -> str:
+    """검수 지적(⚠️)을 사람에게 보내기 전에 지적된 문장만 고친다 — 사실·출처는 그대로, 새 내용은 넣지 않는다.
+    초안 버전마다 1회 (draft.autofixed). 고친 뒤에는 검수 기록을 지워 다시 검수하게 한다."""
+    state, path = find_draft(draft_id)
+    if state != "drafts":
+        raise ValueError(f"{draft_id} 는 {state}/ 에 있어 수정할 수 없습니다 (drafts/ 만 가능)")
+    draft = load_draft(path)
+    sponsor = draft.get("sponsor")
+    text = prompt(
+        "fix_draft",
+        rules=sponsors.rules_text(sponsor) if sponsor else None,
+        month=date.today().strftime("%B %Y"),
+        findings="\n".join(f"- {f['message']}" + (f"\n  quoted: {f['quote']}" if f.get("quote") else "") for f in findings),
+        facts="\n".join(f"[{f['id']}] {f['text']} / quote: {f.get('quote', '')}" for f in draft["facts"]),
+        shortform=draft["shortform"],
+        blog=draft["blog"],
+    )
+    data, result = llm.generate_json("write", text)
+    if not isinstance(data, dict) or not (data.get("shortform") or {}).get("lines") or not (data.get("blog") or {}).get("markdown"):
+        raise llm.LLMError("자동 수정 결과에 대본·블로그가 없습니다")
+    _tidy(data)
+    draft.update(shortform=data["shortform"], blog=data["blog"])
+    if sponsor:
+        add_disclosures(draft, sponsor)  # 광고 표시는 코드가 다시 확인해 넣는다
+    draft["autofixed"] = draft.get("autofixed", 0) + 1
+    draft["revisions"] = draft.get("revisions", []) + [
+        {"at": now_iso(), "note": f"검수 지적 {len(findings)}건 자동 수정 ({result.model})", "auto": True, "kind": "fix"}]
+    write_files(path, draft)
+    log.info("자동 수정: %s (지적 %d건)", draft_id, len(findings))
+    return draft_id
+
+
 def parse_pick(pick: str, total: int) -> list[int]:
     nums = sorted({int(n) for n in re.findall(r"\d+", pick)})
     bad = [n for n in nums if not 1 <= n <= total]

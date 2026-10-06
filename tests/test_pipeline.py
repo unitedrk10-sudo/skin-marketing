@@ -736,6 +736,31 @@ def test_worker_failed_request_is_quarantined(worker_env):
     assert not list(worker_mod.requests_dir().glob("*.json"))
 
 
+def test_caution_findings_are_fixed_once_before_human_review(env):
+    env.responses["cross_review"] = {"findings": [
+        {"severity": "major", "where": "blog", "quote": "It uses polynucleotides", "issue": "adds a detail", "suggestion": "cut"}],
+        "overall": "x"}
+    path = common.content_dir("drafts") / make_draft(env)
+    result = review_mod.review_with_regeneration(path, fetch=ok_fetch)
+    fixes = [p for stage, p in env.calls if stage == "write" and "REVIEW FINDINGS" in p]
+    assert len(fixes) == 1  # ⚠️ 지적 → 자동 수정 1회만 (고친 뒤에도 남으면 사람에게)
+    assert "adds a detail" in fixes[0] and "quoted: It uses polynucleotides" in fixes[0]
+    draft = common.load_draft(path)
+    assert draft["autofixed"] == 1 and draft["revisions"][-1]["kind"] == "fix"
+    assert result["grade"] == "caution" and common.load_review(path) == result  # 고친 버전으로 다시 검수
+    human_mod.list_message("drafts")
+    assert "🛠 검수 지적 1건 자동 수정" in human_mod.draft_messages("drafts")[0]
+    review_mod.review_with_regeneration(path, fetch=ok_fetch)  # 같은 버전은 다시 고치지 않는다
+    assert len([p for stage, p in env.calls if stage == "write" and "REVIEW FINDINGS" in p]) == 1
+
+
+def test_unfixable_cautions_go_straight_to_human(env):
+    path = common.content_dir("drafts") / make_draft(env)
+    review_mod.review_with_regeneration(path, fetch=lambda u: (403, ""))  # 봇 차단 출처 → 문장으로 못 고친다
+    assert common.load_review(path)["grade"] == "caution"
+    assert not any(stage == "write" and "REVIEW FINDINGS" in p for stage, p in env.calls)
+
+
 def test_worker_sends_each_draft_then_summary(worker_env):
     worker_mod.request_drafts("1, 2")
     sent = []

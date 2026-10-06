@@ -395,17 +395,31 @@ def regeneration_note(result: dict) -> str:
     return "Automatic review blocked this draft. Fix every item below, keep everything else:\n" + "\n".join(items[:20])
 
 
+def fixable(result: dict) -> list[dict]:
+    """문장을 고쳐 해결할 수 있는 ⚠️ 지적: 교차 검수 지적, 출처 근거 약함·출처에 없는 주장.
+    (PDF·접속 차단·병원 사이트 출처처럼 문장으로 못 고치는 것은 사람에게)"""
+    return [f for f in result["findings"] if f["severity"] in ("caution", "block")
+            and (f["check"] == "cross" or (f["check"] == "sources" and ("근거 약함" in f["message"] or "출처에 없는" in f["message"])))]
+
+
 def review_with_regeneration(path: Path, fetch=fetch_page) -> dict:
-    """검수 후 ⛔ 이면 자동 재생성 1회 → 재검수 (기획서 6-0)."""
+    """검수 후 ⛔ 이면 자동 재생성 1회 → 재검수 (기획서 6-0).
+    ⚠️ 이고 문장으로 고칠 지적이 있으면 사람에게 보내기 전에 지적된 문장만 자동 수정 1회 → 재검수."""
+    draft_mod = importlib.import_module("pipeline.02_draft")
     result = review(path, fetch)
-    if result["grade"] == "block" and result["regenerated"] == 0:
-        log.info("차단 → 자동 재생성 1회: %s", path.name)
-        try:
-            importlib.import_module("pipeline.02_draft").revise(path.name, regeneration_note(result), auto=True)
-        except llm.RateLimited:
-            (path / "review.json").unlink(missing_ok=True)  # 검수 전 상태로 되돌려 다음 실행 때 다시 검수·재생성
-            raise
-        result = review(path, fetch)
+    try:
+        if result["grade"] == "block" and result["regenerated"] == 0:
+            log.info("차단 → 자동 재생성 1회: %s", path.name)
+            draft_mod.revise(path.name, regeneration_note(result), auto=True)
+            result = review(path, fetch)
+        items = fixable(result)
+        if result["grade"] == "caution" and items and not load_draft(path).get("autofixed"):
+            log.info("⚠️ 지적 %d건 → 사람 검수 전 자동 수정 1회: %s", len(items), path.name)
+            draft_mod.fix(path.name, items)
+            result = review(path, fetch)
+    except llm.RateLimited:
+        (path / "review.json").unlink(missing_ok=True)  # 검수 전 상태로 되돌려 다음 실행 때 다시 검수·재생성
+        raise
     return result
 
 
