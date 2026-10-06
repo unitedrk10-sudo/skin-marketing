@@ -19,7 +19,11 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import IO
@@ -100,7 +104,33 @@ def _process(req: dict) -> None:
         raise ValueError(f"알 수 없는 요청: {req['kind']}")
 
 
-def run(review_runner=None) -> tuple[str, list[str]]:
+def hermes_send(text: str) -> bool:
+    """Hermes 로 텔레그램(홈 채널)에 메시지 하나를 보낸다 — 길면 Hermes 가 나눠 보낸다."""
+    hermes = os.environ.get("HERMES_BIN") or shutil.which("hermes")
+    if not hermes:
+        return False
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as f:
+        f.write(text)
+    try:
+        proc = subprocess.run([hermes, "send", "-t", os.environ.get("SKIN_DELIVER", "telegram"), "-f", f.name, "-q"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.warning("hermes send 실패: %s", e)
+        return False
+    finally:
+        os.unlink(f.name)
+    if proc.returncode != 0:
+        log.warning("hermes send 실패 (%s): %s", proc.returncode, (proc.stderr or proc.stdout)[-300:])
+    return proc.returncode == 0
+
+
+def send_each(messages: list[str], sender=None) -> bool:
+    """전부 보냈으면 True. 하나라도 실패하면 False (워커가 한 메시지 + 첨부 방식으로 다시 보낸다)."""
+    sender = sender or hermes_send
+    return bool(messages) and all(sender(m) for m in messages)
+
+
+def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     """반환: (텔레그램으로 보낼 메시지 — 없으면 "", 실패 목록)"""
     review_mod = importlib.import_module("pipeline.02b_auto_review")
     external_mod = importlib.import_module("pipeline.02c_external_review")
@@ -141,7 +171,13 @@ def run(review_runner=None) -> tuple[str, list[str]]:
             log.exception("Claude Code 검수 실패")
             changed = True  # ⏳ 상태라도 알려준다
 
-    message = human_mod.list_message("drafts") if changed else ""
+    message = ""
+    if changed:
+        # 초안마다 메시지를 따로 보내고, 크론 출력(마지막에 도착)은 번호·답장 예시만 담은 요약으로.
+        # 따로 보낼 수 없으면 한 메시지 + 초안별 첨부 파일로.
+        summary = human_mod.list_message("drafts", compact=True)
+        sent = summary != "검수 대기 없음" and send_each(human_mod.draft_messages("drafts"), sender)
+        message = summary if sent else human_mod.list_message("drafts")
 
     render_mod = importlib.import_module("pipeline.04_render_video")
     if render_mod.tts_configured() and render_mod.pending():  # 승인된 초안 → 영상 (한 번에 2건, TTS 비용·시간 제한)

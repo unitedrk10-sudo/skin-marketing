@@ -11,7 +11,8 @@ spec = importlib.util.spec_from_file_location("hermes_install", Path(__file__).p
 install = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(install)
 
-PRINT_ENV = "import os; print(os.environ.get('GEMINI_API_KEY'), os.environ.get('EMPTY', '-'), 'PYTHONPATH' in os.environ)"
+PRINT_ENV = ("import os; print(os.environ.get('GEMINI_API_KEY'), os.environ.get('EMPTY', '-'), 'PYTHONPATH' in os.environ, "
+             "os.environ.get('HERMES_BIN'))")
 
 
 @pytest.fixture
@@ -29,11 +30,12 @@ def run_script(path: Path, **env) -> subprocess.CompletedProcess:
 
 def test_script_loads_env_and_drops_hermes_pythonpath(repo, tmp_path, monkeypatch):
     monkeypatch.setattr(install, "JOBS", [("skin-test", "every 1h", [{"cmd": ["{python}", "-c", PRINT_ENV]}])])
-    [script] = install.write_scripts(tmp_path / "scripts", repo, sys.executable, "claude", "git")
+    [script] = install.write_scripts(tmp_path / "scripts", repo, sys.executable, "claude", "git", "C:/hermes/hermes.exe")
     assert script.name == "skin-test.py"  # .sh 가 아니어야 Hermes 가 bash(WSL) 대신 Python 으로 실행
     proc = run_script(script, PYTHONPATH="/hermes/venv", EMPTY="keep")
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.split() == ["abc", "keep", "False"]  # 빈 값은 기존 값을 덮지 않음, CR 제거
+    # 빈 값은 기존 값을 덮지 않음, CR 제거, 워커가 초안별 메시지를 보낼 hermes 경로 전달
+    assert proc.stdout.split() == ["abc", "keep", "False", "C:/hermes/hermes.exe"]
 
 
 def test_script_failure_handling(repo, tmp_path, monkeypatch):

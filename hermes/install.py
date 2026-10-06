@@ -68,11 +68,14 @@ import sys
 REPO = {repo!r}
 PYTHON = {python!r}
 CLAUDE_BIN = {claude!r}
+HERMES_BIN = {hermes!r}  # 워커가 초안별 메시지를 따로 보낼 때 쓴다 (hermes send)
 STEPS = {steps!r}
 
 # Hermes 가 얹은 파이썬 경로(자기 venv)는 빼고 저장소 파이썬만 쓰게 한다
 env = {{k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV")}}
 env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", CLAUDE_BIN=CLAUDE_BIN)
+if HERMES_BIN:
+    env["HERMES_BIN"] = HERMES_BIN
 env["PATH"] = os.pathsep.join([os.path.dirname(CLAUDE_BIN), os.path.dirname(PYTHON), env.get("PATH", "")])
 # .env 의 값이 있는 항목만 환경변수로 (빈 값이 기존 환경변수를 덮지 않게)
 dotenv = os.path.join(REPO, ".env")
@@ -114,14 +117,14 @@ def default_python() -> str:
     return str(venv if venv.exists() else Path(sys.executable))
 
 
-def write_scripts(scripts_dir: Path, repo: Path, python: str, claude: str, git: str) -> list[Path]:
+def write_scripts(scripts_dir: Path, repo: Path, python: str, claude: str, git: str, hermes: str = "") -> list[Path]:
     scripts_dir.mkdir(parents=True, exist_ok=True)
     paths = {"{python}": python, "{claude}": claude, "{git}": git}
     written = []
     for name, _schedule, steps in JOBS:
         steps = [{**s, "cmd": [paths.get(a, a) for a in s["cmd"]]} for s in steps]
         path = scripts_dir / f"{name}.py"
-        path.write_text(SCRIPT_TEMPLATE.format(repo=str(repo), python=python, claude=claude, steps=steps),
+        path.write_text(SCRIPT_TEMPLATE.format(repo=str(repo), python=python, claude=claude, hermes=hermes, steps=steps),
                         encoding="utf-8")
         written.append(path)
     return written
@@ -197,7 +200,8 @@ def main() -> int:
         claude = "claude"
 
     # 2. 크론 스크립트
-    for path in write_scripts(args.hermes_home / "scripts", REPO, args.python, claude, shutil.which("git") or "git"):
+    for path in write_scripts(args.hermes_home / "scripts", REPO, args.python, claude, shutil.which("git") or "git",
+                              shutil.which("hermes") or ""):
         print(f"스크립트: {path}")
     # 3. 스킬
     print(f"스킬: {install_skill(args.hermes_home / 'skills', REPO, args.python)}")

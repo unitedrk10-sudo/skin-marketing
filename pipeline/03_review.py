@@ -146,6 +146,41 @@ def review_doc(path: Path) -> Path:
     return doc
 
 
+def draft_message(path: Path, number: int, total: int) -> str:
+    """텔레그램에 초안 하나를 통째로 보내는 메시지 — 걸린 항목 → 대본 → 블로그 전문 → 출처 (길면 Hermes 가 나눠 보낸다)."""
+    draft, review = load_draft(path), load_review(path)
+    sf, blog = draft.get("shortform") or {}, draft.get("blog") or {}
+    secs = sf.get("estimated_seconds")
+    out = [f"[초안 {number}/{total}] {GRADE_ICON[(review or {}).get('grade')]} {sf.get('title') or draft['topic']['title']}"
+           + (f" ({secs}s)" if secs else "")]
+    if draft.get("sponsor"):
+        out.append(f"💼 {draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}")
+    if (review or {}).get("always_human"):
+        out.append("👤 " + ", ".join(review["always_human"]))
+    issues = _issues(review)
+    if issues:
+        out += ["", "🔎 검수에서 걸린 항목"] + [f"{ISSUE_ICON[f['severity']]} {f['message']}" for f in issues]
+    out += ["", "🎬 숏폼 대본"]
+    for i, ln in enumerate(sf.get("lines", []), 1):
+        refs = f"  [{','.join(ln['fact_ids'])}]" if ln.get("fact_ids") else ""
+        out.append(f"{i}. {ln.get('voice', '')}{refs}")
+        if ln.get("caption"):
+            out.append(f"   자막: {ln['caption']}")
+    out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}  {' '.join(sf.get('hashtags', []))}")
+    out += ["", f"📝 블로그: {blog.get('title', '')}", blog.get("meta_description", ""), "", blog.get("markdown", "").strip()]
+    urls = list(dict.fromkeys(f["url"] for f in draft.get("facts", [])))
+    if urls:
+        out += ["", "📚 출처"] + [f"- {u}" for u in urls]
+    return "\n".join(out)
+
+
+def draft_messages(stage: str = "drafts") -> list[str]:
+    """마지막 list_message 의 번호표 순서대로 초안별 메시지."""
+    ids = load_batch(stage)
+    return [draft_message(content_dir(stage) / d, i, len(ids)) for i, d in enumerate(ids, 1)
+            if (content_dir(stage) / d / "draft.json").exists()]
+
+
 def _draft_summary(path: Path, draft: dict, review: dict | None) -> list[str]:
     """번호 줄 아래에 붙는 요약: 블로그 구성 · 걸린 항목 · 대본 전문."""
     blog = draft.get("blog") or {}
@@ -163,14 +198,16 @@ def _draft_summary(path: Path, draft: dict, review: dict | None) -> list[str]:
     return out
 
 
-def list_message(stage: str) -> str:
+def list_message(stage: str, compact: bool = False) -> str:
+    """검수 요청 메시지. compact=True: 초안 전문을 따로 보낸 뒤의 요약 (번호·등급·대표 지적·답장 예시만)."""
     ids = build_batch(stage)
     if not ids:
         return "검수 대기 없음" if stage == "drafts" else "게시 전 확인 대기 없음"
     lines = []
     if stage == "drafts":
         lines.append(f"[초안 검수 {len(ids)}건 (숏폼+블로그)] 답장 예: `1,3 승인` · `2 수정: 가격 출처 다시` · `4 폐기` · `전체 승인`")
-        lines.append("초안별 전문(블로그·사실별 원문 인용)은 첨부 파일로 보냅니다.")
+        lines.append("↑ 초안 전문은 위 메시지에 하나씩 보냈습니다." if compact else
+                     "초안별 전문(블로그·사실별 원문 인용)은 첨부 파일로 보냅니다.")
     else:
         lines.append(f"[게시 전 확인 {len(ids)}건] 답장 예: `게시 OK` · `1,2 게시 OK` · `3 폐기`")
     attachments = []
@@ -191,7 +228,7 @@ def list_message(stage: str) -> str:
             line += f" 👤{', '.join(review['always_human'])}"
         elif not review:
             line += " 자동검수 전"
-        if stage == "drafts":
+        if stage == "drafts" and not compact:
             lines += ["", line] + _draft_summary(path, draft, review)
             attachments.append(review_doc(path))
             continue

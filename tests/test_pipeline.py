@@ -84,6 +84,12 @@ def ok_fetch(url):
     return 200, "Polynucleotide injections fact " * 20
 
 
+@pytest.fixture(autouse=True)
+def no_real_telegram(monkeypatch):
+    """테스트가 실제 hermes send 로 텔레그램에 보내지 않게 한다 (기본: 보내기 실패 → 한 메시지 + 첨부 방식)."""
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: False)
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_CONTENT_DIR", str(tmp_path / "content"))
@@ -710,6 +716,23 @@ def test_worker_failed_request_is_quarantined(worker_env):
     message, failures = worker_mod.run(review_runner=fake_claude())
     assert failures and (worker_mod.requests_dir() / "failed").exists()
     assert not list(worker_mod.requests_dir().glob("*.json"))
+
+
+def test_worker_sends_each_draft_then_summary(worker_env):
+    worker_mod.request_drafts("1, 2")
+    sent = []
+    message, failures = worker_mod.run(review_runner=fake_claude(), sender=lambda text: sent.append(text) or True)
+    assert not failures and len(sent) == 2
+    assert sent[0].startswith("[초안 1/2]") and "🎬 숏폼 대본" in sent[0] and "📝 블로그: Rejuran explained" in sent[0]
+    assert "It uses polynucleotides [F1]." in sent[0] and f"- {URL}" in sent[0]  # 블로그 전문·출처
+    assert "↑ 초안 전문은 위 메시지에" in message and "MEDIA:" not in message and "🎬" not in message  # 요약만
+    assert "1. What is Rejuran?" in message
+
+
+def test_worker_falls_back_to_attachments_when_send_fails(worker_env):
+    worker_mod.request_drafts("1")
+    message, _ = worker_mod.run(review_runner=fake_claude(), sender=lambda text: False)
+    assert "MEDIA:" in message and "🎬 대본:" in message
 
 
 def test_worker_keeps_request_when_writer_is_rate_limited(worker_env):
