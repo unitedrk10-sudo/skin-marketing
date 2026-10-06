@@ -160,6 +160,9 @@ def draft_message(path: Path, number: int, total: int) -> str:
         out.append(f"💼 {draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}")
     if (review or {}).get("always_human"):
         out.append("👤 " + ", ".join(review["always_human"]))
+    fixes = [r["note"] for r in draft.get("revisions", []) if r.get("kind") == "fix"]
+    if fixes:
+        out.append(f"🛠 {fixes[-1]} — 아래는 고친 뒤에도 남은 지적")
     issues = _issues(review)
     if issues:
         out += ["", "🔎 검수에서 걸린 항목"] + [f"{ISSUE_ICON[f['severity']]} {f['message']}" for f in issues]
