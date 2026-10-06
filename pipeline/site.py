@@ -91,8 +91,11 @@ def collect_posts() -> list[dict]:
 
 # ---------------- 본문 변환 ----------------
 
+TRAVEL_KINDS = {"travel"}  # 여행 정보는 글 아래 출처 목록으로, 그 밖(의료·가격·규정)은 문장 옆에서 출처로 바로 간다
+
+
 def _numbered_sources(md: str, facts: list[dict]) -> tuple[str, list[dict]]:
-    """[F#] → 각주 번호. 같은 URL 은 한 번호로 묶는다."""
+    """[F#] → 출처 번호. 같은 URL 은 한 번호로 묶는다. 의료 정보는 번호가 출처 페이지로 바로 연결된다 (출처 도메인 표시)."""
     by_id = {f["id"]: f for f in facts}
     sources: list[dict] = []
     number_of_url: dict[str, int] = {}
@@ -105,7 +108,12 @@ def _numbered_sources(md: str, facts: list[dict]) -> tuple[str, list[dict]]:
             sources.append({"url": fact["url"], "title": fact.get("source_title") or hostname(fact["url"])})
             number_of_url[fact["url"]] = len(sources)
         n = number_of_url[fact["url"]]
-        return f'<sup class="ref"><a href="#src-{n}">[{n}]</a></sup>'
+        if fact.get("kind") in TRAVEL_KINDS:
+            return f'<sup class="ref"><a href="#src-{n}">[{n}]</a></sup>'
+        url = html.escape(fact["url"], quote=True)
+        title = html.escape(f"Source: {fact.get('source_title') or hostname(fact['url'])}", quote=True)
+        # rel·target 은 _rewrite_links 가 붙인다 (스폰서 병원 사이트면 rel=sponsored)
+        return f'<sup class="ref"><a href="{url}" title="{title}">[{n} · {html.escape(hostname(fact["url"]))}]</a></sup>'
 
     # 원시 HTML 차단 (LLM 출력·출처 텍스트로 스크립트가 들어오지 않게) — 인용(>)은 유지
     safe = autolink(md.replace("<", "&lt;"))

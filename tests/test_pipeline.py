@@ -740,7 +740,7 @@ def test_worker_sends_each_draft_then_summary(worker_env):
     message, failures = worker_mod.run(review_runner=fake_claude(), sender=lambda text: sent.append(text) or True)
     assert not failures and len(sent) == 2
     assert sent[0].startswith("[초안 1/2]") and "🎬 숏폼 대본" in sent[0] and "📝 블로그: Rejuran explained" in sent[0]
-    assert "It uses polynucleotides [F1]." in sent[0] and f"- {URL}" in sent[0]  # 블로그 전문·출처
+    assert "It uses polynucleotides [F1]." in sent[0] and f"- F1,F2,F3,F4,F5,F6: {URL}" in sent[0]  # 블로그 전문·사실별 출처
     assert "↑ 초안 전문은 위 메시지에" in message and "MEDIA:" not in message and "🎬" not in message  # 요약만
     assert "1. What is Rejuran?" in message
 
@@ -1040,6 +1040,17 @@ def site_env(env, tmp_path, monkeypatch):
     return env
 
 
+def test_medical_facts_link_inline_travel_facts_use_footnotes():
+    facts = [{"id": "F1", "url": "https://www.aad.org/a", "source_title": "AAD", "kind": "downtime"},
+             {"id": "F2", "url": "https://english.visitkorea.or.kr/x", "source_title": "VisitKorea", "kind": "travel"},
+             {"id": "F3", "url": "https://www.aad.org/a", "source_title": "AAD", "kind": "risk"}]
+    html_out, sources = site_mod._numbered_sources("Redness lasts 1-3 days [F1]. The palace opens at 9 [F2]. "
+                                                   "Bruising may occur [F3].", facts)
+    assert html_out.count('href="https://www.aad.org/a"') == 2 and "[1 · aad.org]" in html_out  # 같은 출처는 같은 번호
+    assert '<a href="#src-2">[2]</a>' in html_out  # 여행 정보는 글 아래 목록으로
+    assert [s["url"] for s in sources] == ["https://www.aad.org/a", "https://english.visitkorea.or.kr/x"]
+
+
 def test_site_publishes_only_approved_posts(site_env, tmp_path):
     site_env.responses["blog"] = blog(FAQ_BLOG)
     approved = make_draft(site_env)
@@ -1052,7 +1063,9 @@ def test_site_publishes_only_approved_posts(site_env, tmp_path):
     post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
     assert "<script>alert" not in post and "&lt;script&gt;" in post       # 원시 HTML 차단
     assert "javascript:" not in post
-    assert 'href="#src-1"' in post and URL in post                        # 각주 + 출처 목록
+    # 의료 정보: 문장 옆 번호가 출처 페이지로 바로 연결 (도메인 표시) + 글 아래 출처 목록에도
+    assert f'<a href="{URL}" rel="noopener" target="_blank" title="Source: PubMed">[1 · pubmed.ncbi.nlm.nih.gov]</a>' in post
+    assert 'id="src-1"' in post
     assert post.count("<h1>") == 1
     ld = [json.loads(m) for m in re.findall(r'<script type="application/ld\+json">(.*?)</script>', post)]
     assert ld[0]["citation"] == [URL] and "MedicalWebPage" in ld[0]["@type"]
