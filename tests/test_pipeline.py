@@ -1362,7 +1362,7 @@ def test_analytics_report_joins_links_and_procedures(env, tmp_path, monkeypatch)
     md = (tmp_path / "reports" / "2026-10.md").read_text(encoding="utf-8")
     assert "| 의도: 등록기관 목록 클릭 | 4 |" in md and "| 도착: 파일럿 병원 사이트 | 6 |" in md
     assert "| 전체 클릭 (사람) | 12 |" in md                                  # 봇 50 제외
-    assert "| Rejuran (PN skin booster) | 4 | 0 | 6 | 10 |" in md              # 중립 글 의도 + 파일럿 도착
+    assert "| Rejuran (PN skin booster) | 4 | 0 | 6 | 0 | 10 |" in md          # 중립 글 의도 + 파일럿 도착
     assert "| 의도(등록기관 목록) | 2 | 4 | 2.0 |" in md                          # 12월 글은 분모에서 제외, 클릭 0 인 글은 포함
     import csv
     data = list(csv.DictReader((tmp_path / "reports" / "2026-10.csv").open(encoding="utf-8")))
@@ -1614,14 +1614,55 @@ def test_route_post_lists_every_nearby_clinic_with_advertiser_label(sponsored, t
     assert "Dermatology clinics near this route" in out and "all 3 clinics" in out
     assert out.index("가까운피부과의원") < out.index("글로우피부과의원") < out.index("먼피부과의원")   # 거리순 그대로
     assert out.count("Advertiser</span>") == 1 and "글로우피부과의원 <span class=\"badge\">Advertiser" in out
-    assert "far.example" not in out and "glow-clinic.example" not in out                           # 병원 사이트 링크 없음
-    assert "google.com/maps/search" in out
+    # 사이트 주소가 있는 병원은 전부 똑같이 링크 (광고주도 같은 모양) — 고르지 않는다
+    assert out.count(">website</a>") == 2 and 'href="https://far.example"' in out and 'href="http://www.glow-clinic.example"' in out
+    assert "google.com/maps/search" in out and "Website links are the addresses listed in the same public data" in out
     orig = clinics_mod.settings
     clinics_mod.settings = lambda: {**orig(), "max_per_stop": 2}  # 표시 수를 줄여도 가까운 순으로 자르고 밝힌다
     try:
         assert "the 2 closest of 3" in site_mod.render_post(cfg, post)
     finally:
         clinics_mod.settings = orig
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("www.a-clinic.co.kr", "http://www.a-clinic.co.kr"), ("https://b.example/", "https://b.example/"),
+    ("", ""), ("javascript:alert(1)", ""), ("not a url", ""),
+])
+def test_clinic_website_normalized(raw, expected):
+    assert clinics_mod.website({"url": raw}) == expected
+
+
+def test_clinic_list_links_tracked_and_reported_only_in_aggregate(env, tmp_path, monkeypatch):
+    _clinic_cache(tmp_path, [
+        {"name": "가까운피부과의원", "type": "의원", "addr": "A", "district": "강남구 삼성동", "url": "https://near.example",
+         "lat": 0, "lng": 0, "distance_m": 80},
+        {"name": "먼피부과의원", "type": "의원", "addr": "B", "district": "강남구 대치동", "url": "www.far.example",
+         "lat": 0, "lng": 0, "distance_m": 600}])
+    post = _travel_post(env)
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+
+    def fake_request(method, path, body=None, query=None):
+        made.append(body)
+        return {"code": f"c{len(made)}", "url": f"https://go.example/c{len(made)}"}
+
+    monkeypatch.setattr(tracker_mod, "_request", fake_request)
+    links = site_mod.tracked_links([post])
+    clinic = {k: v for k, v in links.items() if k.startswith("_clinic:")}
+    assert [v["clinic"] for v in clinic.values()] == ["가까운피부과의원"]  # https 사이트만 추적 (http 는 바로 연결)
+    assert all(v["kind"] == "clinic" and v["attraction"] == "coex" for v in clinic.values())
+    html_out = site_mod.render_post({**common.load_yaml("site.yaml"), "domain": ""}, post,
+                                    clinic_urls={k.rsplit(":", 1)[1]: v["url"] for k, v in clinic.items()})
+    assert 'href="https://go.example/c' in html_out and 'href="http://www.far.example"' in html_out
+    code = next(iter(clinic.values()))["code"]
+    rows = analytics_mod.enrich([{"day": "2026-10-05", "code": code, "source": "blog", "country": "US", "is_bot": 0,
+                                  "clicks": 7, "unique_visitors": 5}], links, analytics_mod.load_catalog("procedures"))
+    assert rows[0]["kind"] == "clinic" and rows[0]["attractions"] == "coex"
+    assert "가까운피부과의원" not in json.dumps(rows, ensure_ascii=False)  # 리포트·CSV 행에 병원명 없음 (합산만)
+    result = analytics_mod.analyze(rows, links, analytics_mod.load_catalog("procedures"), date(2026, 10, 31))
+    assert result["kinds"]["clinic"] == 7 and result["posts"]["clinic"] == 1  # 병원 수가 아니라 글 수로 센다
 
 
 def test_no_clinic_list_in_sponsored_or_non_travel_posts(sponsored, tmp_path):

@@ -4,7 +4,9 @@
 보여준다. 우리가 고르거나 순위를 매기지 않는다 — 선택·추천이 들어가면 광고(의료법 §56)·알선 시비가 생기고 중립성이 깨진다.
   - 포함 기준: 심평원 공공데이터에서 진료과목 피부과(dgsbjtCd=14)가 있는 의료기관, 관광지 중심 반경 radius_m 이내 (전부)
   - 정렬: 거리순. 표시 개수를 줄일 때도 가까운 순으로 자르고 "N곳 중 가까운 M곳"이라고 밝힌다
-  - 표시: 이름·종별·주소(구·동)·거리·지도 검색 링크. 병원 사이트 링크·가격·후기·평점 없음
+  - 표시: 이름·종별·주소(구·동)·거리·지도 검색 링크·병원 사이트 링크. 가격·후기·평점 없음
+  - 병원 사이트 링크 (2026-10-06): 공공데이터에 사이트 주소가 있는 병원은 **전부 똑같이** 링크한다 (고르지 않는다 —
+    선택이 없어야 정보 목록이다). 클릭은 추적기로 세되 리포트·영업 자료에는 지역·시술 단위 합산으로만 쓴다.
   - 스폰서(광고주·파일럿) 병원은 같은 자리(거리순)에 "Advertiser" 표시만 붙는다 — 순서·노출을 돈으로 바꾸지 않는다
   - 목록은 코드가 만든다 (LLM 본문에는 병원명 금지 규칙 그대로)
 
@@ -119,6 +121,23 @@ def refresh(force: bool = False) -> dict[str, int]:
 
 def _host(url: str) -> str:
     return urlparse(url if "://" in url else f"https://{url}").netloc.lower().removeprefix("www.")
+
+
+def website(clinic: dict) -> str:
+    """공공데이터의 병원 사이트 주소를 링크할 수 있는 형태로 ("www.x.com" → "http://www.x.com"). 쓸 수 없으면 빈 문자열."""
+    url = (clinic.get("url") or "").strip()
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "http://" + url  # https 지원 여부를 모르므로 바꾸지 않는다 (사이트가 https 로 넘겨준다)
+    parsed = urlparse(url)
+    return url if parsed.scheme in ("http", "https") and "." in parsed.netloc and " " not in url else ""
+
+
+def clinic_id(clinic: dict) -> str:
+    """병원 식별 키 (이름+주소) — 추적 링크를 병원마다 하나씩 만들 때 쓴다."""
+    import hashlib
+    return hashlib.sha1(f"{clinic['name']}|{clinic['addr']}".encode()).hexdigest()[:10]
 
 
 def advertiser(clinic: dict, registered: list[dict]) -> dict | None:
