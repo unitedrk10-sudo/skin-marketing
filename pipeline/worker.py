@@ -228,7 +228,7 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         message = "\n".join(dict.fromkeys(notices)) + ("\n\n" + message if message else "")
 
     render_mod = importlib.import_module("pipeline.04_render_video")
-    if render_mod.tts_configured() and render_mod.pending():  # 승인된 초안 → 영상 (한 번에 2건, TTS 비용·시간 제한)
+    if render_mod.ready() and render_mod.pending():  # 승인된 초안 → 사진 넘기기형·영상 (한 번에 2건)
         done, render_failures = render_mod.render_pending(limit=2)
         failures += [f"렌더링 실패 {f}" for f in render_failures]
         if done:

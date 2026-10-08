@@ -30,7 +30,10 @@
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` (병원 권역 중심 여행 코스 글: `--course`, sponsors.yaml `zone` 필요) / 목록 점검 `python -m pipeline.sponsors check`
 - 블로그 사이트: `python -m pipeline.site build|deploy` (site/dist → Cloudflare Pages)
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
-- 영상: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered, Gemini TTS — `GEMINI_API_KEY` 그대로, 목소리 Kore `config/voice.yaml`, 모델 models.yaml `tts` + ffmpeg) / 게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
+- 숏폼 렌더링: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered). 형식은 `config/channels.yaml` `shortform.format`:
+  `carousel`(2026-10-07 기본, 사진 넘기기형 — `pipeline/carousel.py`, 검수된 대본 줄 = 슬라이드, 인스타그램 1080x1350·틱톡 1080x1920, 유튜브 제외) / `video`(Gemini TTS Kore + ffmpeg).
+  표지 사진: 직접 찍은 사진 `content/library/photos/<장소>/`(폴더 이름 단어가 글에 있으면) → Pixabay(`PIXABAY_API_KEY`, 사람·병원 태그 제외) → 브랜드 색. 사진을 넣은 뒤 `--refresh <draft_id>` = 상태 이동 없이 슬라이드만 다시.
+  TTS + 무료 영상 짜깁기는 유튜브 "대량 생산·반복 콘텐츠" 수익화 제외 정책(2026-07)에 가까워 쓰지 않는다. / 게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
 - Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 
@@ -40,7 +43,7 @@
 - 출처 페이지: 병원 사이트로 보이는 도메인(`web.is_clinic_host`)은 수집 단계에서 빼고(스폰서 글의 광고주 공식 사이트만 예외), 그래도 들어오면 02b 가 ⚠️.
 - 병원 공통 실무 정보 (중간안, 2026-10-06): Gemini 가 `clinic_pages` 로 병원 페이지를 따로 찾고(`fetch_clinic_pages`, 병원 3곳 미만이면 안 씀, 스폰서 글엔 안 씀), Claude 는 상담 절차·언어 지원·예약·패키지 구성 같은 비의료 정보만 kind `practice` 로 — 서로 다른 병원 3곳 이상 인용(`verify_practice`). 블로그엔 링크 없이 `[clinic websites]`, 출처 목록·JSON-LD 에 병원 주소 없음, 텔레그램 검수엔 근거 주소 표시 + 👤 사람 확인. 원칙·이유는 기획서 12-3-1 (다른 계정 댓글 링크 금지 포함). Gemini 검색 연동의 리디렉션 주소는 실제 주소로 바꿔 저장(`web.source_url`).
 - Claude CLI(`llm._claude_cli`): 프롬프트는 stdin, 저장소 밖 임시 폴더에서 `--tools ""`(추가 검색 단계만 WebSearch·WebFetch)·`--strict-mcp-config`·`--no-session-persistence` 로 실행. 사용량 한도·시간 초과는 `llm.RateLimited` → 워커가 요청을 버리지 않고 다음 실행 때 재시도.
-- 텔레그램 검수 메시지(`03_review.list_message`): 초안별 대본 전문·블로그 구성·걸린 항목 + `MEDIA:` 첨부(`review_doc` 가 만든 `<draft_id>.md`). PC 경로는 보내지 않는다.
+- 텔레그램 검수 메시지(`03_review.list_message`): 초안별 대본 전문·블로그 구성·걸린 항목 + `MEDIA:` 첨부(`review_doc` 가 만든 `<draft_id>.md`). PC 경로는 보내지 않는다. 게시 전 확인(rendered)에는 사진 넘기기형 미리보기 `carousel/preview.jpg` 첨부.
 - 금지 표현은 `config/banned_terms.txt`, 병원명·연락처·체험담 등 패턴은 `02b_auto_review.py` 의 `RULE_PATTERNS`. 화장품 글(`content_type: skincare`)은 `COSMETIC_PATTERNS`(화장품법 §13 의약품 오인 표현)도 검사.
 - 스폰서 글 끝에는 병원 공식 사이트 링크가 코드로 항상 붙는다(`sponsors.official_link_line`) → 블로그 빌드 시 추적 링크로 치환.
 - 스폰서 트랙(기획서 12-1-1): 광고주 병원 = 광고 주체, 우리는 매체+제작 대행, 정액만. `config/sponsors.yaml`(git 제외). 스폰서 글은 `_sponsored_rules.md` 로 생성하고 광고 표시를 코드로 넣는다(`02_draft.add_disclosures`). 02b 는 광고 표시·계약·심의번호를 ⛔ 로 검사하고, 중립 글에 스폰서 병원이 나오면 ⛔. 03_review 는 현재 내용 기준 `병원확인` 없이는 승인하지 않는다 (--confirm 으로도 불가). 이 분리를 약화하는 변경은 하지 않는다.

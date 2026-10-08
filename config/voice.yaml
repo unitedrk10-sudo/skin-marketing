@@ -8,4 +8,4 @@
 provider: gemini
 voice: Kore
 language: en-US
-speaking_rate: 1.0               # 1.0 이 아니면 ffmpeg atempo 로 조절 (대본은 초당 약 2.3단어 기준)
+speaking_rate: 1.1               # 1.0 이 아니면 ffmpeg atempo 로 조절 (대본은 초당 약 2.3단어 기준) — 2026-10-07 1.0 은 쇼츠에 느려 1.1

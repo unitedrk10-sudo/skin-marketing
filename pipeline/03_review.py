@@ -278,6 +278,9 @@ def list_message(stage: str, compact: bool = False) -> str:
             if issues:
                 line += f" {issues[0]['message']}" + (f" 외 {len(issues) - 1}건" if len(issues) > 1 else "")
         lines.append(line)
+        preview = path / "carousel" / "preview.jpg"
+        if stage == "rendered" and preview.exists():  # 사진 넘기기형: 슬라이드 전체를 한 장으로 미리 보기
+            attachments.append(preview)
     # Hermes 가 MEDIA: 줄을 텔레그램 첨부 파일로 보낸다 (경로에 공백이 있어 백틱으로 감싼다)
     lines += [""] + [f"MEDIA:`{doc}`" for doc in attachments] if attachments else []
     return "\n".join(lines)

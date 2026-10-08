@@ -1,4 +1,5 @@
-"""6. 게시 — ready_to_publish/ 의 영상만 다룬다 (다른 상태 폴더는 읽지도 옮기지도 않는다).
+"""6. 게시 — ready_to_publish/ 의 게시물(사진 넘기기형·영상)만 다룬다 (다른 상태 폴더는 읽지도 옮기지도 않는다).
+사진 넘기기형은 carousel_channels(인스타그램·틱톡)에만, 채널별 크기 이미지로 키트를 만든다.
 
 예약 게시 도구·플랫폼 API 연결 전 단계: 채널별 **게시 키트**를 만든다 → 사람이(또는 나중에 게시 도구가) 그대로 올린다.
   - 채널: config/channels.yaml shortform.channels (tiktok, instagram, youtube)
@@ -73,24 +74,40 @@ def kit(path) -> dict:
     draft = load_draft(path)
     sponsor = draft.get("sponsor")
     policy = sponsors.platform_policy()
-    channels = list(load_yaml("channels.yaml")["shortform"]["channels"])
-    out = {"draft_id": draft["id"], "created_at": now_iso(), "video": "video.mp4", "captions_file": "captions.srt",
-           "blog_url": blog_url(draft), "channels": {}, "skipped": {}}
+    shortform = load_yaml("channels.yaml")["shortform"]
+    channels = list(shortform["channels"])
+    slides = load_json(path / "carousel.json") if (path / "carousel.json").exists() else None
+    out = {"draft_id": draft["id"], "created_at": now_iso(), "blog_url": blog_url(draft), "channels": {}, "skipped": {}}
+    if slides:  # 사진 넘기기형: 채널별 이미지 크기 (인스타그램 4:5, 틱톡 9:16)
+        out["format"] = "carousel"
+    else:
+        out.update(video="video.mp4", captions_file="captions.srt")
     for ch in channels:
         if sponsor and ch in policy["blocked"]:
             out["skipped"][ch] = policy["blocked"][ch]
             continue
-        checklist = ["플랫폼 AI 생성 콘텐츠 라벨 켜기 (AI 기본법 §31)", "자막 파일(captions.srt) 업로드 또는 자동 자막 확인"]
+        if slides and ch not in shortform.get("carousel_channels", []):
+            out["skipped"][ch] = "사진 넘기기형은 이 채널에 올릴 수 없음 (영상 형식 준비 후)"
+            continue
+        checklist = ["플랫폼 AI 생성 콘텐츠 라벨 켜기 (AI 기본법 §31)"]
+        checklist.append("이미지를 순서대로 올리기" if slides else "자막 파일(captions.srt) 업로드 또는 자동 자막 확인")
+        if slides and ch == "tiktok":
+            checklist.append("음악은 틱톡 상업용 음악 라이브러리에서만 (트렌드 사운드 금지)")
         if sponsor:
             checklist = [*policy["requires"].get(ch, []), *checklist]
         entry = {"caption": caption(draft, ch), "checklist": checklist}
+        if slides:
+            entry["images"] = slides["files"]["tt" if ch == "tiktok" else "ig"]
         if ch in TITLE_LIMIT:
             entry["title"] = ((draft.get("shortform") or {}).get("title") or draft["blog"].get("title", ""))[:TITLE_LIMIT[ch]]
         out["channels"][ch] = entry
     save_json(path / "kit.json", out)
-    lines = [f"# 게시 키트 — {draft['id']}", "", f"영상: `video.mp4` · 자막: `captions.srt` · 블로그: {out['blog_url']}", ""]
+    media = "사진 넘기기형 (carousel/)" if slides else "영상: `video.mp4` · 자막: `captions.srt`"
+    lines = [f"# 게시 키트 — {draft['id']}", "", f"{media} · 블로그: {out['blog_url']}", ""]
     for ch, e in out["channels"].items():
         lines += [f"## {ch}", *(f"- [ ] {c}" for c in e["checklist"])]
+        if e.get("images"):
+            lines += ["", "이미지: " + ", ".join(f"`{i}`" for i in e["images"])]
         if e.get("title"):
             lines += ["", f"제목: {e['title']}"]
         lines += ["", "```", e["caption"], "```", ""]

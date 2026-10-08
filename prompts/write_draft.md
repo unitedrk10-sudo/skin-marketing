@@ -38,6 +38,9 @@ CLINIC PAGES (C1, C2, …) are different clinics' own websites. You may use them
 - Every line that states a fact lists the fact ids it relies on in "fact_ids" (a flat list like ["F1", "F4"]).
 - Mention that results and side effects vary and to consult a licensed doctor.
 - Last line: a soft call to follow/save for more info (no booking, no DM-for-price).
+- "caption" is a short on-screen headline for the line (max ~6 words, makes sense on its own).
+- "visual" describes a real, filmable scene (not graphics, icons or text cards), and "stock_query" gives 2-4 English words to find a matching free stock video clip (e.g. "hands applying sunscreen", "seoul street autumn", "cosmetic bottles shelf"). Never people's faces, patients, clinics, needles or treatment scenes.
+- "cover_photo_query": 2-4 English words to search a free stock photo for the cover — a place, season or object that fits the topic (e.g. "bukchon hanok alley", "ginkgo trees autumn", "sunscreen bottle"). Never people, faces, clinics, needles or treatment scenes.
 
 ## Blog post ({{min_words}}-{{max_words}} words)
 - Do not start with an H1 title (the title is added separately). Start with a 2-3 sentence intro that answers the reader's question directly.
@@ -70,9 +73,10 @@ Return ONLY JSON, no prose, no code fence:
     "title": "video title, max 70 chars, main keyword first",
     "hook": "the spoken hook",
     "lines": [
-      {"voice": "spoken line", "caption": "on-screen caption", "visual": "b-roll / motion description", "fact_ids": ["F1"]}
+      {"voice": "spoken line", "caption": "on-screen caption", "visual": "real filmable scene", "stock_query": "hands applying sunscreen", "fact_ids": ["F1"]}
     ],
     "on_screen_disclosure": "AI-generated content",
+    "cover_photo_query": "ginkgo trees autumn",
     "hashtags": ["#kbeauty"],
     "estimated_seconds": 45
   },

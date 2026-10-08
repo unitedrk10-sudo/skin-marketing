@@ -5,6 +5,9 @@
 #           | claude_cli  (같은 머신의 Claude Code CLI `claude -p` — Pro 로그인, 키 불필요)
 #           | claude_code (API 호출 없음 — 검수 요청 파일을 Claude Code 세션이 처리, 02c_external_review.py)
 # search: true 면 Gemini Google 검색 연동(grounding) 사용
+# temperature·top_p·top_k·thinking_budget 은 쓰지 않는다 (Gemini 공지: 다음 모델부터 400 오류)
+# thinking: minimal|low|medium|high — Gemini 생각 양 (생략 시 모델 기본값). 생각 토큰은 출력 단가로 청구된다
+# 호출마다 토큰 수가 로그에 남는다 (input/output/thinking)
 # 원칙: 작성(Claude)과 검수(Gemini)는 다른 회사 모델 (기획서 6-0)
 #
 # 역할 (2026-10-06 변경): Gemini 는 찾기·검수, Claude 는 읽고 쓰기.
@@ -13,21 +16,18 @@
 stages:
   topics:          # 01 주간 주제 조사
     provider: gemini
-    model: gemini-3.1-pro-preview
+    model: gemini-3.8-flash   # 2026-10-06 Pro 와 같은 프롬프트로 비교 — 품질 차이 없음(오히려 구체적), Flash 로
     search: true
-    temperature: 0.8
 
   trends:          # 01 관광지 트렌드 스캔 (주 1회, 외국인 사이 지금 뜨는 곳·행사 — pipeline/trends.py)
     provider: gemini
     model: gemini-3.8-flash
     search: true
-    temperature: 0.3
 
   sources:         # 02 출처 찾기 — 읽을 페이지 후보만 고른다 (사실은 쓰지 않음)
     provider: gemini
-    model: gemini-3.1-pro-preview
+    model: gemini-3.8-flash   # 2026-10-06 Pro → Flash: 후보 고르기만 하므로 충분, 비용 절감
     search: true
-    temperature: 0.2
 
   write:           # 02 작성 — 받아 둔 페이지 본문만 보고 사실·대본·블로그 (도구 없음)
     provider: claude_cli
@@ -40,6 +40,11 @@ stages:
     tools: [WebSearch, WebFetch]
     timeout_sec: 1500
 
+  pick_visuals:    # 04 영상 화면 고르기 — 대본 줄마다 후보 클립 썸네일 묶음을 보고 고른다 (구독 Claude, API 비용 없음)
+    provider: claude_cli
+    tools: [Read]
+    timeout_sec: 600
+
   tts:             # 04 영상 음성 — Gemini TTS (GEMINI_API_KEY 그대로). 목소리·속도는 config/voice.yaml
     provider: gemini
     model: gemini-3.8-flash-tts
@@ -50,9 +55,8 @@ stages:
   source_check:    # 02b ② 출처 본문 대조
     provider: gemini
     model: gemini-3.8-flash
-    temperature: 0.0
 
   cross_review:    # 02b ③ 교차 모델 검수
     provider: gemini
     model: gemini-3.1-pro-preview
-    temperature: 0.0
+    thinking: low    # 생각 토큰 = 출력 단가. 기본(high)이 비용 대부분이라 낮춤 (2026-10-06, 하루 출력 442K)

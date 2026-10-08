@@ -97,6 +97,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("SKIN_SPONSORS_FILE", str(tmp_path / "sponsors.yaml"))  # 기본: 스폰서 없음
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)  # 워커가 실제 Gemini TTS 로 렌더링하지 않게
+    monkeypatch.delenv("PIXABAY_API_KEY", raising=False)  # 영상·표지 사진 검색도 네트워크 없이
     fake = FakeLLM()
     llm.set_backend(fake)
     web.set_fetcher(ok_fetch)  # 출처 페이지 수집도 네트워크 없이
@@ -136,6 +137,13 @@ def test_llm_stage_models_come_from_config():
     assert llm.stage_config("write")["provider"] == llm.CLAUDE_CLI and llm.stage_config("write")["tools"] == []
     assert set(llm.stage_config("write_search")["tools"]) == {"WebSearch", "WebFetch"}
     assert not llm.is_external("cross_review") and not llm.is_external("source_check")
+
+
+def test_gemini_stages_use_no_deprecated_parameters():
+    """Gemini 공지(2026-10): 다음 모델부터 temperature·top_p·top_k·thinking_budget 은 400 오류 — thinking(level)만."""
+    for name, cfg in common.load_yaml("models.yaml")["stages"].items():
+        assert not {"temperature", "top_p", "top_k", "thinking_budget"} & set(cfg), name
+        assert cfg.get("thinking", "low") in ("minimal", "low", "medium", "high"), name
 
 
 def test_writing_and_review_use_different_vendors():
@@ -922,7 +930,7 @@ def test_worker_revise_request_regenerates(worker_env):
 # ---- 스폰서 트랙 ----
 
 sponsors_mod = importlib.import_module("pipeline.sponsors")
-from datetime import date, timedelta  # noqa: E402
+from datetime import date, datetime, timedelta, timezone  # noqa: E402
 
 SPONSOR = {"id": "glow", "name_en": "Glow Skin Clinic", "name_ko": "글로우피부과의원",
            "official_url": "https://www.glow-clinic.example",
@@ -1851,6 +1859,7 @@ def test_ass_and_srt_timings():
 
 
 def test_render_moves_to_rendered_with_outputs(env, monkeypatch):
+    monkeypatch.setattr(render_mod, "render_format", lambda: "video")
     monkeypatch.setattr(render_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(render_mod, "duration", lambda path: 2.0)
     cmds = []
@@ -1910,9 +1919,170 @@ def test_tts_uses_gemini_key_and_kore_voice(monkeypatch):
     assert render_mod.tts_configured()  # 별도 TTS 키 없이 Gemini 키로
 
 
+def test_subtitles_highlight_the_spoken_word():
+    t = {"start": 0.0, "end": 4.0, "voice": "Sunscreen right after the session helps.", "caption": "Sunscreen"}
+    ev = render_mod.word_events(t)
+    assert len(ev) == 6 and ev[0].startswith("Dialogue: 0,0:00:00.00,") and ",Sub," in ev[0]
+    assert "{\\c&H00D7FF&}Sunscreen{\\c&HFFFFFF&} right after the" in ev[0]          # 4단어씩, 읽는 단어 강조
+    assert ev[4].endswith("{\\c&H00D7FF&}session{\\c&HFFFFFF&} helps.") and "0:00:04.00" in ev[-1]
+    assert "Style: Sub," in render_mod.build_ass([t], 4.0, "AI-generated content", "x.com")
+
+
+def test_compose_fills_gaps_with_brand_color_and_mixes_music(tmp_path):
+    clip = tmp_path / "a.mp4"
+    cmd = render_mod.compose_cmd([(clip, 2.5), (None, 2.0)], tmp_path / "m.mp3", 4.5)
+    joined = " ".join(cmd)
+    assert str(clip) in cmd and "color=c=0x0b6e4f:s=1080x1920" in joined
+    assert "zoompan" not in joined and "scale=w='trunc" not in joined                # 움직이는 클립에 확대 없음 (떨림)
+    assert "amix=inputs=2" in joined and f"volume={render_mod.MUSIC_VOLUME}" in joined
+    assert "-map" in cmd and "[a]" in cmd
+    assert "amix" not in " ".join(render_mod.compose_cmd([(clip, 2.0)], None, 2.0))
+
+
+broll_mod = importlib.import_module("pipeline.broll")
+
+
+def test_broll_claude_picks_clips_and_falls_back_without_it(env, monkeypatch, tmp_path):
+    from PIL import Image
+    monkeypatch.setattr(broll_mod, "_thumb", lambda c, work: Image.new("RGB", broll_mod.THUMB, (90, 90, 90)))
+    lines = [{"voice": "Use sunscreen.", "visual": "hands applying sunscreen"}, {"voice": "Walk in shade.", "visual": "park"}]
+    pools = [[{"id": f"px:{i}", "source": "pixabay"} for i in range(3)], [{"id": "px:9", "source": "pixabay"}]]
+    env.responses["pick_visuals"] = {"lines": [{"n": 1, "picks": [2, 0]}, {"n": 2, "picks": []}]}
+    chosen = broll_mod.choose(lines, pools, [2, 1], tmp_path)
+    assert [c["id"] for c in chosen[0]] == ["px:2", "px:0"] and chosen[1] == []     # 맞는 게 없으면 비움 → 앞 클립·브랜드 색
+    stage, prompt = env.calls[-1]
+    assert stage == "pick_visuals" and "line01_candidates.jpg" in prompt and "Never pick" in prompt
+    assert (tmp_path / "line01_candidates.jpg").exists()
+
+    def limited(stage, cfg, system, prompt):
+        raise llm.RateLimited("Claude 사용량 한도")
+    llm.set_backend(limited)
+    assert [c["id"] for c in broll_mod.choose(lines, pools, [2, 1], tmp_path)[0]] == ["px:0", "px:1"]  # 렌더링은 계속
+
+
+def test_broll_uses_own_library_and_skips_people_tags(env, monkeypatch):
+    folder = broll_mod.library_dir() / "autumn-leaves"
+    folder.mkdir(parents=True)
+    (folder / "walk.mp4").write_bytes(b"x")
+    line = {"voice": "x", "visual": "falling autumn leaves in a park", "stock_query": "autumn leaves"}
+    assert [c["id"] for c in broll_mod.library_candidates(line)] == ["lib:autumn-leaves/walk.mp4"]
+    assert broll_mod.library_candidates({"voice": "x", "visual": "sunscreen"}) == []
+    monkeypatch.setenv("PIXABAY_API_KEY", "k")
+    broll_mod._pixabay_cache["autumn leaves"] = [
+        {"id": 1, "tags": "woman, autumn", "duration": 10, "videos": {}},
+        {"id": 2, "tags": "leaves, autumn", "duration": 10, "pageURL": "p", "user": "u",
+         "videos": {"large": {"url": "https://cdn.example/2.mp4"}, "tiny": {"thumbnail": "https://cdn.example/2.jpg"}}}]
+    try:
+        assert [c["id"] for c in broll_mod.candidates(line, set())] == ["lib:autumn-leaves/walk.mp4", "px:2"]
+        assert broll_mod.query_for({"visual": "Hand squeezing sunscreen onto a palm"}) == "Hand squeezing sunscreen onto palm"
+    finally:
+        broll_mod._pixabay_cache.clear()
+
+
+def test_video_quota_two_per_week_by_demand(env, monkeypatch):
+    monkeypatch.setattr(render_mod, "render_format", lambda: "video")
+    now = datetime(2026, 10, 7, 12, tzinfo=timezone.utc)
+
+    def approved(name, score, days_ago):
+        p = common.content_dir("approved") / name
+        common.save_json(p / "draft.json", {"id": name, "topic": {"demand": {"score": score}}})
+        common.save_json(p / "history.json", [{"at": (now - timedelta(days=days_ago)).isoformat(), "from": "drafts", "to": "approved"}])
+    approved("a-low", 0.2, 1)
+    approved("b-high", 0.9, 2)
+    approved("c-mid", 0.5, 0)
+    approved("d-old", 1.0, 10)                                                       # 일주일 지난 글은 블로그로만
+    assert [p.name for p in render_mod.pending(now=now)] == ["b-high", "c-mid"]
+    done = common.content_dir("rendered") / "z"
+    common.save_json(done / "draft.json", {"id": "z"})
+    common.save_json(done / "history.json", [{"at": now.isoformat(), "from": "approved", "to": "rendered"}])
+    assert render_mod.videos_this_week(now) == 1 and [p.name for p in render_mod.pending(now=now)] == ["b-high"]
+
+
+def test_claude_cli_copies_attached_files(monkeypatch, tmp_path):
+    img = tmp_path / "sheet.jpg"
+    img.write_bytes(b"jpg")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["files"] = sorted(p.name for p in Path(kw["cwd"]).iterdir())
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps({"result": "{}", "modelUsage": {}}), stderr="")
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    llm._claude_cli("pick_visuals", {"provider": "claude_cli", "tools": ["Read"], "files": [str(img)]}, None, "look")
+    assert seen["files"] == ["sheet.jpg"] and seen["cmd"][seen["cmd"].index("--tools") + 1] == "Read"
+
+
 def test_render_is_silent_without_tts_key(env, monkeypatch, capsys):
+    monkeypatch.setattr(render_mod, "render_format", lambda: "video")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert render_mod.main([]) == 0 and capsys.readouterr().out == ""
+
+
+# ---- 사진 넘기기형 (carousel) ----
+
+carousel_mod = importlib.import_module("pipeline.carousel")
+
+
+def test_carousel_slides_use_only_the_reviewed_script():
+    draft = {"id": "x", "topic": {"title": "t"},
+             "facts": [{"id": "F1", "url": "https://www.ncbi.nlm.nih.gov/a", "kind": "mechanism"},
+                       {"id": "F2", "url": "https://clinic-a.example/p", "kind": "practice"},
+                       {"id": "F3", "url": "https://visitseoul.net/b", "kind": "travel"}],
+             "shortform": {"title": "Title", "hook": "Hook?", "lines": [
+                 {"voice": "Lasers target pigment.", "caption": "How it works", "fact_ids": ["F1", "F3"]},
+                 {"voice": "Most clinics start with a consultation.", "caption": "First visit", "fact_ids": ["F2"]},
+                 {"voice": "Follow or save this for more.", "caption": "Follow"}]}}
+    s = carousel_mod.slides(draft)
+    assert [x["kind"] for x in s] == ["cover", "point", "point", "end"]          # 팔로우 줄은 마지막 슬라이드가 대신
+    assert s[0]["headline"] == "Hook?" and s[1]["body"] == "Lasers target pigment."
+    assert s[1]["sources"] == ["ncbi.nlm.nih.gov", "visitseoul.net"]
+    assert s[2]["sources"] == ["clinic websites"]                                # 병원 주소는 슬라이드에도 없다
+    assert "licensed doctor" in s[-1]["body"]                                    # 대본에 의사 상담이 없으면 마지막에
+    draft["shortform"]["lines"][0]["voice"] += " Always check with a licensed doctor."
+    assert "doctor" not in carousel_mod.slides(draft)[-1]["body"]                # 있으면 반복하지 않는다
+
+
+def test_cover_photo_query_skips_procedure_keywords():
+    draft = {"topic": {"keywords": ["laser treatment korea", "pico toning", "seoul autumn foliage"]}}
+    assert carousel_mod._place_keyword(draft) == "seoul autumn foliage"
+    assert carousel_mod._place_keyword({"topic": {"keywords": ["rejuran", "skin booster"]}}) == ""  # → 브랜드 색 표지
+
+
+def test_render_carousel_without_keys_then_refresh_with_own_photo(env, monkeypatch):
+    from PIL import Image
+    monkeypatch.setattr(render_mod, "render_format", lambda: "carousel")
+    monkeypatch.delenv("PIXABAY_API_KEY", raising=False)
+    draft_id = make_draft(env)
+    review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
+    _approve(env, draft_id)
+    assert render_mod.ready() and render_mod.main([]) == 0
+    out = common.content_dir("rendered") / draft_id
+    meta = common.load_json(out / "carousel.json")
+    n = len(meta["slides"])
+    assert meta["cover_photo"] == {"source": "none"} and meta["version"] == 1
+    assert Image.open(out / meta["files"]["ig"][0]).size == (1080, 1350) and len(meta["files"]["ig"]) == n
+    assert Image.open(out / meta["files"]["tt"][-1]).size == (1080, 1920)
+    assert common.load_json(out / "history.json")[-1]["to"] == "rendered"
+    assert "preview.jpg" in human_mod.list_message("rendered")                   # 텔레그램 미리보기 첨부
+    # 직접 찍은 사진: 폴더 이름의 단어가 글에 있으면 표지로 → 상태 이동 없이 다시 만든다
+    word = sorted(carousel_mod._words(common.load_draft(out)))[0]
+    folder = carousel_mod.library_dir() / word
+    folder.mkdir(parents=True)
+    Image.new("RGB", (600, 900), (200, 120, 60)).save(folder / "mine.jpg")
+    assert render_mod.main(["--refresh", draft_id]) == 0
+    meta = common.load_json(out / "carousel.json")
+    assert meta["version"] == 2 and meta["cover_photo"]["source"] == "library" and meta["cover_photo"]["file"] == "mine.jpg"
+    assert (common.content_dir("rendered") / draft_id).exists()
+
+
+def test_carousel_kit_lists_images_and_skips_youtube(env):
+    path = _ready("2026-W40-02-carousel")
+    common.save_json(path / "carousel.json", {"files": {"ig": ["carousel/ig_01.png"], "tt": ["carousel/tt_01.png"]}})
+    kit = publish_mod.kit(path)
+    assert set(kit["channels"]) == {"instagram", "tiktok"} and "youtube" in kit["skipped"]
+    assert kit["channels"]["tiktok"]["images"] == ["carousel/tt_01.png"] and kit["format"] == "carousel"
+    assert kit["channels"]["instagram"]["images"] == ["carousel/ig_01.png"] and "video" not in kit
+    assert any("음악" in c for c in kit["channels"]["tiktok"]["checklist"])
 
 
 # ---- 06 게시 키트 ----

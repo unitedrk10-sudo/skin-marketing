@@ -16,11 +16,13 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from pipeline.common import get_logger, load_yaml, parse_json
@@ -52,6 +54,7 @@ class LLMResult:
     model: str
     stage: str
     grounding_urls: list[dict] = field(default_factory=list)  # Gemini 검색 연동 시 [{url,title}]
+    usage: dict = field(default_factory=dict)  # Gemini 토큰 {input, output, thinking} — 비용 추적용 로그
 
 
 Backend = Callable[[str, dict, str | None, str], LLMResult]
@@ -95,10 +98,12 @@ def _gemini(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult
                           http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_SEC * 1000))  # ms
     config = types.GenerateContentConfig(
         system_instruction=system,
-        temperature=cfg.get("temperature"),
+        # temperature·top_p·top_k 는 보내지 않는다 — Gemini 3.6+ 는 무시하고, 다음 모델부터는 400 오류 (2026-10 공지)
         tools=[types.Tool(google_search=types.GoogleSearch())] if cfg.get("search") else None,
         # 함수 호출은 쓰지 않는다 — 켜 두면 매 호출 stderr 에 AFC 경고가 찍혀 Hermes 실패 알림 첫 줄을 가린다
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        # 생각(thinking) 토큰은 출력 단가로 청구된다 — 정하지 않으면 Pro 는 기본값(high)으로 많이 생각한다 (models.yaml thinking)
+        thinking_config=types.ThinkingConfig(thinking_level=cfg["thinking"].upper()) if cfg.get("thinking") else None,
     )
     resp = client.models.generate_content(model=cfg["model"], contents=prompt, config=config)
     text = resp.text or ""
@@ -111,7 +116,10 @@ def _gemini(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult
         for chunk in (meta.grounding_chunks if meta and meta.grounding_chunks else []):
             if chunk.web and chunk.web.uri:
                 urls.append({"url": chunk.web.uri, "title": chunk.web.title or ""})
-    return LLMResult(text=text, model=cfg["model"], stage=stage, grounding_urls=urls)
+    meta = resp.usage_metadata
+    usage = {"input": meta.prompt_token_count or 0, "output": meta.candidates_token_count or 0,
+             "thinking": meta.thoughts_token_count or 0} if meta else {}
+    return LLMResult(text=text, model=cfg["model"], stage=stage, grounding_urls=urls, usage=usage)
 
 
 def speech(stage: str, text: str, voice: str) -> tuple[bytes, str]:
@@ -196,6 +204,8 @@ def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRe
         cmd += ["--append-system-prompt", system]
     timeout = cfg.get("timeout_sec", 1800)
     with tempfile.TemporaryDirectory(prefix="skin-claude-") as workdir:
+        for f in cfg.get("files") or []:  # 첨부(예: 영상 후보 썸네일) — 작업 폴더에 복사해 Read 도구로 본다
+            shutil.copy(f, Path(workdir) / Path(f).name)
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", cwd=workdir, timeout=timeout)
@@ -222,8 +232,11 @@ def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRe
 PROVIDERS = {"gemini": _gemini, "anthropic": _anthropic, CLAUDE_CLI: _claude_cli}
 
 
-def generate(stage: str, prompt: str, system: str | None = None) -> LLMResult:
+def generate(stage: str, prompt: str, system: str | None = None, files: list | None = None) -> LLMResult:
+    """files: claude_cli 단계에 넘길 파일 (작업 폴더에 복사 — 프롬프트에서 파일 이름으로 가리킨다)."""
     cfg = stage_config(stage)
+    if files:
+        cfg = {**cfg, "files": [str(f) for f in files]}
     if cfg["provider"] == EXTERNAL:
         raise LLMError(f"stage '{stage}' 는 Claude Code 외부 검수 단계라 API 로 호출하지 않습니다")
     call = _backend or PROVIDERS[cfg["provider"]]
@@ -232,7 +245,8 @@ def generate(stage: str, prompt: str, system: str | None = None) -> LLMResult:
         try:
             started = time.monotonic()
             result = call(stage, cfg, system, prompt)
-            log.info("stage=%s model=%s %.1fs", stage, result.model, time.monotonic() - started)
+            tokens = " ".join(f"{k}={v}" for k, v in result.usage.items())
+            log.info("stage=%s model=%s %.1fs %s", stage, result.model, time.monotonic() - started, tokens)
             return result
         except LLMError:
             raise  # 설정·키 오류, 거절 등은 재시도해도 같다
@@ -244,14 +258,14 @@ def generate(stage: str, prompt: str, system: str | None = None) -> LLMResult:
     raise LLMError(f"stage={stage} 호출 실패: {last}")
 
 
-def generate_json(stage: str, prompt: str, system: str | None = None):
+def generate_json(stage: str, prompt: str, system: str | None = None, files: list | None = None):
     """JSON 응답을 파싱해 (객체, LLMResult) 로 돌려준다. 파싱 실패 시 1회 재요청."""
-    result = generate(stage, prompt, system)
+    result = generate(stage, prompt, system, files)
     try:
         return parse_json(result.text), result
     except ValueError:
         log.warning("stage=%s JSON 파싱 실패, 재요청", stage)
-        result = generate(stage, prompt + "\n\nIMPORTANT: respond with valid JSON only.", system)
+        result = generate(stage, prompt + "\n\nIMPORTANT: respond with valid JSON only.", system, files)
         try:
             return parse_json(result.text), result
         except ValueError as e:

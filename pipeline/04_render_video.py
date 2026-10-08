@@ -1,10 +1,17 @@
-"""4. 숏폼 영상 렌더링 — 승인된 초안(approved)의 대본으로 음성(TTS) + 자막 세로 영상(1080x1920)을 만들고 rendered 로 옮긴다.
+"""4. 숏폼 렌더링 — 승인된 초안(approved)을 게시물로 만들고 rendered 로 옮긴다.
+
+형식은 config/channels.yaml shortform.format:
+  - video (2026-10-07 기본): TTS + 실제 영상 클립(2~3초 컷, pipeline/broll.py 가 후보를 모으고 Claude 가 고름)
+           + 위 장면 제목·아래 단어 강조 자막 + 배경 음악(content/library/music/ 에 있으면). 주 video_per_week 편까지.
+  - carousel: 사진 넘기기형 슬라이드 (pipeline/carousel.py) — TTS·영상 없음
+`--refresh <id>`: 이미 만든 게시물(rendered·ready_to_publish·published)의 슬라이드만 다시 만든다 (상태 이동 없음) —
+직접 찍은 사진을 content/library/photos/ 에 넣은 뒤 표지를 바꿀 때.
 
   - 음성: Gemini TTS (llm.speech, GEMINI_API_KEY 그대로, 모델은 models.yaml tts, 목소리는 config/voice.yaml — 채널 전체 같은
           목소리 Kore). voice.yaml provider: google 이면 예전 Google Cloud TTS (GOOGLE_TTS_API_KEY — API 키를 받지 않아 현재 미사용)
-  - 영상: ffmpeg (libass) — 브랜드 배경 + 줄마다 큰 자막 + 화면 하단에 계속 떠 있는 표시 줄
+  - 영상: ffmpeg (libass) — 실제 영상 클립(없으면 브랜드 색) + 자막 + 화면 하단에 계속 떠 있는 표시 줄
           ("AI-generated content", 스폰서 글이면 광고 표시 — 02_draft 가 넣은 on_screen_disclosure 그대로)
-  - b-roll(대본의 visual)은 아직 자동으로 붙이지 않는다 → render.json 에 줄별 시간과 함께 남겨 사람이 편집할 때 쓴다
+  - 쓴 클립의 출처는 render.json clips 에 남는다
 결과: video.mp4, captions.srt (플랫폼 자막 업로드용), voice.mp3, render.json → 폴더째 rendered/ 로 이동.
 사람이 영상을 보고 "게시 OK" (03_review --stage rendered) 하면 ready_to_publish → 06_publish.
 
@@ -23,18 +30,34 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pipeline import llm
-from pipeline.common import content_dir, draft_dirs, get_logger, load_draft, load_yaml, move_draft, now_iso, run_cli, save_json
+from pipeline import broll, carousel, llm
+from pipeline.common import (
+    content_dir,
+    draft_dirs,
+    get_logger,
+    load_draft,
+    load_json,
+    load_yaml,
+    move_draft,
+    now_iso,
+    run_cli,
+    save_json,
+)
 
 log = get_logger("04_render_video")
 
 ALLOWED = {("approved", "rendered")}
+REFRESH_STAGES = ("rendered", "ready_to_publish", "published")
 TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
 WIDTH, HEIGHT = 1080, 1920
 BACKGROUND = "0x0b6e4f"    # 사이트 강조색 (site.py --accent)
 GAP_SEC = 0.25             # 줄 사이 쉼
+FRESH_DAYS = 7            # 영상은 승인 후 일주일 안의 글만 (그보다 오래된 글은 블로그로만)
+CUT_SEC = 2.6             # 화면 바뀌는 간격 (쇼츠는 2~3초마다 바뀌어야 넘기지 않는다)
+MUSIC_VOLUME = 0.12        # 배경 음악은 목소리 아래로
 
 
 class RenderError(RuntimeError):
@@ -43,9 +66,18 @@ class RenderError(RuntimeError):
 
 # ---------------- 음성 ----------------
 
+def render_format() -> str:
+    return (load_yaml("channels.yaml").get("shortform") or {}).get("format", "video")
+
+
 def tts_configured() -> bool:
     provider = (load_yaml("voice.yaml") or {}).get("provider", "gemini")
     return bool(os.environ.get("GEMINI_API_KEY" if provider == "gemini" else "GOOGLE_TTS_API_KEY"))
+
+
+def ready() -> bool:
+    """렌더링할 수 있는가 — 사진 넘기기형은 키가 필요 없다 (Pixabay 표지 사진은 키가 있을 때만)."""
+    return render_format() == "carousel" or tts_configured()
 
 
 def _gemini_tts(text: str, voice: dict) -> bytes:
@@ -127,9 +159,31 @@ def _ass_text(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ").strip()
 
 
+HIGHLIGHT = "&H00D7FF&"  # 지금 읽는 단어 (노랑, ASS 는 BGR)
+WORDS_PER_CHUNK = 4
+
+
+def word_events(t: dict) -> list[str]:
+    """아래 자막: 말하는 문장을 4단어씩, 지금 읽는 단어를 강조. 단어 시간 = 줄 시간 × 글자 수 비율 (TTS 단어 시각이 없어서)."""
+    words = _ass_text(t["voice"]).split()
+    if not words:
+        return []
+    span, total_chars = t["end"] - t["start"], sum(len(w) + 1 for w in words)
+    events, clock = [], t["start"]
+    for c in range(0, len(words), WORDS_PER_CHUNK):
+        chunk = words[c:c + WORDS_PER_CHUNK]
+        for i, w in enumerate(chunk):
+            dur = span * (len(w) + 1) / total_chars
+            text = " ".join("{\\c" + HIGHLIGHT + "}" + x + "{\\c&HFFFFFF&}" if j == i else x for j, x in enumerate(chunk))
+            events.append(f"Dialogue: 0,{_ts_ass(clock)},{_ts_ass(clock + dur)},Sub,,0,0,0,,{text}")
+            clock += dur
+    return events
+
+
 def build_ass(timeline: list[dict], total: float, disclosure: str, handle: str) -> str:
     events = [f"Dialogue: 0,{_ts_ass(t['start'])},{_ts_ass(t['end'])},Caption,,0,0,0,,{_ass_text(t['caption'])}"
               for t in timeline]
+    events += [e for t in timeline for e in word_events(t)]
     events.append(f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(total)},Disclosure,,0,0,0,,{_ass_text(disclosure)}")
     if handle:
         events.append(f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(total)},Handle,,0,0,0,,{_ass_text(handle)}")
@@ -141,7 +195,8 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,DejaVu Sans,76,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,4,0,5,90,90,0,1
+Style: Caption,DejaVu Sans,74,&H00FFFFFF,&H00FFFFFF,&H00000000,&H50000000,1,0,0,0,100,100,0,0,3,22,0,8,80,80,330,1
+Style: Sub,DejaVu Sans,64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,1,0,0,0,100,100,0,0,1,5,2,2,80,80,560,1
 Style: Disclosure,DejaVu Sans,38,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,3,2,0,2,60,60,430,1
 Style: Handle,DejaVu Sans,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,2,0,8,60,60,170,1
 
@@ -159,6 +214,29 @@ def build_srt(timeline: list[dict]) -> str:
 
 def render(path: Path) -> Path:
     """approved/<id> 를 렌더링하고 rendered/<id> 로 옮긴다. 반환: 새 경로."""
+    if render_format() == "carousel":
+        try:
+            carousel.build(path)
+        except carousel.CarouselError as e:
+            raise RenderError(str(e)) from e
+        return move_draft(path.name, "approved", "rendered", ALLOWED)
+    return render_video(path)
+
+
+def refresh(draft_id: str) -> Path:
+    """이미 만든 사진 넘기기형 게시물의 슬라이드를 다시 만든다 (표지 사진 교체 등). 상태는 그대로."""
+    for stage in REFRESH_STAGES:
+        path = content_dir(stage) / draft_id
+        if (path / "draft.json").exists():
+            try:
+                carousel.build(path)
+            except carousel.CarouselError as e:
+                raise RenderError(str(e)) from e
+            return path
+    raise RenderError(f"{draft_id}: {', '.join(REFRESH_STAGES)} 에 없습니다")
+
+
+def render_video(path: Path) -> Path:
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise RenderError("ffmpeg/ffprobe 가 없습니다 (설치: winget install ffmpeg / brew install ffmpeg / apt install ffmpeg)")
     draft = load_draft(path)
@@ -194,14 +272,76 @@ def render(path: Path) -> Path:
     ass = path / "captions.ass"
     ass.write_text(build_ass(timeline, total, sf.get("on_screen_disclosure") or "AI-generated content", handle), encoding="utf-8")
     (path / "captions.srt").write_text(build_srt(timeline), encoding="utf-8")
-    _run_in(path, ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
-                   "-i", f"color=c={BACKGROUND}:s={WIDTH}x{HEIGHT}:r=30:d={total:.2f}", "-i", "voice.mp3",
-                   "-vf", "ass=captions.ass", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "video.mp4"])
+
+    segments, clips_meta = plan_segments(lines, timeline, total, work)
+    music = pick_music(path.name)
+    _run_in(path, compose_cmd(segments, music, total))
     save_json(path / "render.json", {"rendered_at": now_iso(), "voice": voice.get("voice"), "seconds": total,
-                                     "size": f"{WIDTH}x{HEIGHT}", "timeline": timeline,
-                                     "note": "b-roll 은 timeline 의 visual 을 참고해 편집 (자동 합성 전)"})
+                                     "size": f"{WIDTH}x{HEIGHT}", "timeline": timeline, "clips": clips_meta,
+                                     "music": music.name if music else None})
     shutil.rmtree(work, ignore_errors=True)
     return move_draft(path.name, "approved", "rendered", ALLOWED)
+
+
+# ---------------- 화면 구성 ----------------
+
+def plan_segments(lines: list[dict], timeline: list[dict], total: float, work: Path) -> tuple[list[tuple], list[dict]]:
+    """줄마다 CUT_SEC 안팎으로 잘라 클립을 배정 → [(클립 경로 | None, 초)]. 클립이 없으면 앞 줄 클립, 그것도 없으면 브랜드 색."""
+    bounds = [t["start"] for t in timeline] + [total]
+    spans = [bounds[i + 1] - bounds[i] for i in range(len(timeline))]
+    need = [max(1, round(s / CUT_SEC)) for s in spans]
+    used: set[str] = set()
+    pools = []
+    for ln in lines:
+        pool = broll.candidates(ln, used)
+        pools.append(pool)
+    chosen = broll.choose(lines, pools, need, work)
+    segments, meta, last = [], [], []
+    for i, (span, n, picks) in enumerate(zip(spans, need, chosen), 1):
+        files = []
+        for c in picks:
+            try:
+                files.append(broll.fetch(c, work))
+                meta.append({"line": i, "id": c["id"], "source": c["source"], "page": c.get("page", ""),
+                             "user": c.get("user", "")})
+            except Exception as e:  # noqa: BLE001 — 내려받기 실패한 클립은 건너뛴다
+                log.warning("클립 내려받기 실패 %s: %s", c["id"], type(e).__name__)
+        files = files or last
+        last = files or last
+        for k in range(n):
+            segments.append((files[k % len(files)] if files else None, span / n))
+    return segments, meta
+
+
+def pick_music(draft_id: str) -> Path | None:
+    """배경 음악: content/library/music/ 의 파일 (직접 고른 무료·라이선스 음악만). 글마다 다르게, 없으면 음악 없이."""
+    root = content_dir() / "library" / "music"
+    tracks = sorted(p for p in root.glob("*") if p.suffix.lower() in {".mp3", ".m4a", ".wav"}) if root.is_dir() else []
+    return tracks[sum(draft_id.encode()) % len(tracks)] if tracks else None
+
+
+def compose_cmd(segments: list[tuple], music: Path | None, total: float) -> list[str]:
+    """클립은 확대 효과 없이 9:16 으로 채운다 (움직이는 영상에 확대를 더하면 프레임마다 크기가 정수로 바뀌며 떨린다)."""
+    inputs, chains = [], []
+    for i, (clip, dur) in enumerate(segments):
+        if clip:
+            inputs += ["-stream_loop", "-1", "-ss", "0.3", "-t", f"{dur:.3f}", "-i", str(clip)]
+        else:
+            inputs += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", f"color=c={BACKGROUND}:s={WIDTH}x{HEIGHT}:r=30"]
+        chains.append(f"[{i}:v]fps=30,scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},"
+                      f"setsar=1,eq=brightness=-0.05,trim=duration={dur:.3f},setpts=PTS-STARTPTS[v{i}]")
+    n = len(segments)
+    graph = chains + ["".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[bg]", "[bg]ass=captions.ass[v]"]
+    inputs += ["-i", "voice.mp3"]
+    audio = f"{n}:a"
+    if music:
+        inputs += ["-stream_loop", "-1", "-i", str(music)]
+        graph.append(f"[{n + 1}:a]volume={MUSIC_VOLUME},afade=t=out:st={max(0, total - 1.5):.2f}:d=1.5[m];"
+                     f"[{n}:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]")
+        audio = "[a]"
+    return ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(graph), "-map", "[v]", "-map", audio,
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac",
+            "-t", f"{total:.2f}", "video.mp4"]
 
 
 def _run_in(cwd: Path, cmd: list[str]) -> str:
@@ -212,8 +352,30 @@ def _run_in(cwd: Path, cmd: list[str]) -> str:
     return proc.stdout
 
 
-def pending(limit: int | None = None) -> list[Path]:
+def _moved_at(path: Path, to: str) -> datetime | None:
+    f = path / "history.json"
+    events = [e for e in (load_json(f) if f.exists() else []) if e.get("to") == to]
+    return datetime.fromisoformat(events[-1]["at"]) if events else None
+
+
+def videos_this_week(now: datetime | None = None) -> int:
+    now = now or datetime.now(timezone.utc)
+    week = now.isocalendar()[:2]
+    return sum(1 for stage in REFRESH_STAGES for p in draft_dirs(stage)
+               if (at := _moved_at(p, "rendered")) and at.isocalendar()[:2] == week and not (p / "carousel.json").exists())
+
+
+def pending(limit: int | None = None, now: datetime | None = None) -> list[Path]:
+    """렌더링할 승인 초안. 영상 형식은 주 video_per_week 편까지만 — 그 주에 승인된 글 중 수요 점수가 높은 순.
+    나머지 승인 글은 블로그로만 나간다 (블로그는 approved 이후 상태면 게시)."""
     paths = [p for p in draft_dirs("approved") if (p / "draft.json").exists()]
+    if render_format() == "video":
+        now = now or datetime.now(timezone.utc)
+        cap = int((load_yaml("channels.yaml").get("shortform") or {}).get("video_per_week", 2))
+        left = max(0, cap - videos_this_week(now))
+        fresh = [p for p in paths if (at := _moved_at(p, "approved")) is None or now - at <= timedelta(days=FRESH_DAYS)]
+        score = lambda p: ((load_draft(p).get("topic") or {}).get("demand") or {}).get("score", 0)  # noqa: E731
+        paths = sorted(fresh, key=score, reverse=True)[:left]
     return paths[:limit] if limit else paths
 
 
@@ -231,11 +393,18 @@ def render_pending(limit: int | None = None) -> tuple[list[str], list[str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="숏폼 영상 렌더링 (approved → rendered)")
+    parser = argparse.ArgumentParser(description="숏폼 렌더링 (approved → rendered) — 사진 넘기기형 또는 영상")
     parser.add_argument("--id", help="특정 초안만")
     parser.add_argument("--limit", type=int, default=3, help="한 번에 렌더링할 최대 건수 (TTS 비용·시간 제한)")
+    parser.add_argument("--refresh", metavar="ID", help="이미 만든 게시물의 슬라이드만 다시 (상태 이동 없음)")
     args = parser.parse_args(argv)
-    if not tts_configured():
+    if args.refresh:
+        path = refresh(args.refresh)
+        stage = path.parent.name
+        again = " — 이미 게시된 글이면 새 이미지로 직접 다시 올려 주세요" if stage == "published" else ""
+        print(f"🖼 슬라이드 다시 만듦: {args.refresh} ({stage}){again}")
+        return 0
+    if not ready():
         log.info("TTS 키 미설정 (voice.yaml provider: gemini → GEMINI_API_KEY) — 렌더링 건너뜀")
         return 0
     if args.id:
@@ -248,7 +417,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     done, failed = render_pending(args.limit)
     if done:
-        print(f"🎬 영상 렌더링 {len(done)}건: " + ", ".join(done))
+        what = "사진 넘기기형" if render_format() == "carousel" else "영상"
+        print(f"🎬 {what} 렌더링 {len(done)}건: " + ", ".join(done))
     for f in failed:
         print(f"⚠️ 렌더링 실패 {f}")
     return 1 if failed and not done else 0
