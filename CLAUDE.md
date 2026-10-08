@@ -31,9 +31,11 @@
 - 블로그 사이트: `python -m pipeline.site build|deploy` (site/dist → Cloudflare Pages)
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
 - 숏폼 렌더링: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered). 형식은 `config/channels.yaml` `shortform.format`:
-  `carousel`(2026-10-07 기본, 사진 넘기기형 — `pipeline/carousel.py`, 검수된 대본 줄 = 슬라이드, 인스타그램 1080x1350·틱톡 1080x1920, 유튜브 제외) / `video`(Gemini TTS Kore + ffmpeg).
-  표지 사진: 직접 찍은 사진 `content/library/photos/<장소>/`(폴더 이름 단어가 글에 있으면) → Pixabay(`PIXABAY_API_KEY`, 사람·병원 태그 제외) → 브랜드 색. 사진을 넣은 뒤 `--refresh <draft_id>` = 상태 이동 없이 슬라이드만 다시.
-  TTS + 무료 영상 짜깁기는 유튜브 "대량 생산·반복 콘텐츠" 수익화 제외 정책(2026-07)에 가까워 쓰지 않는다. / 게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
+  `video`(2026-10-07 기본, 시험 운영 주 `video_per_week` 2편) = Gemini TTS Kore(1.1배) + 실제 영상 클립 2.6초 컷(`pipeline/broll.py`: 직접 모은 클립 `content/library/videos/<장면>/` → Pixabay `PIXABAY_API_KEY`, 사람·병원 태그 제외, 줄마다 후보 썸네일 묶음을 Claude `pick_visuals` 가 고름) + 위 장면 제목·아래 단어 강조 자막 + 배경 음악(`content/library/music/` 에 있으면).
+  `carousel`(보류 — 글자 슬라이드는 시험해 보니 약함) = 사진 넘기기형 `pipeline/carousel.py`, `--refresh <draft_id>` 로 상태 이동 없이 다시.
+  주력은 블로그(구글 검색)·Threads·X 이고 숏폼은 작게 시험한다 — 같은 틀 영상을 많이 올리면 유튜브 "대량 생산·반복 콘텐츠"(2026-07)·스팸 판정에 가까워진다.
+  게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
+- X·Threads 소개 글: `python -m pipeline.social compose|list|post <N> threads|done <N> <x|threads> <URL>` — 게시된 중립 블로그 글마다 1개 (사실 목록만, 02b 규칙 검사, 작성은 Claude `social`). X 는 작성 링크로 사람이 게시(API 유료라 기본 꺼짐, 웹 자동 조작은 약관 위반이라 만들지 않음), Threads 는 무료 API. 스폰서 글은 `channels.yaml sponsored_policy` 에서 x·threads 허용 전까지 제외
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
 - Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 

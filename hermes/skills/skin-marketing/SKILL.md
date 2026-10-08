@@ -57,6 +57,14 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
 - 게시 OK 된 영상은 워커가 채널별 **게시 키트**(캡션·해시태그·체크리스트, `kit.md`)를 만든다. "키트 보여줘" → `content/ready_to_publish/<id>/kit.md` 와 `video.mp4`, `captions.srt` 를 첨부.
 
+## 2-9. X·Threads 소개 글 (직전 봇 메시지가 `[X·Threads 소개 글]` 일 때)
+- X 는 메시지의 작성 링크를 사람이 눌러 직접 [게시]한다 (X API 는 유료라 기본 꺼짐). 웹 화면 자동 조작으로 올려 달라는 요청은 거절한다 — X 약관 위반·계정 정지 위험.
+- "2 스레드 올려": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social post 2 threads` (Threads API, 무료)
+- "2 X 올렸어 <URL>" / "2 게시 완료 x <URL>": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social done 2 x <URL>` (Threads 를 손으로 올렸으면 `threads`)
+- 남은 소개 글 다시 보기: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social list`
+- ⛔ 표시 글은 규칙 검사에 걸린 것 — 올리지 않는다. 스폰서 글은 X·Threads 정책 확인 전이라 소개 글을 만들지 않는다.
+- 종료 코드 2 (`❓`): 메시지를 그대로 보여준다 (토큰 만료면 "Meta 개발자 앱에서 새 장기 토큰 발급 → .env THREADS_ACCESS_TOKEN" 안내).
+
 ## 3-0. 게시 완료 기록
 사용자 예: `1 게시 완료 tiktok https://www.tiktok.com/@.../video/...` / "리쥬란 영상 인스타에 올렸어 <URL>"
 - `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.06_publish done <draft_id> <tiktok|instagram|youtube> <URL>` (draft_id 는 `06_publish status` 목록에서)

@@ -4,6 +4,7 @@ import importlib
 import json
 import re
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -1103,7 +1104,7 @@ def test_sponsored_draft_records_platform_policy(sponsored):
     assert "blog" in draft["platforms"]["allowed"]
     assert any("18" in r for r in draft["platforms"]["requires"]["instagram"])
     review_mod.review(common.content_dir("drafts") / draft_id, fetch=ok_fetch)
-    assert "tiktok 게시 불가" in human_mod.list_message("drafts")
+    assert re.search(r"tiktok(, \w+)* 게시 불가", human_mod.list_message("drafts"))
 
 
 def test_tracker_sponsor_link_is_blog_only(env, tmp_path, monkeypatch, capsys):
@@ -2181,3 +2182,113 @@ def test_site_share_images_and_icons(sponsored, tmp_path, monkeypatch):
 
 def test_pdf_text_extraction_handles_broken_files():
     assert web.pdf_to_text(b"%PDF-1.4 not really a pdf") == ""  # 손상·스캔 PDF → 빈 본문 (사람 확인)
+
+
+# ---- X·Threads 소개 글 ----
+
+social_mod = importlib.import_module("pipeline.social")
+SOCIAL = {"x": "Salmon DNA on your face? Rejuran is a polynucleotide skin booster. Results vary; ask a licensed doctor.",
+          "threads": "Rejuran is a polynucleotide skin booster popular in Korea. Downtime and results vary from person "
+                     "to person, so ask a licensed doctor. What would you want to know before trying it?",
+          "fact_ids": ["F1"]}
+
+
+def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="approved"):
+    draft = {"id": draft_id, "content_type": "procedure", "facts": [{"id": "F1", "text": "Downtime is 1-3 days.", "url": URL}],
+             "blog": {"title": "What is Rejuran?", "slug": "what-is-rejuran", "markdown": "x"},
+             "shortform": {"hook": "Salmon DNA on your face?", "lines": []}}
+    if sponsor:
+        draft["sponsor"] = sponsor
+    path = common.content_dir(state) / draft_id
+    common.save_json(path / "draft.json", draft)
+    return path
+
+
+def test_social_compose_list_and_manual_record(env):
+    env.responses["social"] = SOCIAL
+    _published()
+    assert social_mod.main(["compose"]) == 0
+    data = common.load_json(common.content_dir("approved") / "2026-W40-01-what-is-rejuran" / "social.json")
+    assert data["status"] == "ready" and data["problems"] == []
+    assert data["posts"]["x"]["text"].endswith("AI-assisted guide with sources: https://skinboundkorea.com/what-is-rejuran/")
+    assert social_mod.x_length(data["posts"]["x"]["text"]) <= 280
+    msg = social_mod.list_message()
+    assert "https://x.com/intent/post?text=Salmon%20DNA" in msg and "threads.net/intent/post?text=" in msg  # 키 없으면 작성 링크
+    with pytest.raises(social_mod.SocialError, match="게시물 주소"):
+        social_mod.record(social_mod.resolve("1"), "x", "https://evil.example/x.com")
+    assert social_mod.main(["done", "1", "x", "https://x.com/skinboundkorea/status/123"]) == 0
+    assert "x ✅ https://x.com/skinboundkorea/status/123" in social_mod.list_message()
+    assert social_mod.pending_paths() == []                                     # 한 번만 만든다
+
+
+@pytest.mark.parametrize("text,problem", [
+    ("Visit Glow Skin Clinic for Rejuran.", "병원명"),
+    ("Rejuran costs 300 dollars.", "사실 목록에 없는 수치"),
+    ("Downtime is 1-3 days. See https://example.com", "링크"),
+    ("The best skin booster in Korea.", "금지 표현"),
+    ("Rejuran explained. " * 30, "너무 김"),
+])
+def test_social_check_blocks_rule_violations(text, problem):
+    draft = {"id": "d", "facts": [{"id": "F1", "text": "Downtime is 1-3 days."}], "blog": {"title": "t", "slug": "t"}}
+    problems = social_mod.check(draft, {"x": text, "threads": "Downtime is 1-3 days. Ask a licensed doctor."})
+    assert any(problem in p for p in problems), problems
+    assert social_mod.check(draft, {"x": "Downtime is 1-3 days; ask a licensed doctor.", "threads": "ok"}) == []
+
+
+def test_social_blocked_after_retry_and_sponsored_skipped(env, tmp_path):
+    env.responses["social"] = {**SOCIAL, "x": "The best clinic trick."}
+    path = _published()
+    data = social_mod.compose(path)
+    assert data["status"] == "blocked" and len([c for c in env.calls if c[0] == "social"]) == 2   # 1번 다시 생성
+    assert "⛔" in social_mod.list_message()
+    with pytest.raises(social_mod.SocialError, match="검사"):
+        social_mod.post(path, "threads")
+    _published("sp-glow-1", sponsor=sponsors_mod.validate(SPONSOR))
+    assert [p.name for p in social_mod.pending_paths()] == []                    # 스폰서 글: 정책 확인 전 제외
+
+
+def test_threads_api_post_and_token_refresh(env, tmp_path, monkeypatch):
+    env.responses["social"] = SOCIAL
+    path = _published()
+    social_mod.compose(path)
+    monkeypatch.setenv("THREADS_ACCESS_TOKEN", "old")
+    monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "tok" / "threads.json"))
+    calls = []
+
+    def fake_http(method, url, params=None, headers=None, body=None):
+        calls.append((method, url, dict(params or {})))
+        if "refresh_access_token" in url:
+            return {"access_token": "new", "expires_in": 5184000}
+        if url.endswith("/me"):
+            return {"id": "42", "username": "skinboundkorea"}
+        if url.endswith("/42/threads"):
+            return {"id": "c1"}
+        if url.endswith("/threads_publish"):
+            return {"id": "p1"}
+        return {"permalink": "https://www.threads.net/@skinboundkorea/post/abc"}
+    monkeypatch.setattr(social_mod, "_http", fake_http)
+    out = social_mod.post(path, "threads")
+    assert "threads 게시 기록" in out
+    create = next(c for c in calls if c[1].endswith("/42/threads"))
+    assert create[2]["media_type"] == "TEXT" and create[2]["access_token"] == "new" and "AI-assisted" in create[2]["text"]
+    saved = tmp_path / "tok" / "threads.json"
+    assert json.loads(saved.read_text())["access_token"] == "new"
+    if sys.platform != "win32":  # Windows 는 유닉스 권한(600)을 지원하지 않는다 — 토큰 파일은 사용자 홈 폴더 아래라 그대로 둔다
+        assert oct(saved.stat().st_mode)[-3:] == "600"
+    calls.clear()
+    social_mod.threads_token()
+    assert not any("refresh" in c[1] for c in calls)                          # 50일 안이면 다시 갱신하지 않음
+    assert "이미 게시됨" in social_mod.post(path, "threads")
+
+
+def test_x_api_is_optional_and_signed(env, monkeypatch):
+    with pytest.raises(social_mod.SocialError, match="유료"):
+        social_mod.x_post("hi")
+    for k in social_mod.X_KEYS:
+        monkeypatch.setenv(k, "k-" + k.lower())
+    header = social_mod._oauth1_header("POST", social_mod.X_API)
+    assert header.startswith("OAuth ") and 'oauth_signature_method="HMAC-SHA1"' in header and "oauth_signature=" in header
+    sent = {}
+    monkeypatch.setattr(social_mod, "_http", lambda m, u, params=None, headers=None, body=None:
+                        sent.update(body=json.loads(body), auth=headers["authorization"]) or {"data": {"id": "99"}})
+    assert social_mod.x_post("hello") == "https://x.com/i/web/status/99" and sent["body"] == {"text": "hello"}
