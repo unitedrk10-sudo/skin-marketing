@@ -28,6 +28,15 @@ content_axes:             # 기획서 3장
 # travel_guide(관광지만 다루는 글)는 2026-10-06 제외: 숏폼은 초기 영상으로 계정 주제가 분류되므로
 # 시술 정보를 볼 사람을 모으려면 시술 계열에 집중한다. 이 목록에 없는 축의 주제는 후보에서 빠진다.
 
+# X·Threads 텍스트 소개 글 (pipeline/social.py) — 블로그 글 1편당 1개씩 (주 5편 = 각 채널 월 약 22개)
+text_social:
+  x:
+    mode: intent       # intent = 텔레그램의 작성 링크를 눌러 사람이 [게시] (무료) | api = X API (유료: 건당 약 $0.015, 링크 포함 약 $0.20)
+    max_chars: 280
+  threads:
+    mode: api          # api = Threads API (무료, THREADS_ACCESS_TOKEN — 없으면 작성 링크) | intent
+    max_chars: 500
+
 topics_per_week: 6        # 주 5편 게시 + 예비 1
 # 주제 후보 유형별 개수 (합 = topics_per_week). 유형 안에서는 수요 점수 순, 모자라면 다른 유형으로 채운다.
 topic_quota:
@@ -53,4 +62,10 @@ sponsored_policy:
   blog:
     allowed: true
     requires: ["상단 광고 표시(자동)", "병원 링크 rel=sponsored(자동)"]
+  x:
+    allowed: false
+    why: "X 의 의료·미용 광고 정책 확인 전 — 확인 후 allowed: true 와 requires 로 바꾼다 (pipeline/social.py)"
+  threads:
+    allowed: false
+    why: "Meta 브랜디드 콘텐츠 정책(Threads) 확인 전 — 확인 후 allowed: true 와 requires 로 바꾼다"
 # SNS 프로필 링크에는 스폰서 병원 링크를 걸지 않는다 (대가 관계 링크 = 브랜디드 콘텐츠로 볼 여지). 프로필 → 우리 블로그 → 스폰서 글 → 병원.

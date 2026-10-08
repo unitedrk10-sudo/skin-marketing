@@ -31,6 +31,7 @@
 - 블로그 사이트: `python -m pipeline.site build|deploy` (site/dist → Cloudflare Pages)
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
 - 영상: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered, Gemini TTS — `GEMINI_API_KEY` 그대로, 목소리 Kore `config/voice.yaml`, 모델 models.yaml `tts` + ffmpeg) / 게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
+- X·Threads 소개 글: `python -m pipeline.social compose|list|post <N> threads|done <N> <x|threads> <URL>` — 게시된 중립 블로그 글마다 1개 (사실 목록만, 02b 규칙 검사). X 는 작성 링크로 사람이 게시(API 유료라 기본 꺼짐, 웹 자동 조작은 약관 위반이라 만들지 않음), Threads 는 무료 API. 스폰서 글은 `channels.yaml sponsored_policy` 에서 x·threads 허용 전까지 제외
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
 - Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 

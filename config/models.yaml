@@ -40,6 +40,11 @@ stages:
     tools: [WebSearch, WebFetch]
     timeout_sec: 1500
 
+  social:          # X·Threads 소개 글 (사실 목록만 사용, pipeline/social.py)
+    provider: gemini
+    model: gemini-3.8-flash
+    temperature: 0.6
+
   tts:             # 04 영상 음성 — Gemini TTS (GEMINI_API_KEY 그대로). 목소리·속도는 config/voice.yaml
     provider: gemini
     model: gemini-3.8-flash-tts
