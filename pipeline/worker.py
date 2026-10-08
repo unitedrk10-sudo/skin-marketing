@@ -241,6 +241,17 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         kits = ""
     if kits:
         message = (message + "\n\n" if message else "") + kits
+
+    social_mod = importlib.import_module("pipeline.social")
+    try:
+        if social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 소개 글 (한 번에 3건)
+            made, social_failures = social_mod.compose_pending(limit=3)
+            failures += [f"소개 글 생성 실패 {f}" for f in social_failures]
+            if made:
+                message = (message + "\n\n" if message else "") + social_mod.list_message()
+    except Exception as e:  # noqa: BLE001 — 소개 글 실패가 워커 전체를 멈추지 않게
+        failures.append(f"소개 글 처리 실패: {e}")
+        log.exception("소개 글 처리 실패")
     if failures:
         message = (message + "\n\n" if message else "") + "\n".join(f"⚠️ {f}" for f in failures)
     return message, failures
