@@ -4,7 +4,7 @@
 (06_publish 의 ready_to_publish/ 제약은 영상 게시에 적용. 블로그는 텍스트라 초안 승인 = 게시 승인.)
 
     python -m pipeline.site build     # site/dist 생성
-    python -m pipeline.site deploy    # build 후 바뀐 게 있으면 Cloudflare Pages 에 배포 (wrangler 로그인 필요)
+    python -m pipeline.site deploy    # build 후 바뀐 게 있으면 Cloudflare Workers(정적 자산)에 배포 (.env CLOUDFLARE_API_TOKEN·ACCOUNT_ID)
 
 AI·검색용: 글마다 JSON-LD(MedicalWebPage/Article + FAQPage + citation), 출처 목록, sitemap.xml, robots.txt(AI 크롤러 허용),
 llms.txt, rss.xml. 스폰서 글: 광고 배지·표시, 병원 링크 rel="sponsored" + 추적 링크 자동 치환(TRACKER 설정 시).
@@ -657,6 +657,9 @@ def build(out: Path | None = None) -> dict:
             "slugs": [p["slug"] for p in posts], "hash": digest.hexdigest()}
 
 
+WORKER_COMPAT_DATE = "2026-10-01"
+
+
 def deploy() -> str:
     """바뀐 게 있을 때만 배포하고 텔레그램용 요약을 돌려준다 (없으면 빈 문자열)."""
     result = build()
@@ -664,16 +667,18 @@ def deploy() -> str:
     if state.get("hash") == result["hash"]:
         return ""
     cfg = config()
+    # Workers 정적 자산으로 배포 (2026-10: wrangler 4.x 는 Pages 배포를 Workers 로 넘기고 Pages 프로젝트 생성을 막는다).
+    # 인증은 .env 의 CLOUDFLARE_API_TOKEN(권한: Workers Scripts Edit)·CLOUDFLARE_ACCOUNT_ID. 도메인은 대시보드에서 연결.
     # Windows 의 npx 는 npx.cmd 라 전체 경로로 넘겨야 실행된다
-    cmd = [shutil.which("npx") or "npx", "--yes", "wrangler", "pages", "deploy", str(dist_dir()),
-           "--project-name", cfg["cloudflare_project"], "--branch", "main", "--commit-dirty=true"]
+    cmd = [shutil.which("npx") or "npx", "--yes", "wrangler", "deploy", "--name", cfg["cloudflare_project"],
+           "--assets", str(dist_dir()), "--compatibility-date", WORKER_COMPAT_DATE]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
                           timeout=600, check=False)
     if proc.returncode != 0:
-        raise RuntimeError(f"wrangler pages deploy 실패: {(proc.stderr or proc.stdout)[-500:]}")
+        raise RuntimeError(f"wrangler deploy 실패: {(proc.stderr or proc.stdout)[-500:]}")
     new = [s for s in result["slugs"] if s not in state.get("slugs", [])]
     save_json(state_file(), {"hash": result["hash"], "slugs": result["slugs"], "deployed_at": datetime.now(timezone.utc).isoformat()})
-    base = base_url(cfg) or f"https://{cfg['cloudflare_project']}.pages.dev"
+    base = base_url(cfg) or f"https://{cfg['cloudflare_project']}.workers.dev"
     lines = [f"🌐 블로그 업데이트: 글 {result['posts']}개 (스폰서 {result['sponsored']})"]
     lines += [f"- 새 글: {base}/{s}/" for s in new]
     return "\n".join(lines)

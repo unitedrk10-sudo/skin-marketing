@@ -1206,7 +1206,8 @@ def test_site_deploy_only_when_changed(site_env, monkeypatch):
     _approve(site_env, approved)
     msg = site_mod.deploy()
     assert "새 글: https://skinbound.example/rejuran/" in msg and len(calls) == 1
-    assert "pages" in calls[0] and "deploy" in calls[0]
+    assert "deploy" in calls[0] and "--assets" in calls[0] and "pages" not in calls[0]  # Workers 정적 자산 배포
+    assert calls[0][calls[0].index("--name") + 1] == common.load_yaml("site.yaml")["cloudflare_project"]
     assert site_mod.deploy() == "" and len(calls) == 1  # 바뀐 것 없음 → 배포·알림 없음
 
 
