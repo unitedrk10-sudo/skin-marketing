@@ -71,9 +71,22 @@ def settings() -> dict:
             "threads": {"mode": "api", "max_chars": 500, **(cfg.get("threads") or {})}}
 
 
-def blog_url(draft: dict) -> str:
+def live_slugs() -> dict[str, str]:
+    """블로그에 실제로 배포된 글: draft_id → 주소(slug). 배포 기록(content/site/state.json)에 있는 글만."""
+    import importlib
+    site_mod = importlib.import_module("pipeline.site")
+    state = site_mod.state_file()
+    if not state.exists():
+        return {}
+    deployed = set(load_json(state).get("slugs", []))
+    return {p["draft"]["id"]: p["slug"] for p in site_mod.collect_posts() if p["slug"] in deployed}
+
+
+def blog_url(draft: dict, live: dict[str, str] | None = None) -> str:
+    """배포된 글은 실제 주소(같은 제목이면 사이트가 꼬리표를 붙인다), 아니면 예정 주소."""
     site = load_yaml("site.yaml")
-    slug = slugify(draft["blog"].get("slug") or draft["blog"].get("title") or draft["id"], 60)
+    live = live_slugs() if live is None else live
+    slug = live.get(draft["id"]) or slugify(draft["blog"].get("slug") or draft["blog"].get("title") or draft["id"], 60)
     return f"https://{site['domain']}/{slug}/" if site.get("domain") else f"/{slug}/"
 
 
@@ -116,8 +129,10 @@ def check(draft: dict, texts: dict[str, str]) -> list[str]:
         for n in NUMBER.findall(text):
             if n not in known_numbers:
                 problems.append(f"[{ch}] 사실 목록에 없는 수치: {n}")
-        limit = cfg[ch]["max_chars"] - (URL_WEIGHT if ch == "x" else len(blog_url(draft))) - len(footer("").rstrip())
-        size = x_length(text) if ch == "x" else len(text)
+        # 실제로 올라갈 글(본문 + 블로그 링크 줄) 그대로 센다 — X 는 링크를 23자로 센다
+        full = text + footer(blog_url(draft))
+        limit = cfg[ch]["max_chars"]
+        size = x_length(full) if ch == "x" else len(full)
         if size > limit:
             problems.append(f"[{ch}] 너무 김 ({size}/{limit}자)")
     if not draft.get("sponsor"):
@@ -128,7 +143,8 @@ def check(draft: dict, texts: dict[str, str]) -> list[str]:
 def generate(draft: dict) -> dict:
     cfg = settings()
     url = blog_url(draft)
-    room = {ch: cfg[ch]["max_chars"] - (URL_WEIGHT if ch == "x" else len(url)) - len(footer("").rstrip()) for ch in CHANNELS}
+    # 본문에 쓸 수 있는 글자 수 = 한도 - 링크 줄 (여유 5자: 모델이 글자 수를 정확히 세지 못한다)
+    room = {ch: cfg[ch]["max_chars"] - len(footer("")) - (URL_WEIGHT if ch == "x" else len(url)) - 5 for ch in CHANNELS}
     text = prompt("social_post", title=draft["blog"].get("title", ""), hook=(draft.get("shortform") or {}).get("hook", ""),
                   facts=facts_text(draft.get("facts", [])), x_chars=str(room["x"]), threads_chars=str(room["threads"]))
     data, _ = llm.generate_json("social", text)
@@ -155,8 +171,11 @@ def compose(path: Path) -> dict:
 
 
 def pending_paths() -> list[Path]:
+    """소개 글을 만들 글 — 블로그에 실제로 배포된 글만 (배포 전이면 소개 글의 링크가 열리지 않는다)."""
+    live = live_slugs()
     return [p for state in PUBLIC_STATES for p in draft_dirs(state)
-            if (p / "draft.json").exists() and not (p / "social.json").exists() and allowed(load_draft(p))]
+            if p.name in live and (p / "draft.json").exists() and not (p / "social.json").exists()
+            and allowed(load_draft(p))]
 
 
 def compose_pending(limit: int = 5) -> tuple[list[str], list[str]]:

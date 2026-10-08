@@ -101,6 +101,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_SPONSORS_FILE", str(tmp_path / "sponsors.yaml"))  # 기본: 스폰서 없음
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)  # 워커가 실제 Gemini TTS 로 렌더링하지 않게
     monkeypatch.delenv("PIXABAY_API_KEY", raising=False)  # 영상·표지 사진 검색도 네트워크 없이
+    monkeypatch.delenv("THREADS_ACCESS_TOKEN", raising=False)  # 이 PC 에 연결된 실제 Threads 토큰을 쓰지 않게
+    monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
     fake = FakeLLM()
     llm.set_backend(fake)
     web.set_fetcher(ok_fetch)  # 출처 페이지 수집도 네트워크 없이
@@ -2195,7 +2197,7 @@ SOCIAL = {"x": "Salmon DNA on your face? Rejuran is a polynucleotide skin booste
           "fact_ids": ["F1"]}
 
 
-def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="approved"):
+def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="approved", live=True):
     draft = {"id": draft_id, "content_type": "procedure", "facts": [{"id": "F1", "text": "Downtime is 1-3 days.", "url": URL}],
              "blog": {"title": "What is Rejuran?", "slug": "what-is-rejuran", "markdown": "x"},
              "shortform": {"hook": "Salmon DNA on your face?", "lines": []}}
@@ -2203,7 +2205,24 @@ def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="appr
         draft["sponsor"] = sponsor
     path = common.content_dir(state) / draft_id
     common.save_json(path / "draft.json", draft)
+    if live:  # 블로그 배포 기록 (pipeline.site deploy 가 남기는 것)
+        f = site_mod.state_file()
+        slugs = common.load_json(f)["slugs"] if f.exists() else []
+        common.save_json(f, {"hash": "h", "slugs": [*slugs, p["slug"]] if (p := next(
+            (x for x in site_mod.collect_posts() if x["draft"]["id"] == draft_id), None)) else slugs})
     return path
+
+
+def test_social_only_for_deployed_posts_and_x_length_counts_link(env):
+    env.responses["social"] = SOCIAL
+    _published(live=False)
+    assert social_mod.pending_paths() == []                                     # 배포 전: 링크가 열리지 않으니 안 만든다
+    _published("2026-W40-02-other", live=True)
+    assert [p.name for p in social_mod.pending_paths()] == ["2026-W40-02-other"]
+    draft = {"id": "d", "facts": [{"id": "F1", "text": "x"}], "blog": {"title": "t", "slug": "t"}}
+    room = 280 - len(social_mod.footer("")) - social_mod.URL_WEIGHT
+    assert social_mod.check(draft, {"x": "a" * room, "threads": "ok"}) == []     # 링크 줄까지 딱 280자
+    assert any("너무 김 (281/280" in p for p in social_mod.check(draft, {"x": "a" * (room + 1), "threads": "ok"}))
 
 
 def test_social_compose_list_and_manual_record(env):
