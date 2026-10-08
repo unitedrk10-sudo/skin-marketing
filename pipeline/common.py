@@ -49,6 +49,18 @@ def content_dir(state: str | None = None) -> Path:
     return base / state
 
 
+def load_env_file(path: Path | None = None) -> None:
+    """저장소 .env 의 값이 있는 항목을 아직 없는 환경변수로만 채운다 (Hermes 스크립트와 같은 규칙).
+    터미널에서 직접 실행하는 설정 명령용 — 값은 출력하지 않는다."""
+    path = path or ROOT / ".env"
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.strip().partition("=")
+        if sep and key and not key.startswith("#") and value.strip() and key.strip() not in os.environ:
+            os.environ[key.strip()] = value.strip()
+
+
 def log_dir() -> Path:
     return Path(os.environ.get("SKIN_LOG_DIR", ROOT / "logs"))
 

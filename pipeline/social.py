@@ -40,6 +40,7 @@ from pipeline.common import (
     facts_text,
     get_logger,
     load_draft,
+    load_env_file,
     load_json,
     load_yaml,
     now_iso,
@@ -233,8 +234,63 @@ def record(path: Path, channel: str, url: str) -> str:
 
 # ---------------- Threads API ----------------
 
-THREADS_API = "https://graph.threads.net/v1.0"
+THREADS_GRAPH = "https://graph.threads.com"  # Meta 문서 기준 새 주소 (예전 graph.threads.net)
+THREADS_API = f"{THREADS_GRAPH}/v1.0"
 REFRESH_AFTER_DAYS = 50
+THREADS_SCOPES = "threads_basic,threads_content_publish"
+# 처음 연결(threads-auth)에서 로그인 뒤 돌아올 주소 — 서버가 없으니 localhost 로 보내고 주소창의 code 를 복사한다.
+# 앱 대시보드 Threads 사용 사례 설정의 "리디렉션 콜백 URL" 에 똑같이 넣어야 한다.
+DEFAULT_REDIRECT = "https://localhost/"
+
+
+def _save_token(token: str) -> None:
+    path = threads_token_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"access_token": token, "refreshed_at": now_iso()}), encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def _app_credentials() -> tuple[str, str, str]:
+    app_id, secret = os.environ.get("THREADS_APP_ID", ""), os.environ.get("THREADS_APP_SECRET", "")
+    if not app_id or not secret:
+        raise SocialError("THREADS_APP_ID·THREADS_APP_SECRET 이 .env 에 없습니다 (앱 대시보드 → 앱 설정 → 기본 → Threads 앱 ID·시크릿)")
+    return app_id, secret, os.environ.get("THREADS_REDIRECT_URI", DEFAULT_REDIRECT)
+
+
+def threads_auth_url(state: str | None = None) -> str:
+    """1단계: 브라우저로 열 로그인·권한 허용 주소 (우리 Threads 계정은 앱의 Threads 테스터여야 한다)."""
+    app_id, _, redirect = _app_credentials()
+    return "https://threads.com/oauth/authorize?" + urllib.parse.urlencode(
+        {"client_id": app_id, "redirect_uri": redirect, "scope": THREADS_SCOPES, "response_type": "code",
+         "state": state or secrets.token_hex(8)})
+
+
+def code_from(value: str) -> str:
+    """돌아온 주소 전체나 code 값만 — 끝에 붙는 '#_' 는 code 가 아니다."""
+    value = value.strip()
+    if value.startswith("http"):
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(value).query)
+        if query.get("error"):
+            raise SocialError(f"권한 허용이 취소됐습니다: {query.get('error_description', query['error'])[0]}")
+        value = (query.get("code") or [""])[0]
+    value = value.split("#")[0]
+    if not value:
+        raise SocialError("주소에 code 가 없습니다 — 권한 허용 후 주소창의 주소를 그대로 넣어 주세요")
+    return value
+
+
+def threads_connect(code_or_url: str) -> str:
+    """2단계: code → 단기 토큰(1시간) → 장기 토큰(60일) → 저장 (이후 50일마다 자동 갱신). 반환: 계정 이름."""
+    app_id, secret, redirect = _app_credentials()
+    form = urllib.parse.urlencode({"client_id": app_id, "client_secret": secret, "grant_type": "authorization_code",
+                                   "redirect_uri": redirect, "code": code_from(code_or_url)}).encode()
+    short = _http("POST", f"{THREADS_GRAPH}/oauth/access_token", body=form,
+                  headers={"content-type": "application/x-www-form-urlencoded"})
+    long = _http("GET", f"{THREADS_GRAPH}/access_token",
+                 {"grant_type": "th_exchange_token", "client_secret": secret, "access_token": short["access_token"]})
+    _save_token(long["access_token"])
+    me = _http("GET", f"{THREADS_API}/me", {"fields": "id,username", "access_token": long["access_token"]})
+    return me.get("username", "")
 
 
 def threads_token_file() -> Path:
@@ -270,16 +326,14 @@ def threads_token() -> str:
     saved = datetime.fromisoformat(data["refreshed_at"]) if data.get("refreshed_at") else None
     if saved is None or (datetime.now(timezone.utc) - saved).days >= REFRESH_AFTER_DAYS:
         try:
-            fresh = _http("GET", "https://graph.threads.net/refresh_access_token",
+            fresh = _http("GET", f"{THREADS_GRAPH}/refresh_access_token",
                           {"grant_type": "th_refresh_token", "access_token": token})
             token = fresh["access_token"]
         except (SocialError, KeyError) as e:
             if saved is not None:  # 저장된 토큰이 있는데 갱신 실패 → 만료 전에 알려야 한다
                 raise SocialError(f"Threads 토큰 갱신 실패 — 새 토큰 발급 필요: {e}") from e
             log.warning("Threads 토큰 갱신 실패 (새로 받은 토큰이면 정상): %s", e)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"access_token": token, "refreshed_at": now_iso()}), encoding="utf-8")
-        os.chmod(path, 0o600)
+        _save_token(token)
     return token
 
 
@@ -354,8 +408,21 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("ref")
     d.add_argument("channel", choices=CHANNELS)
     d.add_argument("url")
+    a = sub.add_parser("threads-auth", help="처음 한 번: 인자 없이 → 로그인 주소, --code <돌아온 주소> → 장기 토큰 저장")
+    a.add_argument("--code", help="권한 허용 후 주소창의 주소 전체 또는 code 값")
     args = parser.parse_args(argv)
     try:
+        if args.cmd == "threads-auth":
+            load_env_file()  # 터미널에서 직접 실행하는 설정 명령 — Hermes 밖이라 .env 를 직접 읽는다
+            if not args.code:
+                print("1) 아래 주소를 브라우저로 열어 우리 Threads 계정으로 권한 허용\n"
+                      "2) localhost 로 이동하며 '연결할 수 없음' 화면이 떠도 정상 — 주소창의 주소 전체를 복사\n"
+                      '3) python -m pipeline.social threads-auth --code "<복사한 주소>"   (1시간 안에, 한 번만)\n')
+                print(threads_auth_url())
+                return 0
+            name = threads_connect(args.code)
+            print(f"✅ Threads 연결 완료: @{name} — 장기 토큰 저장 ({threads_token_file()}), 50일마다 자동 갱신")
+            return 0
         if args.cmd == "compose":
             done, failed = compose_pending()
             for f in failed:

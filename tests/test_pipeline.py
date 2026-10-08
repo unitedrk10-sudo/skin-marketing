@@ -2,9 +2,11 @@
 
 import importlib
 import json
+import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from collections import Counter
 from pathlib import Path
 
@@ -2279,6 +2281,50 @@ def test_threads_api_post_and_token_refresh(env, tmp_path, monkeypatch):
     social_mod.threads_token()
     assert not any("refresh" in c[1] for c in calls)                          # 50일 안이면 다시 갱신하지 않음
     assert "이미 게시됨" in social_mod.post(path, "threads")
+
+
+def test_threads_auth_exchanges_code_for_long_token(env, tmp_path, monkeypatch):
+    with pytest.raises(social_mod.SocialError, match="THREADS_APP_ID"):
+        social_mod.threads_auth_url()
+    monkeypatch.setenv("THREADS_APP_ID", "990")
+    monkeypatch.setenv("THREADS_APP_SECRET", "sec")
+    monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "tok.json"))
+    url = social_mod.threads_auth_url("s1")
+    assert url.startswith("https://threads.com/oauth/authorize?client_id=990&redirect_uri=https%3A%2F%2Flocalhost%2F")
+    assert "scope=threads_basic%2Cthreads_content_publish" in url and "response_type=code" in url
+    assert social_mod.code_from("https://localhost/?code=AQBx-h&state=s1#_") == "AQBx-h"
+    with pytest.raises(social_mod.SocialError, match="취소"):
+        social_mod.code_from("https://localhost/?error=access_denied&error_description=The+user+denied")
+    calls = []
+
+    def fake_http(method, url, params=None, headers=None, body=None):
+        calls.append((method, url, params, body))
+        if url.endswith("/oauth/access_token"):
+            return {"access_token": "short", "user_id": 1}
+        if url.endswith("/access_token"):
+            return {"access_token": "long", "expires_in": 5184000}
+        return {"id": "42", "username": "skinboundkorea"}
+    monkeypatch.setattr(social_mod, "_http", fake_http)
+    assert social_mod.threads_connect("https://localhost/?code=AQBx-h#_") == "skinboundkorea"
+    form = dict(urllib.parse.parse_qsl(calls[0][3].decode()))
+    assert calls[0][0] == "POST" and calls[0][1] == "https://graph.threads.com/oauth/access_token"
+    assert form == {"client_id": "990", "client_secret": "sec", "grant_type": "authorization_code",
+                    "redirect_uri": "https://localhost/", "code": "AQBx-h"}
+    assert calls[1][2] == {"grant_type": "th_exchange_token", "client_secret": "sec", "access_token": "short"}
+    saved = json.loads((tmp_path / "tok.json").read_text())
+    assert saved["access_token"] == "long" and saved["refreshed_at"]
+    assert social_mod.threads_token() == "long" and len(calls) == 3                  # 방금 받은 토큰은 바로 갱신하지 않음
+
+
+def test_load_env_file_fills_only_missing_values(tmp_path, monkeypatch):
+    f = tmp_path / ".env"
+    f.write_text("# c\nA_KEY=one\nB_KEY=\nC_KEY=three\n", encoding="utf-8")
+    monkeypatch.delenv("A_KEY", raising=False)
+    monkeypatch.delenv("B_KEY", raising=False)
+    monkeypatch.setenv("C_KEY", "kept")
+    common.load_env_file(f)
+    assert os.environ["A_KEY"] == "one" and "B_KEY" not in os.environ and os.environ["C_KEY"] == "kept"
+    monkeypatch.delenv("A_KEY")
 
 
 def test_x_api_is_optional_and_signed(env, monkeypatch):
