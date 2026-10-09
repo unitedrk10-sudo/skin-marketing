@@ -31,10 +31,10 @@
 |---|---|---|
 | 이름·도메인 | Skinbound · skinboundkorea.com · hello@skinboundkorea.com (받기 전용) | ✅ |
 | 인상 | 차분한 프리미엄 스킨케어 브랜드 + 정보의 신뢰감 ("Clean clinic", 시안 A) | ✅ |
-| 색 | 바탕 #FBF9F6 · 세이지 #5E7A6B · 짙은 녹색 #1E2A25 · 샌드 #F1EBE2 | ✅ |
+| 색 | 차콜 팔레트 (2026-10-10 변경): 바탕 아이보리 #F8F6F1 · 글자 차콜 #1A1A1A · 보조 토프 #7D7062 · 꼬리말 #1F1F1F · 포인트 버건디 #713D49(버튼·링크만). `site.yaml palette` 로 green ↔ charcoal 전환 | ✅ |
 | 글꼴 | 제목 Instrument Serif(자체 제공) · 본문 Inter/기기 산세리프 | ✅ |
 | 사진 원칙 | 차분한 정물·서울 풍경·손·제품. **얼굴·환자·병원 내부·시술 장면·간판/로고 금지**. 우선순위: 직접 촬영 > 직접 고른 사진 > Pixabay | ✅ |
-| 로고 | 심볼 = 짙은 녹색 둥근 사각형 + Instrument Serif 이탤릭 "S" (크림) + 워드마크 "Skinbound". 파비콘·홈 화면 아이콘·링크 미리보기 카드 모두 같은 규칙 (`pipeline/og.py`, 글꼴 `assets/brand/`) | ✅ 2026-10-10 |
+| 로고 | 심볼 = 차콜 둥근 사각형 + Instrument Serif 이탤릭 "S" (크림) + 워드마크 "Skinbound" + 자간 넓힌 "KOREA". 파비콘·홈 화면 아이콘·링크 미리보기 카드 모두 같은 규칙 (`pipeline/og.py`, 글꼴 `assets/brand/`) | ✅ 2026-10-10 |
 | 디자인 시스템 | 알약형 버튼, 각진 사진(3px), 얇은 선, 넓은 여백 — `pipeline/site.py` CSS 가 기준 | ✅ |
 
 ### 언어
