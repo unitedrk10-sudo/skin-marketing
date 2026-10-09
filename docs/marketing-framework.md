@@ -76,7 +76,7 @@
 | 지표 | 도구 | 상태 |
 |---|---|---|
 | 검색 노출·클릭·검색어 | Google Search Console | ✅ 등록·sitemap 제출 |
-| 방문·유입 경로 | Cloudflare Web Analytics (쿠키 없음) — 조회수 읽기는 배포용 토큰(Account Analytics Read) 재사용 | 🟡 사이트 등록 대기 (`site.yaml analytics_token`·`analytics_site_tag`) |
+| 방문·유입 경로 | Cloudflare Web Analytics (쿠키 없음) — 조회수 읽기는 배포용 토큰(Account Analytics Read) 재사용 | ✅ 2026-10-10 연결 (`site.yaml analytics_token`·`analytics_site_tag`) |
 | 병원 사이트 클릭 (영업 데이터, 합산만) | 링크 추적기 (`tracker/`, Worker + D1) | 🟡 배포 대기 (토큰에 D1 권한 필요) |
 | SNS 반응 | 게시 기록(social.json) — 반응 수 수집은 아직 없음 | 🟡 |
 | 주간 리포트 | `pipeline.07_report` → 텔레그램 | ✅ |
@@ -93,7 +93,7 @@
 1. **재방문 장치** — 추천: 당분간 Threads 팔로우로 충분, 글 20편 이상이면 뉴스레터(이메일 수집 = 개인정보 처리 안내 필요).
 2. **광고 문의 페이지(B2B)** — 추천: 첫 영업 전에 `/partners/` 한 장 (원칙·형태·표시 방식·문의 메일). 독자 메뉴엔 노출하지 않고 꼬리말 링크만.
 3. **분류·목록 페이지** — 추천: 글 10편 이상일 때 시술별 목록부터 (SEO 내부 링크 효과).
-4. **방문 분석** — Cloudflare Web Analytics 사이트 등록 후 토큰을 `site.yaml` 에 (사람 작업 5분).
+4. ~~방문 분석~~ — 2026-10-10 완료.
 5. **링크 추적기 배포** — 병원 목록이 붙는 여행 글이 게시되기 전에 (영업 데이터의 근거).
 6. **로고·파비콘** — 추천: 워드마크 유지 + 단순한 이니셜 심볼(S) 하나.
 7. **KPI 목표치** — 4주 데이터를 본 뒤 정하기.
