@@ -319,14 +319,14 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     return f"""<!doctype html>
 <html lang="{cfg.get('language', 'en')}"><head>{''.join(head)}</head>
 <body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/">{name}</a>
-<nav><a href="/#guides">Guides</a><a href="/#treatments">Treatments</a><a href="/#trip">Seoul &amp; recovery</a><a href="/about/">How we work</a></nav>
+<nav><a href="/#guides">Guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
 </div></header>
 <main>{body}</main>
 <footer class="ft"><div class="wrap ft-in"><div><span class="brand">{name}</span>
-<p>{esc(cfg['description'])} AI-assisted and human-approved — not medical advice. Always consult a licensed doctor.
+<p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
-<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#treatments">Treatments</a><a href="/rss.xml">RSS</a></div>
-<div><h4>About</h4><a href="/about/">How we work</a><a href="/privacy/">Privacy</a>{contact}</div></div></footer>
+<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a></div>
+<div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}</div></div></footer>
 </body></html>"""
 
 def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> list[dict]:
@@ -532,17 +532,14 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
             credit = f'<a href="{esc(image["credit_url"])}" rel="noopener" target="_blank">{credit}</a>'
         photo = (f'<figure class="wrap art-img"><img src="{esc(image["hero"])}" alt="" width="1600" height="900" '
                  f'fetchpriority="high">{f"<figcaption>{credit}</figcaption>" if credit else ""}</figure>')
-    n_facts = sum(1 for f in draft.get("facts", []) if f["id"] in set(re.findall(r"\[(F\d+)\]", blog.get("markdown", ""))))
-    n_src = len(sources) + (1 if "[clinic websites]" in body_html else 0)
+    # 사실·출처 개수, 사람 승인 같은 운영 지표는 독자 화면에 내지 않는다 (2026-10-10) — 검수 과정은 About 페이지에서만 설명
     heads = H2_WITH_ID.findall(body_html)
     toc = "".join(f'<li><a href="#{i}">{re.sub(r"<[^>]+>", "", t)}</a></li>' for i, t in heads)
     body = f"""<div class="wrap crumbs"><a href="/#guides">Guides</a> &nbsp;/&nbsp; {esc(category_label(draft))}</div>
 <header class="wrap art-hd"><p class="kicker">{esc(category_label(draft))}</p>
 <h1>{esc(blog.get('title', ''))}</h1>
 {f'<p class="sub">{esc(blog["meta_description"])}</p>' if blog.get("meta_description") else ""}
-<div class="ameta">{badge}<span>Updated {esc(post['date'][:10])}</span><span>{read_minutes(blog.get("markdown", ""))} min read</span>
-<span>{n_facts} facts · {n_src} source{"s" if n_src != 1 else ""}</span><span class="ok">✓ Human-approved</span>
-<span>{esc(cfg['byline'])}</span></div></header>
+<div class="ameta">{badge}<span>Updated {esc(post['date'][:10])}</span><span>{read_minutes(blog.get("markdown", ""))} min read</span></div></header>
 {photo}
 <div class="wrap art-grid"><aside class="side">{f'<p class="label">On this page</p><ol>{toc}</ol>' if toc else ""}
 <div class="doc"><b>Not medical advice.</b> Every medical statement links to its source. Results and side effects vary —
@@ -617,16 +614,16 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
     feat = ""
     if lead:
         d = lead["draft"]
-        n_facts = len(set(re.findall(r"\[(F\d+)\]", d["blog"].get("markdown", ""))))
         feat = (f'<a class="feat" href="/{lead["slug"]}/">{photo_html(lead, "hero")}<div><span class="cat">{esc(category_label(d))}</span>'
                 + (f' <span class="badge">{sponsors.label(d["sponsor"])} · Ad</span>' if d.get("sponsor") else "")
                 + f'<h3>{esc(d["blog"].get("title", ""))}</h3><p>{esc(d["blog"].get("meta_description", ""))}</p>'
-                f'<span class="meta">{esc(lead["date"][:10])} · {read_minutes(d["blog"].get("markdown", ""))} min read · '
-                f'{n_facts} facts cited</span></div></a>')
+                f'<span class="meta">{esc(lead["date"][:10])} · {read_minutes(d["blog"].get("markdown", ""))} min read</span></div></a>')
     grid = f'<ul class="grid">{"".join(card_html(p) for p in rest)}</ul>' if rest else ""
-    latest_facts = len(set(re.findall(r"\[(F\d+)\]", lead["draft"]["blog"].get("markdown", "")))) if lead else 0
-    chips = "".join(f'<a class="chip" href="/#guides">{esc(n)}<small>{f"{c} guide" + ("s" if c != 1 else "") if c else "soon"}</small></a>'
-                    for n, c in treatment_counts(posts))
+    # 시술 칩: 글이 있는 시술만, 3개 이상 모였을 때부터 (빈 칸·"soon" 은 독자에게 쓸모가 없다)
+    with_guides = [n for n, c in treatment_counts(posts) if c]
+    chips = "".join(f'<a class="chip" href="/#guides">{esc(n)}</a>' for n in with_guides)
+    treatments = (f'<section class="sec" id="treatments"><div class="sec-hd"><h2>Start with a treatment</h2></div>'
+                  f'<div class="chips">{chips}</div></section>') if len(with_guides) >= 3 else ""
     trips = [p for p in posts if category_key(p["draft"]) in ("procedure_travel", "travel_guide")][:3]
     band = ""
     if trips:
@@ -638,16 +635,13 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
     base = base_url(cfg)
     site_ld = {"@context": "https://schema.org", "@type": "WebSite", "name": cfg["name"], "description": cfg["description"],
                **({"url": base + "/"} if base else {})}
-    body = f"""<div class="wrap"><section class="hero"><div><p class="kicker">Independent · Source-backed · Human-approved</p>
+    body = f"""<div class="wrap"><section class="hero"><div><p class="kicker">Skin treatments in Korea, for international visitors</p>
 <h1>Korean skin treatments, <em>explained honestly.</em></h1>
 <p class="sub">{esc(cfg['description'])}</p>
-<a class="btn" href="#guides">Browse the guides</a><a class="tlink" href="/about/">How we check every fact</a></div>
+<a class="btn" href="#guides">Browse the guides</a><a class="tlink" href="/about/">About our guides</a></div>
 {f'<figure class="hero-img"><img src="{esc(hero_img)}" alt="" fetchpriority="high"></figure>' if hero_img else ""}</section>
-<div class="proof"><div><b>{latest_facts}</b><span>facts checked against their source pages in our latest guide</span></div>
-<div><b>0</b><span>clinic rankings, testimonials or before-and-after photos — ever</span></div>
-<div><b>100%</b><span>of guides read and approved by a person before they go live</span></div></div>
-<section class="sec" id="treatments"><div class="sec-hd"><h2>Start with a treatment</h2></div><div class="chips">{chips}</div></section>
-<section class="sec" id="guides"><div class="sec-hd"><h2>Latest guides</h2><span>{len(posts)} guide{"s" if len(posts) != 1 else ""}</span></div>
+{treatments}
+<section class="sec" id="guides"><div class="sec-hd"><h2>Latest guides</h2></div>
 {feat or "<p>First guides are coming soon.</p>"}{grid}</section></div>{band}"""
     return page(cfg, f"{cfg['name']} — {cfg['tagline']}", body, path="/", jsonld=[site_ld], image=None)
 
