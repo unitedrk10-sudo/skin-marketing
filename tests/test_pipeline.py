@@ -102,6 +102,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)  # 워커가 실제 Gemini TTS 로 렌더링하지 않게
     monkeypatch.delenv("PIXABAY_API_KEY", raising=False)  # 영상·표지 사진 검색도 네트워크 없이
     monkeypatch.delenv("THREADS_ACCESS_TOKEN", raising=False)  # 이 PC 에 연결된 실제 Threads 토큰을 쓰지 않게
+    for k in ("THREADS_APP_ID", "THREADS_APP_SECRET", "CF_API_TOKEN", "CF_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN",
+              "CLOUDFLARE_ACCOUNT_ID", "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"):
+        monkeypatch.delenv(k, raising=False)  # 셸에 .env 를 불러 둔 상태로 테스트해도 실제 API 를 부르지 않게
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
     fake = FakeLLM()
     llm.set_backend(fake)

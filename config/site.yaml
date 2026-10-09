@@ -20,5 +20,5 @@ route_ads:                      # 중립 여행 글의 코스 광고 카드 (spo
   enabled: true
   hide_in_countries: [KR]       # 해외 대상 광고: 이 나라 방문자에게는 숨김 (의료법 §56②12 국내광고 시비 차단)
 partners_page: false          # 병원(광고주) 대상 한국어 안내 /partners/ — 변호사 확인(기획서 12-1-1) 후 true. 검색 제외·꼬리말 링크만
-analytics_site_tag: ""         # Web Analytics 사이트 태그(site tag) — 주제 추천이 글별 조회수를 읽을 때 사용 (.env CF_API_TOKEN, CF_ACCOUNT_ID)
-analytics_token: ""             # Cloudflare Web Analytics 토큰 (대시보드 → Web Analytics → 사이트 추가) — 방문·AI 유입 집계
+analytics_site_tag: "2768617998d947b0925482151b70c5c1"         # Web Analytics 사이트 태그(site tag) — 주제 추천이 글별 조회수를 읽을 때 사용 (.env CF_API_TOKEN, CF_ACCOUNT_ID)
+analytics_token: "83139615d6714be495fb5d4bbf4d4b8a"             # Cloudflare Web Analytics 토큰 (대시보드 → Web Analytics → 사이트 추가) — 방문·AI 유입 집계
