@@ -10,7 +10,7 @@ SITE_HOST = "skinboundkorea.com"   # 블로그 도메인 — 여기서 온 클�
 [[d1_databases]]
 binding = "DB"
 database_name = "skin-tracker"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"   # npx wrangler d1 create skin-tracker 결과값
+database_id = "e016b1b9-e391-428e-b9ad-53cefcb12efa"   # 2026-10-10 생성 (APAC)
 
 # 비밀값 (저장소에 넣지 않음):
 #   npx wrangler secret put ADMIN_TOKEN     # 관리 API 토큰 (.env 의 TRACKER_TOKEN 과 같은 값)
