@@ -2209,10 +2209,11 @@ def test_site_share_images_and_icons(sponsored, tmp_path, monkeypatch):
     site_mod.build()
     dist = tmp_path / "dist"
     assert (dist / "og" / "rejuran.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and (dist / "og" / "default.png").exists()
-    assert (dist / "favicon.svg").exists() and (dist / "apple-touch-icon.png").exists()
+    assert (dist / "favicon.ico").read_bytes()[:4] == b"\x00\x00\x01\x00" and (dist / "apple-touch-icon.png").exists()
+    assert (dist / "icon-512.png").exists() and '"/icon-192.png"' in (dist / "site.webmanifest").read_text(encoding="utf-8")
     post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
     assert '<meta property="og:image" content="https://skinbound.example/og/rejuran.png">' in post
-    assert 'twitter:card" content="summary_large_image"' in post and 'rel="icon" href="/favicon.svg"' in post
+    assert 'twitter:card" content="summary_large_image"' in post and 'rel="icon" href="/favicon.ico"' in post
     first = (dist / "og" / "rejuran.png").read_bytes()
     site_mod.build()
     assert (dist / "og" / "rejuran.png").read_bytes() == first          # 같은 입력 → 같은 이미지 (변경 없으면 배포 안 함)

@@ -202,7 +202,8 @@ a{color:inherit;text-decoration:none}img{display:block;max-width:100%}
 .badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:5px;padding:0 7px;
 font-size:12px;font-weight:700;letter-spacing:0;text-transform:none}
 .hd{border-bottom:1px solid var(--line);background:var(--bg)}.hd-in{display:flex;align-items:center;height:78px}
-.brand{font-family:var(--serif);font-size:31px;letter-spacing:-.01em;margin-right:auto;line-height:1}
+.brand{font-family:var(--serif);font-size:31px;letter-spacing:-.01em;margin-right:auto;line-height:1;display:flex;align-items:center}
+.brand img{width:30px;height:30px;border-radius:7px;margin-right:12px}
 .hd nav a{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#4c524f;margin-left:34px}.hd nav a:hover{color:var(--sage)}
 .hero{display:grid;grid-template-columns:5fr 6fr;gap:72px;align-items:center;padding:72px 0 80px}
 .hero h1{font-family:var(--serif);font-weight:400;font-size:78px;line-height:1;letter-spacing:-.015em;margin:22px 0 26px}
@@ -299,7 +300,9 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
         f'<meta property="og:title" content="{esc(title)}">', f'<meta property="og:site_name" content="{esc(cfg["name"])}">',
         f'<meta property="og:description" content="{esc(description or cfg["description"])}">',
         f'<meta property="og:type" content="{"article" if path.count("/") == 2 and path not in ("/about/", "/privacy/") else "website"}">',
-        '<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png">',
+        '<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">'
+        '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">'
+        '<meta name="theme-color" content="#FBF9F6">',
         f'<link rel="alternate" type="application/rss+xml" title="{esc(cfg["name"])}" href="/rss.xml">',
         f"<style>{CSS}</style>",
     ]
@@ -323,7 +326,7 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     partners = '<a href="/partners/">For clinics (한국어)</a>' if cfg.get("partners_page") else ""
     return f"""<!doctype html>
 <html lang="{lang or cfg.get('language', 'en')}"><head>{''.join(head)}</head>
-<body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/">{name}</a>
+<body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/"><img src="/icon-192.png" alt="" width="30" height="30">{name}</a>
 <nav><a href="/#guides">Guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
 </div></header>
 <main>{body}</main>
