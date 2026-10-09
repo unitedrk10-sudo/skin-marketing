@@ -243,7 +243,7 @@ html[data-palette=charcoal]{--bg:#F8F6F1;--ink:#1A1A1A;--muted:#6E6A64;--line:#E
 .band ol{list-style:none;margin:2px 0 0;padding:0;border-top:1px solid #DCD3C6}
 .band li a{border-bottom:1px solid #DCD3C6;padding:22px 0;display:flex;justify-content:space-between;gap:20px;font-size:18px}
 .band li a span{color:var(--sage)}
-.ft{background:var(--deep);color:#C9D3CE;margin-top:96px}.ft-in{display:grid;grid-template-columns:2fr 1fr 1fr;gap:48px;padding-top:64px;padding-bottom:64px}
+.ft{background:var(--deep);color:#C9D3CE;margin-top:96px}main:has(> .band:last-child)+.ft{margin-top:0}.ft-in{display:grid;grid-template-columns:2fr 1fr 1fr;gap:48px;padding-top:64px;padding-bottom:64px}
 .ft .brand{color:#F4F1EC;display:inline-flex;margin-bottom:16px}.ft .wm small{color:#A9B3AE}.ft p{font-size:14px;margin:0;max-width:34em}
 .ft h4{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#8FA399;margin:6px 0 14px;font-weight:600}
 .ft a{display:block;font-size:14px;margin:6px 0}.ft a:hover{color:#fff}
@@ -286,7 +286,7 @@ table{border-collapse:collapse;width:100%;font-size:15px}td,th{border:1px solid 
 html:lang(ko) .page{font-family:"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",var(--sans);word-break:keep-all}
 html:lang(ko) .page h1,html:lang(ko) .page h2{font-family:inherit;font-weight:700;letter-spacing:-.02em}
 html:lang(ko) .page h1{font-size:44px;line-height:1.25}html:lang(ko) .page h2{font-size:24px}
-@media (max-width:760px){.wrap{padding:0 20px}.hd nav{display:none}.hero-img{min-height:0;aspect-ratio:6/5}.side{padding-top:0}.hero{grid-template-columns:1fr;gap:28px;padding:32px 0 44px}
+@media (max-width:760px){.wrap{padding-left:20px;padding-right:20px}.hd nav{display:none}.hero-img{min-height:0;aspect-ratio:6/5}.side{padding-top:0}.hero{grid-template-columns:1fr;gap:28px;padding:32px 0 44px}
 .hero h1{font-size:48px}.hero-img{order:-1}.proof{grid-template-columns:1fr}.proof div{padding:20px 0!important;border-left:0!important}
 .proof div+div{border-top:1px solid var(--line)}.sec{margin-top:56px}.sec-hd h2{font-size:34px}
 .feat,.grid,.band-in,.ft-in{grid-template-columns:1fr;gap:28px}.feat h3{font-size:34px}.band-in{padding-top:56px;padding-bottom:56px}
