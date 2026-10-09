@@ -206,10 +206,10 @@ font-size:12px;font-weight:700;letter-spacing:0;text-transform:none}
 html[data-palette=charcoal]{--bg:#F8F6F1;--ink:#1A1A1A;--muted:#6E6A64;--line:#E6E0D6;--sage:#7D7062;--sage-soft:#F0ECE6;
 --sand:#EFE9E1;--deep:#1F1F1F}
 .brand{margin-right:auto;display:flex;align-items:center;line-height:1}
-.brand img{width:38px;height:38px;border-radius:8px;margin-right:12px}
-.wm{display:flex;flex-direction:column;align-items:center}
+.brand img{width:42px;height:42px;border-radius:9px;margin-right:13px}
+.wm{display:inline-flex;flex-direction:column;align-items:stretch}
 .wm b{font-family:var(--serif);font-weight:400;font-size:30px;letter-spacing:-.01em;line-height:26px;display:block}
-.wm small{font-family:var(--sans);font-size:9.5px;line-height:10px;letter-spacing:.52em;margin-right:-.52em;margin-top:2px;font-weight:500;color:var(--muted);display:block}
+.wm small{font-family:var(--sans);font-size:11px;line-height:11px;margin-top:4px;font-weight:500;color:var(--muted);display:flex;justify-content:space-between}.wm small i{font-style:normal}
 .hd nav a{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#4c524f;margin-left:34px}.hd nav a:hover{color:var(--sage)}
 .hero{display:grid;grid-template-columns:5fr 6fr;gap:72px;align-items:stretch;padding:64px 0 24px}
 .hero h1{font-family:var(--serif);font-weight:400;font-size:78px;line-height:1;letter-spacing:-.015em;margin:22px 0 26px}
@@ -330,7 +330,8 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     contact = f'<a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>' if cfg.get("contact_email") else ""
     name = esc(cfg["name"])
     partners = '<a href="/partners/">For clinics (한국어)</a>' if cfg.get("partners_page") else ""
-    wordmark = f'<span class="wm"><b>{name}</b><small>KOREA</small></span>'  # 워드마크: Skinbound + 자간 넓힌 KOREA
+    korea = "".join(f"<i>{ch}</i>" for ch in "KOREA")
+    wordmark = f'<span class="wm"><b>{name}</b><small aria-hidden="true">{korea}</small></span>'  # Skinbound + 폭 맞춘 KOREA
     return f"""<!doctype html>
 <html lang="{lang or cfg.get('language', 'en')}" data-palette="{esc(cfg.get('palette') or 'green')}"><head>{''.join(head)}</head>
 <body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/" aria-label="{name} Korea"><img src="/icon-192.png" alt="" width="32" height="32">{wordmark}</a>
