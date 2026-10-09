@@ -10,3 +10,6 @@ reports/
 review-queue/
 config/sponsors.yaml
 site/dist/
+
+# wrangler 로컬 캐시 (배포 도구)
+.wrangler/
