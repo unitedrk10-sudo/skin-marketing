@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 import markdown
 
-from pipeline import clinics, og, sponsors, tracker
+from pipeline import clinics, og, site_images, sponsors, tracker
 from pipeline.common import (PRACTICE_KIND, ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json,
                              load_yaml, run_cli, save_json, slugify)
 
@@ -183,20 +183,84 @@ def extract_faq(md: str) -> list[dict]:
 
 # ---------------- HTML ----------------
 
+# 디자인 (2026-10-10 개편): 크림 배경·짙은 녹색, 제목 세리프·본문 산세리프, 넓은 여백, 글마다 큰 사진.
+# 글꼴은 기기 기본 글꼴만 (외부 글꼴 서버 = 방문자 정보 전송 → 개인정보 페이지의 "추적 없음"과 맞지 않아 쓰지 않는다)
 CSS = """
-:root{--fg:#1d1d1f;--muted:#5f6368;--bg:#fff;--line:#e5e5ea;--accent:#0b6e4f;--ad:#8a5a00;--adbg:#fff6e0}
-@media (prefers-color-scheme:dark){:root{--fg:#ececf1;--muted:#a1a1aa;--bg:#141416;--line:#2c2c30;--accent:#4cc39a;--ad:#f3c969;--adbg:#2b2413}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.65 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main,header,footer{max-width:720px;margin:0 auto;padding:0 20px}header{padding-top:24px}header a{color:var(--fg);text-decoration:none;font-weight:700}
-.tagline{color:var(--muted);font-size:.95em;margin:.2em 0 1.5em}a{color:var(--accent)}h1{line-height:1.25;font-size:1.9em}
-.meta{color:var(--muted);font-size:.9em}.badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:4px;padding:0 6px;font-size:.8em;font-weight:600}
-blockquote{margin:1em 0;padding:.6em 1em;border-left:4px solid var(--ad);background:var(--adbg)}sup.ref a{text-decoration:none;font-size:.8em}
-.box{margin:1.5em 0;padding:.8em 1em;border:1px solid var(--line);border-radius:6px}.box h2{margin:.3em 0 .5em;font-size:1.25em}
-.clinics ol{font-size:.95em;padding-left:1.4em}
-.adcard{margin:1em 0;padding:.5em .8em;border:1px dashed var(--line);border-radius:6px;font-size:.9em}
-.sources{font-size:.9em;border-top:1px solid var(--line);margin-top:2em}.sources li{word-break:break-word}
-.posts{list-style:none;padding:0}.posts li{padding:.8em 0;border-bottom:1px solid var(--line)}.posts a{font-weight:600;text-decoration:none}
-footer{color:var(--muted);font-size:.85em;border-top:1px solid var(--line);margin-top:3em;padding-bottom:40px}table{border-collapse:collapse}td,th{border:1px solid var(--line);padding:4px 8px}
+:root{--bg:#f7f3ec;--surface:#fff;--fg:#1c2622;--muted:#66706b;--line:#e6dfd3;--accent:#0b6e4f;--accent-soft:#e3efe8;
+--ad:#8a5a00;--adbg:#fff6e0;--serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+--sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--radius:14px}
+@media (prefers-color-scheme:dark){:root{--bg:#121614;--surface:#1a201d;--fg:#ecefea;--muted:#a3ada7;--line:#2b332f;
+--accent:#5cc99f;--accent-soft:#1f3229;--ad:#f3c969;--adbg:#2b2413}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.7 var(--sans)}
+a{color:var(--accent)}img{max-width:100%;display:block}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+.site-head{border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--bg) 88%,transparent);position:sticky;top:0;z-index:5;
+backdrop-filter:blur(8px)}
+.site-head .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.logo{font-family:var(--serif);font-size:1.45em;font-weight:700;color:var(--fg);text-decoration:none;letter-spacing:.01em}
+.logo span{color:var(--accent)}
+.nav a{color:var(--fg);text-decoration:none;font-size:.92em;margin-left:22px;opacity:.85}.nav a:hover{opacity:1;color:var(--accent)}
+h1,h2,h3{font-family:var(--serif);line-height:1.22;font-weight:700}
+.hero{position:relative;margin:28px auto 0;border-radius:var(--radius);overflow:hidden;min-height:380px;display:flex;align-items:flex-end;
+background:linear-gradient(135deg,#0b6e4f,#1c3a30)}
+.hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.hero::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(10,20,16,.86),rgba(10,20,16,.45) 60%,rgba(10,20,16,.25))}
+.hero-text{text-shadow:0 1px 12px rgba(0,0,0,.35)}
+.hero-text{position:relative;z-index:1;padding:40px;color:#fff;max-width:760px}
+.hero-text h1{font-size:2.6em;margin:.1em 0 .3em}.hero-text p{font-size:1.08em;opacity:.92;margin:0}
+.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.72em;font-weight:700;color:var(--accent)}
+.hero .eyebrow{color:#d8f6e8}
+.trust{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:22px 0 8px}
+.trust div{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:.9em;color:var(--muted)}
+.trust strong{display:block;color:var(--fg);font-size:1.02em;margin-bottom:2px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 6px}
+.chips a{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 14px;font-size:.88em;text-decoration:none;color:var(--fg)}
+.chips a:hover,.chips a.on{border-color:var(--accent);color:var(--accent)}
+.section-title{display:flex;align-items:baseline;justify-content:space-between;margin:34px 0 14px}
+.section-title h2{margin:0;font-size:1.6em}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:22px;padding:0;margin:0;list-style:none}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;
+transition:transform .15s,box-shadow .15s}.card:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(0,0,0,.08)}
+.card a{text-decoration:none;color:inherit;display:flex;flex-direction:column;height:100%}
+.thumb{aspect-ratio:16/10;background:linear-gradient(135deg,var(--accent-soft),var(--line));overflow:hidden}
+.thumb img{width:100%;height:100%;object-fit:cover}
+.card-body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:6px;flex:1}
+.card h3{margin:0;font-size:1.22em}.card p{margin:0;color:var(--muted);font-size:.92em;line-height:1.55}
+.card .meta{margin-top:auto;padding-top:8px}
+.meta{color:var(--muted);font-size:.86em}
+.badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:5px;padding:0 7px;font-size:.78em;font-weight:700}
+.pill{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:2px 10px;font-size:.8em;font-weight:600}
+.post-head{max-width:760px;margin:40px auto 0;padding:0 20px}
+.post-head h1{font-size:2.5em;margin:.25em 0 .35em}.post-head .lede{font-size:1.15em;color:var(--muted);margin:0 0 16px}
+.post-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:.86em;color:var(--muted)}
+.post-photo{max-width:1120px;margin:26px auto 0;padding:0 20px}
+.post-photo img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius)}
+.post-photo figcaption{font-size:.75em;color:var(--muted);margin-top:6px;text-align:right}
+.post-photo figcaption a{color:var(--muted)}
+article.post{max-width:720px;margin:0 auto;padding:10px 20px 0}
+article.post h2{font-size:1.6em;margin:1.8em 0 .5em;scroll-margin-top:80px}article.post h3{font-size:1.2em;margin:1.4em 0 .4em}
+article.post p,article.post li{font-size:1.04em}
+.toc{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 20px;margin:26px 0 8px}
+.toc strong{font-size:.78em;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.toc ol{margin:.4em 0 0;padding-left:1.2em}.toc li{font-size:.95em;margin:.2em 0}.toc a{text-decoration:none}
+blockquote{margin:1.2em 0;padding:.8em 1.1em;border-left:4px solid var(--accent);background:var(--accent-soft);border-radius:0 10px 10px 0}
+sup.ref a{text-decoration:none;font-size:.78em;background:var(--accent-soft);border-radius:6px;padding:0 5px;margin-left:2px}
+.note{margin:2em 0;padding:16px 18px;border-radius:12px;background:var(--surface);border:1px solid var(--line);font-size:.92em;color:var(--muted)}
+.note strong{color:var(--fg)}
+.box{margin:1.6em 0;padding:1em 1.2em;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.box h2{margin:.2em 0 .5em;font-size:1.3em}
+.clinics ol{font-size:.94em;padding-left:1.4em}
+.adcard{margin:1.2em 0;padding:.7em 1em;border:1px dashed var(--line);border-radius:10px;font-size:.9em;background:var(--surface)}
+.sources{font-size:.9em;border-top:1px solid var(--line);margin-top:2.4em;padding-top:.4em}.sources li{word-break:break-word;margin:.25em 0}
+.sources h2{font-size:1.3em}
+.page{max-width:720px;margin:40px auto 0;padding:0 20px}
+.site-foot{border-top:1px solid var(--line);margin-top:70px;padding:34px 0 48px;color:var(--muted);font-size:.86em}
+.site-foot .wrap{display:grid;grid-template-columns:2fr 1fr;gap:24px}.site-foot .logo{font-size:1.2em}
+.site-foot a{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:.95em}td,th{border:1px solid var(--line);padding:6px 10px;text-align:left}
+@media (max-width:720px){body{font-size:16px}.hero{min-height:300px;margin-top:16px}.hero-text{padding:24px}.hero-text h1{font-size:1.9em}
+.trust{grid-template-columns:1fr}.post-head h1{font-size:1.9em}.nav a{margin-left:14px}.site-foot .wrap{grid-template-columns:1fr}}
 """
 
 
@@ -230,14 +294,17 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
         head.append('<meta name="robots" content="noindex">')
     for data in jsonld or []:
         head.append('<script type="application/ld+json">' + json.dumps(data, ensure_ascii=False).replace("</", "<\\/") + "</script>")
-    contact = f' · <a href="mailto:{esc(cfg["contact_email"])}">Contact</a>' if cfg.get("contact_email") else ""
+    contact = f' · <a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>' if cfg.get("contact_email") else ""
+    name = esc(cfg["name"])
     return f"""<!doctype html>
 <html lang="{cfg.get('language', 'en')}"><head>{''.join(head)}</head>
-<body><header><a href="/">{esc(cfg['name'])}</a><p class="tagline">{esc(cfg['tagline'])}</p></header>
+<body><header class="site-head"><div class="wrap"><a class="logo" href="/">{name}<span>.</span></a>
+<nav class="nav"><a href="/#guides">Guides</a><a href="/about/">How we work</a></nav></div></header>
 <main>{body}</main>
-<footer><p>AI-assisted, source-backed information — not medical advice. Always consult a licensed doctor.
-Sponsored posts are clearly labeled advertisements.</p>
-<p><a href="/about/">About &amp; editorial policy</a> · <a href="/privacy/">Privacy</a>{contact} · <a href="/rss.xml">RSS</a></p></footer>
+<footer class="site-foot"><div class="wrap"><div><a class="logo" href="/">{name}<span>.</span></a>
+<p>{esc(cfg['tagline'])}. AI-assisted, source-backed information — not medical advice. Always consult a licensed doctor.
+Sponsored posts are clearly labeled advertisements.</p></div>
+<div><p><a href="/about/">About &amp; editorial policy</a><br><a href="/privacy/">Privacy</a><br><a href="/rss.xml">RSS</a>{contact.replace(' · ', '<br>')}</p></div></div></footer>
 </body></html>"""
 
 
@@ -395,9 +462,25 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
     src_items = "".join(
         f'<li id="src-{i}"><a href="{esc(s["url"])}" rel="noopener" target="_blank">{esc(s["title"])}</a> '
         f'<span class="meta">({esc(hostname(s["url"]))})</span></li>' for i, s in enumerate(sources, 1))
-    body = f"""<article><h1>{esc(blog.get('title', ''))}</h1>
-<p class="meta">{badge}{esc(post['date'][:10])} · {esc(cfg['byline'])} · Based on publicly available sources</p>
+    image = post.get("image")
+    photo = ""
+    if image:
+        credit = esc(image.get("credit", ""))
+        if credit and image.get("credit_url"):
+            credit = f'<a href="{esc(image["credit_url"])}" rel="noopener" target="_blank">{credit}</a>'
+        photo = (f'<figure class="post-photo"><img src="{esc(image["hero"])}" alt="" width="1600" height="900" '
+                 f'fetchpriority="high">{f"<figcaption>{credit}</figcaption>" if credit else ""}</figure>')
+    n_src = len(sources) + (1 if "[clinic websites]" in body_html else 0)
+    body = f"""<header class="post-head"><span class="eyebrow">{esc(category_label(draft))}</span>
+<h1>{esc(blog.get('title', ''))}</h1>
+{f'<p class="lede">{esc(blog["meta_description"])}</p>' if blog.get("meta_description") else ""}
+<div class="post-meta">{badge}<span class="pill">{n_src} source{"s" if n_src != 1 else ""} cited</span>
+<span class="pill">Human-approved</span><span>Updated {esc(post['date'][:10])} · {esc(cfg['byline'])}</span></div></header>
+{photo}
+<article class="post">{toc_html(body_html)}
 {body_html}
+<aside class="note"><strong>Not medical advice.</strong> This guide summarizes public sources; every medical statement links to
+its source. Results and side effects vary — please consult a licensed doctor before any treatment.</aside>
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
 {clinic_directory_html(post, clinic_urls) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
 {route_ad_html(cfg, ad_sponsor, ad_url)}
@@ -408,18 +491,73 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
                 image=f"/og/{post['slug']}.png" if cfg.get("_og_images") else None)
 
 
+CATEGORY_LABELS = {
+    "procedure": "Procedures", "price_guide": "Prices", "how_to": "How-to", "trend": "Trends",
+    "review_curation": "What visitors ask", "procedure_travel": "Treatment × travel", "travel_guide": "Travel",
+    "skincare": "Skincare",
+}
+
+
+def category_key(draft: dict) -> str:
+    if draft.get("sponsor"):
+        return "partner"
+    key = draft.get("content_type") or (draft.get("topic") or {}).get("axis", "")
+    return key if key in CATEGORY_LABELS else "procedure"
+
+
+def category_label(draft: dict) -> str:
+    return "Partner content" if draft.get("sponsor") else CATEGORY_LABELS[category_key(draft)]
+
+
+H2_WITH_ID = re.compile(r'<h2 id="([^"]+)">(.*?)</h2>', re.S)
+
+
+def toc_html(body_html: str) -> str:
+    """본문 소제목(h2) 목차 — 3개 이상일 때만."""
+    heads = H2_WITH_ID.findall(body_html)
+    if len(heads) < 3:
+        return ""
+    items = "".join(f'<li><a href="#{i}">{re.sub(r"<[^>]+>", "", t)}</a></li>' for i, t in heads)
+    return f'<nav class="toc" aria-label="Contents"><strong>In this guide</strong><ol>{items}</ol></nav>'
+
+
+def card_html(p: dict) -> str:
+    esc = html.escape
+    draft = p["draft"]
+    img = (p.get("image") or {}).get("card")
+    thumb = f'<img src="{esc(img)}" alt="" width="720" height="450" loading="lazy">' if img else ""
+    ad = f' <span class="badge">{sponsors.label(draft["sponsor"])} · Ad</span>' if draft.get("sponsor") else ""
+    return (f'<li class="card"><a href="/{p["slug"]}/"><div class="thumb">{thumb}</div><div class="card-body">'
+            f'<span class="eyebrow">{esc(category_label(draft))}</span>{ad}'
+            f'<h3>{esc(draft["blog"].get("title", ""))}</h3><p>{esc(draft["blog"].get("meta_description", ""))}</p>'
+            f'<span class="meta">{esc(p["date"][:10])}</span></div></a></li>')
+
+
 def render_index(cfg: dict, posts: list[dict]) -> str:
     esc = html.escape
-    items = "".join(
-        f'<li><a href="/{p["slug"]}/">{esc(p["draft"]["blog"].get("title", ""))}</a>'
-        + (f' <span class="badge">{sponsors.label(p["draft"]["sponsor"])} · Ad</span>' if p["draft"].get("sponsor") else "")
-        + f'<br><span class="meta">{esc(p["date"][:10])} · {esc(p["draft"]["blog"].get("meta_description", ""))}</span></li>'
-        for p in posts[: cfg.get("posts_on_home", 30)]) or "<li>First guides are coming soon.</li>"
+    shown = posts[: cfg.get("posts_on_home", 30)]
+    items = "".join(card_html(p) for p in shown) or '<li class="card"><div class="card-body"><p>First guides are coming soon.</p></div></li>'
+    lead_img = next(((p.get("image") or {}).get("hero") for p in shown if p.get("image")), None)
+    hero_img = f'<img src="{esc(lead_img)}" alt="" width="1600" height="900" fetchpriority="high">' if lead_img else ""
+    cats = []
+    for p in posts:
+        k = category_key(p["draft"])
+        if k != "partner" and k not in cats:
+            cats.append(k)
+    chips = "".join(f'<a href="#guides">{esc(CATEGORY_LABELS[k])}</a>' for k in cats)
     base = base_url(cfg)
     site_ld = {"@context": "https://schema.org", "@type": "WebSite", "name": cfg["name"], "description": cfg["description"],
                **({"url": base + "/"} if base else {})}
-    return page(cfg, f"{cfg['name']} — {cfg['tagline']}", f"<p>{esc(cfg['description'])}</p><ul class=\"posts\">{items}</ul>",
-                path="/", jsonld=[site_ld])
+    body = f"""<div class="wrap"><section class="hero">{hero_img}<div class="hero-text"><span class="eyebrow">Korea skin treatments, explained</span>
+<h1>{esc(cfg['tagline'])}</h1><p>{esc(cfg['description'])}</p></div></section>
+<div class="trust"><div><strong>Every fact cited</strong>Medical statements link straight to research, government or society pages.</div>
+<div><strong>Checked twice</strong>Each source page is re-read and a second AI from another company reviews the draft.</div>
+<div><strong>Human-approved</strong>A person reads every guide before it goes live. No clinic rankings or testimonials.</div></div>
+{f'<nav class="chips" aria-label="Topics">{chips}</nav>' if len(cats) > 1 else ""}
+<div class="section-title" id="guides"><h2>Latest guides</h2><span class="meta">{len(posts)} guide{"s" if len(posts) != 1 else ""}</span></div>
+<ul class="grid">{items}</ul></div>"""
+    return page(cfg, f"{cfg['name']} — {cfg['tagline']}", body, path="/", jsonld=[site_ld],
+                image=None)
 
 
 def render_about(cfg: dict) -> str:
@@ -447,7 +585,7 @@ not a recommendation, and it does not change the guide's text or the clinic list
 <p>Some posts are advertisements paid for by a licensed clinic at a flat fee, or produced free of charge during a short
 partner pilot. They are always labeled <em>Sponsored</em> or <em>Partner</em> and as an advertisement at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
 sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, the text of our independent guides.</p>"""
-    return page(cfg, f"About — {cfg['name']}", body, path="/about/")
+    return page(cfg, f"About — {cfg['name']}", f'<div class="page">{body}</div>', path="/about/")
 
 
 def render_privacy(cfg: dict) -> str:
@@ -467,7 +605,7 @@ standard campaign tags (utm_source, utm_medium, utm_campaign) so the clinic can 
 for your country code. Nothing is stored.</li>
 <li>We do not sell personal information.</li></ul>
 <p>Questions: {contact}.</p>"""
-    return page(cfg, f"Privacy — {cfg['name']}", body, path="/privacy/")
+    return page(cfg, f"Privacy — {cfg['name']}", f'<div class="page">{body}</div>', path="/privacy/")
 
 
 def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
@@ -619,6 +757,8 @@ def build(out: Path | None = None) -> dict:
         f.write_text(text, encoding="utf-8")
 
     og.icons(out)
+    for slug, image in site_images.build_images(posts, out).items():  # 글마다 대표 사진 (없으면 브랜드 색)
+        next(p for p in posts if p["slug"] == slug)["image"] = image
     if og.available():  # 링크 미리보기 카드 이미지 (글마다 + 기본)
         cfg = {**cfg, "_og_images": True}
         og.card(cfg["tagline"], cfg["name"], cfg.get("domain") or "", out / "og" / "default.png")
@@ -640,7 +780,7 @@ def build(out: Path | None = None) -> dict:
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))
-    write("404.html", page(cfg, f"Not found — {cfg['name']}", '<h1>Page not found</h1><p><a href="/">Back to all guides</a></p>',
+    write("404.html", page(cfg, f"Not found — {cfg['name']}", '<div class="page"><h1>Page not found</h1><p><a href="/">Back to all guides</a></p></div>',
                            path="/404", noindex=True))
     write("robots.txt", render_robots(cfg))
     write("llms.txt", render_llms_txt(cfg, posts))
