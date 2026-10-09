@@ -1196,6 +1196,19 @@ def test_site_sponsored_post_labels_and_tracked_link(sponsored, tmp_path, monkey
     assert "Sponsored" in (tmp_path / "dist" / "index.html").read_text(encoding="utf-8")
 
 
+def test_partners_page_is_opt_in_korean_and_noindex(site_env, tmp_path, monkeypatch):
+    out = tmp_path / "dist"
+    site_mod.build(out)
+    assert not (out / "partners").exists() and "/partners/" not in (out / "index.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "partners_page": True})
+    site_mod.build(out)
+    page_html = (out / "partners" / "index.html").read_text(encoding="utf-8")
+    assert '<html lang="ko">' in page_html and 'content="noindex"' in page_html
+    assert "정액" in page_html and "환자 소개는 하지 않습니다" in page_html
+    assert '/partners/' in (out / "index.html").read_text(encoding="utf-8")                # 꼬리말 링크
+    assert "/partners/" not in (out / "sitemap.xml").read_text(encoding="utf-8") if (out / "sitemap.xml").exists() else True
+
+
 def test_glance_uses_only_cited_verified_facts():
     facts = [{"id": "F1", "kind": "mechanism", "text": "It targets pigment.", "url": "https://www.ncbi.nlm.nih.gov/a"},
              {"id": "F2", "kind": "sessions", "text": "Usually 10-12 sessions.", "url": "https://www.ncbi.nlm.nih.gov/a"},

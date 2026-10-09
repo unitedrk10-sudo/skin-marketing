@@ -50,7 +50,9 @@ PAGEVIEWS_QUERY = """query ($account: String!, $filter: AccountRumPageloadEvents
 
 def page_views(start: date, end: date) -> dict[str, int]:
     """경로별 조회수 (Cloudflare Web Analytics GraphQL). 미설정·실패 시 빈 dict."""
-    token, account = os.environ.get("CF_API_TOKEN"), os.environ.get("CF_ACCOUNT_ID")
+    # 배포용 토큰(CLOUDFLARE_*)에 Account Analytics Read 가 있으면 그것을 같이 쓴다 (2026-10-10)
+    token = os.environ.get("CF_API_TOKEN") or os.environ.get("CLOUDFLARE_API_TOKEN")
+    account = os.environ.get("CF_ACCOUNT_ID") or os.environ.get("CLOUDFLARE_ACCOUNT_ID")
     site_tag = load_yaml("site.yaml").get("analytics_site_tag") or ""
     if not (token and account and site_tag):
         return {}

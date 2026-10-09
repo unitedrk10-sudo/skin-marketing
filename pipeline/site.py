@@ -275,6 +275,10 @@ margin-left:3px;text-decoration:none;white-space:nowrap}
 .page h1{font-family:var(--serif);font-weight:400;font-size:56px;line-height:1.05;margin:0 0 20px}
 .page h2{font-family:var(--serif);font-weight:400;font-size:32px;margin:1.6em 0 .4em}.page a{color:var(--sage)}
 table{border-collapse:collapse;width:100%;font-size:15px}td,th{border:1px solid var(--line);padding:6px 10px;text-align:left}
+/* 한국어 페이지(병원 안내): Instrument Serif 에 한글이 없어 제목도 한글 고딕으로 */
+html:lang(ko) .page{font-family:"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",var(--sans);word-break:keep-all}
+html:lang(ko) .page h1,html:lang(ko) .page h2{font-family:inherit;font-weight:700;letter-spacing:-.02em}
+html:lang(ko) .page h1{font-size:44px;line-height:1.25}html:lang(ko) .page h2{font-size:24px}
 @media (max-width:760px){.wrap{padding:0 20px}.hd nav{display:none}.hero{grid-template-columns:1fr;gap:28px;padding:32px 0 44px}
 .hero h1{font-size:48px}.hero-img{order:-1}.proof{grid-template-columns:1fr}.proof div{padding:20px 0!important;border-left:0!important}
 .proof div+div{border-top:1px solid var(--line)}.sec{margin-top:56px}.sec-hd h2{font-size:34px}
@@ -285,7 +289,7 @@ table{border-collapse:collapse;width:100%;font-size:15px}td,th{border:1px solid 
 
 
 def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", jsonld: list[dict] | None = None,
-         noindex: bool = False, image: str | None = None) -> str:
+         noindex: bool = False, image: str | None = None, lang: str | None = None) -> str:
     base = base_url(cfg)
     esc = html.escape
     image = image or ("/og/default.png" if cfg.get("_og_images") else None)
@@ -316,8 +320,9 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
         head.append('<script type="application/ld+json">' + json.dumps(data, ensure_ascii=False).replace("</", "<\\/") + "</script>")
     contact = f'<a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>' if cfg.get("contact_email") else ""
     name = esc(cfg["name"])
+    partners = '<a href="/partners/">For clinics (한국어)</a>' if cfg.get("partners_page") else ""
     return f"""<!doctype html>
-<html lang="{cfg.get('language', 'en')}"><head>{''.join(head)}</head>
+<html lang="{lang or cfg.get('language', 'en')}"><head>{''.join(head)}</head>
 <body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/">{name}</a>
 <nav><a href="/#guides">Guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
 </div></header>
@@ -326,7 +331,7 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
 <p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
 <div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a></div>
-<div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}</div></div></footer>
+<div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}{partners}</div></div></footer>
 </body></html>"""
 
 def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> list[dict]:
@@ -673,6 +678,36 @@ sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay
     return page(cfg, f"About — {cfg['name']}", f'<div class="page">{body}</div>', path="/about/")
 
 
+def render_partners(cfg: dict) -> str:
+    """병원(광고주) 대상 안내 — 한국어, 검색 제외, 꼬리말 링크만 (독자 메뉴엔 없음). site.yaml partners_page: true 일 때만.
+    내용은 기획서 12-1-1·12-3 그대로: 정액만, 광고 표시·병원 확인, 중립 글 무영향, 알선·예약 대행 없음. 유입 수치는 약속하지 않는다."""
+    esc = html.escape
+    contact = cfg.get("contact_email") or ""
+    mail = f'<a href="mailto:{esc(contact)}">{esc(contact)}</a>' if contact else "사이트의 연락처"
+    body = f"""<p class="kicker">For clinics · 병원 파트너 안내</p>
+<h1>해외 방문자에게 병원을 알리는 정직한 방법</h1>
+<p>{esc(cfg['name'])}는 한국 피부 시술을 알아보는 영어권 방문자를 위한 정보 매체입니다. 모든 의료 문장에 출처를 달고,
+순위·후기·전후 사진 없이 시술과 여행 일정을 함께 안내합니다. 독자는 방한 전, 시술과 병원을 알아보는 단계에 있습니다.</p>
+<h2>광고 형태 (정액)</h2>
+<ul><li><strong>스폰서 글</strong> — 병원 명의의 광고 글을 제작·게재합니다. 글 상단에 광고 표시, 병원이 최종 문구를 확인하고,
+병원 공식 사이트 링크는 광고 링크(rel="sponsored")로 표시됩니다.</li>
+<li><strong>코스 광고 카드</strong> — 같은 지역을 다루는 여행 가이드 하단에 작은 카드 1개. "Ad · Sponsored" 표시, 해외 방문자에게만 보이며
+글 하나에 광고주 하나입니다.</li>
+<li><strong>무상 파일럿</strong> — 최대 6개월. 광고 표시·병원 확인 등 조건은 유료와 같고, 표시 문구만 "unpaid pilot"으로 바뀝니다.</li></ul>
+<h2>바뀌지 않는 원칙</h2>
+<ul><li>요금은 정액만 받습니다. 클릭·예약·환자 수에 연동된 요금은 없습니다.</li>
+<li>광고는 중립 가이드의 본문이나 주변 병원 목록(공공데이터 기준 전체·거리순)에 영향을 주지 않습니다.</li>
+<li>순위·추천·후기·전후 사진은 광고에서도 쓰지 않습니다.</li>
+<li>상담 연결, 예약 대행, 환자 소개는 하지 않습니다. 독자는 병원 공식 사이트로 직접 이동합니다.</li>
+<li>의료광고 사전심의 대상이 되는 경우 심의번호가 있어야 게재합니다. 외국인환자 유치의료기관 등록 병원을 권장합니다.</li></ul>
+<h2>보고</h2>
+<p>스폰서 글의 조회와 병원 사이트로 이동한 클릭을 채널·국가별로 매월 정리해 드립니다(UTM 포함, 병원 애널리틱스에서도 확인 가능).
+개인을 식별하는 정보는 수집하지 않으며, 수치는 보고용일 뿐 요금에 반영되지 않습니다.</p>
+<h2>문의</h2><p>{mail} — 병원명, 담당자, 관심 있는 형태를 적어 주세요.</p>"""
+    return page(cfg, f"병원 파트너 안내 — {cfg['name']}", f'<div class="page">{body}</div>', path="/partners/",
+                description="Skinbound 병원 파트너(광고) 안내", noindex=True, lang="ko")
+
+
 def render_privacy(cfg: dict) -> str:
     contact = html.escape(cfg.get("contact_email") or "the contact address on this site")
     body = f"""<h1>Privacy</h1>
@@ -870,6 +905,8 @@ def build(out: Path | None = None) -> dict:
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))
+    if cfg.get("partners_page"):  # 병원 대상 안내 — 변호사 확인 후 켠다 (기획서 12-1-1 체크리스트)
+        write("partners/index.html", render_partners(cfg))
     write("404.html", page(cfg, f"Not found — {cfg['name']}", '<div class="page"><h1>Page not found</h1><p><a href="/">Back to all guides</a></p></div>',
                            path="/404", noindex=True))
     write("robots.txt", render_robots(cfg))
