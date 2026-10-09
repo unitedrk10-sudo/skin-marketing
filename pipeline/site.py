@@ -189,7 +189,7 @@ CSS = """
 @font-face{font-family:"Instrument Serif";src:url(/fonts/InstrumentSerif-Regular.woff2) format("woff2");font-display:swap}
 @font-face{font-family:"Instrument Serif";font-style:italic;src:url(/fonts/InstrumentSerif-Italic.woff2) format("woff2");font-display:swap}
 :root{--bg:#FBF9F6;--surface:#fff;--ink:#1B1F1D;--muted:#6B716E;--line:#E9E3DA;--sage:#5E7A6B;--sage-soft:#EEF2EF;--sand:#F1EBE2;
---deep:#1E2A25;--ad:#8a5a00;--adbg:#fff6e0;
+--deep:#1E2A25;--accent:#713D49;--accent-soft:#F3E8EA;--ad:#8a5a00;--adbg:#fff6e0;
 --serif:"Instrument Serif","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
 --sans:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
@@ -202,14 +202,20 @@ a{color:inherit;text-decoration:none}img{display:block;max-width:100%}
 .badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:5px;padding:0 7px;
 font-size:12px;font-weight:700;letter-spacing:0;text-transform:none}
 .hd{border-bottom:1px solid var(--line);background:var(--bg)}.hd-in{display:flex;align-items:center;height:78px}
-.brand{font-family:var(--serif);font-size:31px;letter-spacing:-.01em;margin-right:auto;line-height:1;display:flex;align-items:center}
-.brand img{width:30px;height:30px;border-radius:7px;margin-right:12px}
+/* 팔레트 '차콜' (site.yaml palette: charcoal) — 차콜·아이보리·토프, 포인트 버건디는 같다 */
+html[data-palette=charcoal]{--bg:#F8F6F1;--ink:#1A1A1A;--muted:#6E6A64;--line:#E6E0D6;--sage:#7D7062;--sage-soft:#F0ECE6;
+--sand:#EFE9E1;--deep:#1F1F1F}
+.brand{margin-right:auto;display:flex;align-items:center;line-height:1}
+.brand img{width:32px;height:32px;border-radius:7px;margin-right:12px}
+.wm{display:flex;flex-direction:column;align-items:center}
+.wm b{font-family:var(--serif);font-weight:400;font-size:30px;letter-spacing:-.01em;line-height:.95}
+.wm small{font-family:var(--sans);font-size:9.5px;letter-spacing:.52em;margin-right:-.52em;margin-top:3px;font-weight:500;color:var(--muted)}
 .hd nav a{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#4c524f;margin-left:34px}.hd nav a:hover{color:var(--sage)}
 .hero{display:grid;grid-template-columns:5fr 6fr;gap:72px;align-items:center;padding:72px 0 80px}
 .hero h1{font-family:var(--serif);font-weight:400;font-size:78px;line-height:1;letter-spacing:-.015em;margin:22px 0 26px}
 .hero h1 em{color:var(--sage)}
 .hero .sub{font-size:19px;line-height:1.6;color:#565c59;max-width:30em;margin:0 0 34px}
-.btn{display:inline-block;background:var(--ink);color:var(--bg);padding:15px 28px;border-radius:999px;font-size:15px;font-weight:500}
+.btn{display:inline-block;background:var(--accent);color:#fff;padding:15px 28px;border-radius:999px;font-size:15px;font-weight:500}
 .tlink{margin-left:22px;font-size:15px;border-bottom:1px solid currentColor;padding-bottom:2px}
 .hero-img{margin:0}.hero-img img{width:100%;height:auto;aspect-ratio:6/5;object-fit:cover;object-position:35% 50%;border-radius:3px}
 .proof{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
@@ -238,7 +244,7 @@ font-size:12px;font-weight:700;letter-spacing:0;text-transform:none}
 .band li a{border-bottom:1px solid #DCD3C6;padding:22px 0;display:flex;justify-content:space-between;gap:20px;font-size:18px}
 .band li a span{color:var(--sage)}
 .ft{background:var(--deep);color:#C9D3CE;margin-top:96px}.ft-in{display:grid;grid-template-columns:2fr 1fr 1fr;gap:48px;padding-top:64px;padding-bottom:64px}
-.ft .brand{color:#F4F1EC;display:block;margin-bottom:14px;font-size:28px}.ft p{font-size:14px;margin:0;max-width:34em}
+.ft .brand{color:#F4F1EC;display:inline-flex;margin-bottom:16px}.ft .wm small{color:#A9B3AE}.ft p{font-size:14px;margin:0;max-width:34em}
 .ft h4{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#8FA399;margin:6px 0 14px;font-weight:600}
 .ft a{display:block;font-size:14px;margin:6px 0}.ft a:hover{color:#fff}
 /* 글 화면 */
@@ -262,7 +268,7 @@ filter:saturate(.85)}
 .prose{font-size:17.5px;line-height:1.78}.prose p{margin:0 0 1.15em}
 .prose h2{font-family:var(--serif);font-weight:400;font-size:38px;line-height:1.1;margin:1.6em 0 .5em;letter-spacing:-.01em;scroll-margin-top:24px}
 .prose h3{font-size:19px;margin:1.4em 0 .4em}.prose ul,.prose ol{padding-left:1.2em}.prose li{margin:.35em 0}
-.prose a{color:var(--sage);text-decoration:underline;text-decoration-color:#C9D6CE;text-underline-offset:3px}
+.prose a{color:var(--accent);text-decoration:underline;text-decoration-color:#D9BFC5;text-underline-offset:3px}
 .prose blockquote{margin:1.2em 0;padding:.8em 1.1em;border-left:3px solid var(--sage);background:var(--sage-soft)}
 sup.ref a,.glance .ref{font-size:11px;font-weight:500;color:var(--sage);background:var(--sage-soft);border-radius:3px;padding:1px 5px;
 margin-left:3px;text-decoration:none;white-space:nowrap}
@@ -324,13 +330,14 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     contact = f'<a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>' if cfg.get("contact_email") else ""
     name = esc(cfg["name"])
     partners = '<a href="/partners/">For clinics (한국어)</a>' if cfg.get("partners_page") else ""
+    wordmark = f'<span class="wm"><b>{name}</b><small>KOREA</small></span>'  # 워드마크: Skinbound + 자간 넓힌 KOREA
     return f"""<!doctype html>
-<html lang="{lang or cfg.get('language', 'en')}"><head>{''.join(head)}</head>
-<body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/"><img src="/icon-192.png" alt="" width="30" height="30">{name}</a>
+<html lang="{lang or cfg.get('language', 'en')}" data-palette="{esc(cfg.get('palette') or 'green')}"><head>{''.join(head)}</head>
+<body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/" aria-label="{name} Korea"><img src="/icon-192.png" alt="" width="32" height="32">{wordmark}</a>
 <nav><a href="/#guides">Guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
 </div></header>
 <main>{body}</main>
-<footer class="ft"><div class="wrap ft-in"><div><span class="brand">{name}</span>
+<footer class="ft"><div class="wrap ft-in"><div><span class="brand">{wordmark}</span>
 <p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
 <div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a></div>

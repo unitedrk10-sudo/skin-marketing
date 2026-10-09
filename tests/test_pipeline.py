@@ -1206,7 +1206,7 @@ def test_partners_page_is_opt_in_korean_and_noindex(site_env, tmp_path, monkeypa
     monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "partners_page": True})
     site_mod.build(out)
     page_html = (out / "partners" / "index.html").read_text(encoding="utf-8")
-    assert '<html lang="ko">' in page_html and 'content="noindex"' in page_html
+    assert '<html lang="ko"' in page_html and 'content="noindex"' in page_html
     assert "정액" in page_html and "환자 소개는 하지 않습니다" in page_html
     assert '/partners/' in (out / "index.html").read_text(encoding="utf-8")                # 꼬리말 링크
     assert "/partners/" not in (out / "sitemap.xml").read_text(encoding="utf-8") if (out / "sitemap.xml").exists() else True

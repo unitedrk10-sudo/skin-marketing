@@ -15,7 +15,15 @@ log = get_logger("og")
 
 SIZE = (1200, 630)
 # 브랜드 (2026-10-10 디자인 A): 짙은 녹색 바탕·크림 글씨·세이지 보조색, 심볼 = 둥근 사각형 안 Instrument Serif 이탤릭 "S"
-BG = (30, 42, 37)          # --deep #1E2A25
+PALETTES = {"green": (30, 42, 37), "charcoal": (31, 31, 31)}   # 심볼·카드 바탕 = 사이트 --deep (site.yaml palette)
+
+
+def _palette_bg() -> tuple:
+    from pipeline.common import load_yaml
+    return PALETTES.get(load_yaml("site.yaml").get("palette") or "green", PALETTES["green"])
+
+
+BG = _palette_bg()
 FG = (251, 249, 246)       # --bg #FBF9F6
 MUTED = (169, 189, 178)    # 세이지 밝은 톤
 AD_BG = (255, 246, 224)
