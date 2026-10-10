@@ -244,14 +244,20 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
 
     social_mod = importlib.import_module("pipeline.social")
     try:
-        if social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 소개 글 (한 번에 3건)
+        if social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 글 3종 (한 번에 3건, 보내기는 오늘의 글로)
             made, social_failures = social_mod.compose_pending(limit=3)
-            failures += [f"소개 글 생성 실패 {f}" for f in social_failures]
-            if made:
-                message = (message + "\n\n" if message else "") + social_mod.list_message()
-    except Exception as e:  # noqa: BLE001 — 소개 글 실패가 워커 전체를 멈추지 않게
-        failures.append(f"소개 글 처리 실패: {e}")
-        log.exception("소개 글 처리 실패")
+            failures += [f"SNS 글 생성 실패 {f}" for f in social_failures]
+            blocked = [f"⛔ SNS 글 검사 실패: {d['title']} [{social_mod.LABEL[k]}] — {'; '.join(i['problems'][:2])}"
+                       for name in made for d in [social_mod.load_social(social_mod._file(name).parent)]
+                       for k, i in d["items"].items() if i["status"] == "blocked"]
+            if blocked:
+                message = (message + "\n\n" if message else "") + "\n".join(blocked)
+        daily = social_mod.daily_message()  # 오전 9시(한국 시간) 이후 하루 한 번 — 오늘 올릴 글 1개
+        if daily:
+            message = (message + "\n\n" if message else "") + daily
+    except Exception as e:  # noqa: BLE001 — SNS 글 실패가 워커 전체를 멈추지 않게
+        failures.append(f"SNS 글 처리 실패: {e}")
+        log.exception("SNS 글 처리 실패")
     if failures:
         message = (message + "\n\n" if message else "") + "\n".join(f"⚠️ {f}" for f in failures)
     return message, failures

@@ -36,7 +36,8 @@
   `carousel`(보류 — 글자 슬라이드는 시험해 보니 약함) = 사진 넘기기형 `pipeline/carousel.py`, `--refresh <draft_id>` 로 상태 이동 없이 다시.
   주력은 블로그(구글 검색)·Threads·X 이고 숏폼은 작게 시험한다 — 같은 틀 영상을 많이 올리면 유튜브 "대량 생산·반복 콘텐츠"(2026-07)·스팸 판정에 가까워진다.
   게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
-- X·Threads 소개 글: `python -m pipeline.social compose|list|post <N> threads|done <N> <x|threads> <URL>` — 게시된 중립 블로그 글마다 1개 (사실 목록만, 02b 규칙 검사, 작성은 Claude `social`). X 는 작성 링크로 사람이 게시(API 유료라 기본 꺼짐, 웹 자동 조작은 약관 위반이라 만들지 않음), Threads 는 무료 API. 스폰서 글은 `channels.yaml sponsored_policy` 에서 x·threads 허용 전까지 제외
+- X·Threads 글: `python -m pipeline.social compose|today|list|post <N|오늘> threads|done <N|오늘> <x|threads> <URL>` — 게시된 중립 블로그 글마다 3종(link 새 글 소개 · fact 사실 하나 · angle 여행 팁/흔한 오해, 사실 목록만, 02b 규칙 검사, 작성은 Claude `social`) + 일요일 한 주 정리(그 주 2편 이상, 코드가 제목으로). 매일 9시(KST, `channels.yaml text_social.daily`) 이후 워커가 "오늘의 SNS 글" 1개: 일요일 정리 → 안 보낸 link → fact·angle, 오늘 게시 예정 블로그 글이 안 올라왔으면 정오까지 대기. X 는 작성 링크로 사람이 게시(API 유료라 기본 꺼짐, 웹 자동 조작은 약관 위반이라 만들지 않음) — link·정리 글은 본문에 링크 없이 `done … x <URL>` 이 링크 답글 작성 링크(in_reply_to)를 돌려준다. Threads 는 무료 API (실패하면 오류만 알리고 다른 방법으로 올리지 않는다). 스폰서 글은 `channels.yaml sponsored_policy` 에서 x·threads 허용 전까지 제외
+- 블로그 게시 일정: `config/site.yaml publish_schedule` (월·수·금 7시 KST, 하루 1편) — 승인된 글은 다음 빈 요일에 배정(`content/site/schedule.json` 고정), 확인 `python -m pipeline.site schedule`
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
 - Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 

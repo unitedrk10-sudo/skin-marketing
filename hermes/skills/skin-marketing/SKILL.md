@@ -57,13 +57,16 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<게시 OK | 1,2 게시 OK | 3 폐기>" --stage rendered`
 - 게시 OK 된 영상은 워커가 채널별 **게시 키트**(캡션·해시태그·체크리스트, `kit.md`)를 만든다. "키트 보여줘" → `content/ready_to_publish/<id>/kit.md` 와 `video.mp4`, `captions.srt` 를 첨부.
 
-## 2-9. X·Threads 소개 글 (직전 봇 메시지가 `[X·Threads 소개 글]` 일 때)
+## 2-9. X·Threads 글 (직전 봇 메시지가 `[오늘의 SNS 글]` 또는 `[X·Threads 글]` 일 때)
+- 매일 오전 9시 이후 워커가 "오늘의 SNS 글" 1개를 보낸다 (블로그 월·수·금 = 새 글 소개, 나머지 날 = 사실 하나·여행 팁, 일요일 = 한 주 정리).
 - X 는 메시지의 작성 링크를 사람이 눌러 직접 [게시]한다 (X API 는 유료라 기본 꺼짐). 웹 화면 자동 조작으로 올려 달라는 요청은 거절한다 — X 약관 위반·계정 정지 위험.
-- "2 스레드 올려": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social post 2 threads` (Threads API, 무료)
-- "2 X 올렸어 <URL>" / "2 게시 완료 x <URL>": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social done 2 x <URL>` (Threads 를 손으로 올렸으면 `threads`)
-- 남은 소개 글 다시 보기: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social list`
-- ⛔ 표시 글은 규칙 검사에 걸린 것 — 올리지 않는다. 스폰서 글은 X·Threads 정책 확인 전이라 소개 글을 만들지 않는다.
-- 종료 코드 2 (`❓`): 메시지를 그대로 보여준다 (토큰 만료면 "Meta 개발자 앱에서 새 장기 토큰 발급 → .env THREADS_ACCESS_TOKEN" 안내).
+- "오늘 스레드 올려" / "2 스레드 올려": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social post 오늘 threads` (번호면 `post 2 threads`, Threads API, 무료)
+- "오늘 게시 완료 x <URL>" / "X 올렸어 <URL>" / "2 게시 완료 x <URL>": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social done 오늘 x <URL>` (번호면 `done 2 x <URL>`, Threads 를 손으로 올렸으면 `threads`)
+  → 출력에 `↩️ 링크 답글` 작성 링크가 있으면 **그대로** 보낸다 (누르면 방금 올린 X 글에 링크 답글이 채워진 화면이 열린다).
+- 남은 글 다시 보기: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social list` / 오늘의 글 다시 보기: `... -m pipeline.social today`
+- "블로그 일정" / "언제 올라가?": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.site schedule` (월·수·금 7시, 하루 1편)
+- ⛔ 표시 글은 규칙 검사에 걸린 것 — 올리지 않는다. 스폰서 글은 X·Threads 정책 확인 전이라 SNS 글을 만들지 않는다.
+- 종료 코드 2 (`❓`): 메시지를 그대로 보여준다. Threads API 가 실패하면 다른 방법(브라우저 등)으로 올리지 말고 오류만 알린다 (토큰 만료면 `python -m pipeline.social threads-auth` 로 다시 연결 안내).
 
 ## 3-0. 게시 완료 기록
 사용자 예: `1 게시 완료 tiktok https://www.tiktok.com/@.../video/...` / "리쥬란 영상 인스타에 올렸어 <URL>"

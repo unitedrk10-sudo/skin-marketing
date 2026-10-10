@@ -12,6 +12,9 @@ byline: Skinbound Editorial Team  # 사람 의사·전문의 명의 금지 (자�
 contact_email: hello@skinboundkorea.com  # 2026-10-10 Cloudflare Email Routing (받기 전용 → 개인 메일로 전달). 소개·개인정보 페이지에 표시
 cloudflare_project: skin-site     # Cloudflare Pages 프로젝트명 (wrangler pages deploy)
 posts_on_home: 30
+publish_schedule:               # 블로그 게시 요일 (2026-10-10 결정: 월·수·금, 하루 1편). 승인된 글은 다음 빈 요일에 배정
+  days: [mon, wed, fri]         # 배정은 content/site/schedule.json 에 고정 — 확인: python -m pipeline.site schedule
+  hour: 7                       # 한국 시간. 매시 배포 크론이 이 시각 이후 첫 실행에 올린다 → SNS 오늘의 글(9시) 전에 게시
 clinic_directory:               # 여행 글 코스 주변 피부과 목록 (pipeline/clinics.py) — 기준을 바꾸면 모든 글에 똑같이 적용
   radius_m: 700                 # 관광지 중심 반경 — 이 안의 피부과 진료 의료기관 전부
   max_per_stop: 40              # 관광지당 표시 수 (넘으면 가까운 순으로 자르고 'N곳 중 가까운 M곳' 표시)

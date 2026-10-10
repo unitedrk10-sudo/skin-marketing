@@ -20,7 +20,7 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import urllib.parse
 from urllib.parse import urlparse
@@ -75,7 +75,8 @@ def published_at(path: Path, draft: dict) -> str:
     return draft.get("created_at", "")
 
 
-def collect_posts() -> list[dict]:
+def collect_posts(include_scheduled: bool = False) -> list[dict]:
+    """게시할 글. 게시 일정(site.yaml publish_schedule)이 있으면 게시일이 아직 안 된 글은 빠진다 (include_scheduled=True 면 포함)."""
     posts, used = [], set()
     for state in PUBLIC_STATES:
         for path in draft_dirs(state):
@@ -88,7 +89,81 @@ def collect_posts() -> list[dict]:
                 slug = f"{slug}-{hashlib.sha1(draft['id'].encode()).hexdigest()[:4]}"
             used.add(slug)
             posts.append({"draft": draft, "path": path, "slug": slug, "date": published_at(path, draft)})
+    posts = apply_schedule(posts, include_scheduled)
     return sorted(posts, key=lambda p: p["date"], reverse=True)
+
+
+# ---------------- 게시 일정 (월·수·금 등) ----------------
+
+KST = timezone(timedelta(hours=9))  # 한국은 서머타임이 없다
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def publish_schedule() -> dict | None:
+    """site.yaml publish_schedule: {days: [mon, wed, fri], hour: 7} — 하루 1편, 한국 시간. 없으면 승인 즉시 게시."""
+    cfg = load_yaml("site.yaml").get("publish_schedule")
+    if not cfg or not cfg.get("days"):
+        return None
+    return {"days": [WEEKDAYS.index(d.lower()[:3]) for d in cfg["days"]], "hour": int(cfg.get("hour", 7))}
+
+
+def schedule_file() -> Path:
+    return content_dir() / "site" / "schedule.json"
+
+
+def now_kst() -> datetime:
+    return datetime.now(KST)
+
+
+def apply_schedule(posts: list[dict], include_scheduled: bool = False) -> list[dict]:
+    """승인 순서대로 다음 빈 게시일(하루 1편)을 배정해 content/site/schedule.json 에 고정한다.
+    이미 배포된 글은 승인일로 기록만 하고 그대로 둔다. 게시일·시각이 지난 글만 돌려준다."""
+    rule = publish_schedule()
+    if not rule:
+        return posts
+    f = schedule_file()
+    sched = load_json(f) if f.exists() else {}
+    deployed = set(load_json(state_file()).get("slugs", [])) if state_file().exists() else set()
+    now = now_kst()
+    taken = {v["date"] for v in sched.values()}
+    changed = False
+    for p in sorted(posts, key=lambda x: x["date"]):
+        did = p["draft"]["id"]
+        if did in sched:
+            continue
+        if p["slug"] in deployed:  # 일정 도입 전에 이미 게시된 글
+            day = datetime.fromisoformat(p["date"]).astimezone(KST).date() if p["date"] else now.date()
+            sched[did] = {"date": day.isoformat(), "at": p["date"]}
+        else:
+            day = now.date()
+            while day.weekday() not in rule["days"] or day.isoformat() in taken:
+                day += timedelta(days=1)
+            at = datetime(day.year, day.month, day.day, rule["hour"], tzinfo=KST)
+            sched[did] = {"date": day.isoformat(), "at": at.isoformat()}
+        taken.add(sched[did]["date"])
+        changed = True
+    if changed:
+        save_json(f, sched)
+    out = []
+    for p in posts:
+        slot = sched[p["draft"]["id"]]
+        live = p["slug"] in deployed or datetime.fromisoformat(slot["at"]) <= now
+        if live or include_scheduled:
+            out.append({**p, "date": slot["at"] or p["date"], "scheduled": not live})
+    return out
+
+
+def schedule_message() -> str:
+    """텔레그램용: 게시 예정 글과 날짜."""
+    upcoming = sorted((p for p in collect_posts(include_scheduled=True) if p.get("scheduled")), key=lambda p: p["date"])
+    if not upcoming:
+        return "게시 예정 글 없음" + ("" if publish_schedule() else " (게시 일정 없음 — 승인 즉시 게시)")
+    names = "월화수목금토일"
+    lines = ["[블로그 게시 예정]"]
+    for p in upcoming:
+        at = datetime.fromisoformat(p["date"]).astimezone(KST)
+        lines.append(f"- {at:%m/%d}({names[at.weekday()]}) {at:%H:%M} {p['draft']['blog'].get('title', '')}")
+    return "\n".join(lines)
 
 
 # ---------------- 본문 변환 ----------------
@@ -965,8 +1040,11 @@ def deploy() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="블로그 정적 사이트")
-    parser.add_argument("cmd", choices=["build", "deploy"])
+    parser.add_argument("cmd", choices=["build", "deploy", "schedule"])
     args = parser.parse_args(argv)
+    if args.cmd == "schedule":
+        print(schedule_message())
+        return 0
     if args.cmd == "build":
         r = build()
         print(f"{dist_dir()}: 글 {r['posts']}개 (스폰서 {r['sponsored']})")

@@ -106,6 +106,7 @@ def env(tmp_path, monkeypatch):
               "CLOUDFLARE_ACCOUNT_ID", "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"):
         monkeypatch.delenv(k, raising=False)  # 셸에 .env 를 불러 둔 상태로 테스트해도 실제 API 를 부르지 않게
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
+    monkeypatch.setattr(importlib.import_module("pipeline.site"), "publish_schedule", lambda: None)  # 기본: 승인 즉시 게시
     fake = FakeLLM()
     llm.set_backend(fake)
     web.set_fetcher(ok_fetch)  # 출처 페이지 수집도 네트워크 없이
@@ -2226,15 +2227,24 @@ def test_pdf_text_extraction_handles_broken_files():
 # ---- X·Threads 소개 글 ----
 
 social_mod = importlib.import_module("pipeline.social")
-SOCIAL = {"x": "Salmon DNA on your face? Rejuran is a polynucleotide skin booster. Results vary; ask a licensed doctor.",
-          "threads": "Rejuran is a polynucleotide skin booster popular in Korea. Downtime and results vary from person "
-                     "to person, so ask a licensed doctor. What would you want to know before trying it?",
-          "fact_ids": ["F1"]}
+SOCIAL_LINK = {"x": "Salmon DNA on your face? Rejuran is a polynucleotide skin booster. Results vary; ask a licensed doctor.",
+               "threads": "Rejuran is a polynucleotide skin booster popular in Korea. Downtime and results vary from person "
+                          "to person, so ask a licensed doctor.\n→ what it is\n→ downtime",
+               "fact_ids": ["F1"]}
+SOCIAL = {"link": SOCIAL_LINK,
+          "fact": {"x": "Rejuran tip: downtime is commonly 1-3 days. Confirm with a licensed doctor.",
+                   "threads": "Rejuran tip: downtime is commonly 1-3 days, so plan sightseeing after. Confirm with a licensed doctor.",
+                   "fact_ids": ["F1"]},
+          "angle": {"x": "A common belief: boosters mean zero downtime. What sources say: 1-3 days is common.",
+                    "threads": "A common belief: skin boosters mean zero downtime. What sources say: 1-3 days is common.",
+                    "fact_ids": ["F1"]}}
+MONDAY = datetime(2026, 10, 12, 9, 30, tzinfo=social_mod.KST)
 
 
 def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="approved", live=True):
+    slug = "what-is-rejuran" if draft_id == "2026-W40-01-what-is-rejuran" else draft_id
     draft = {"id": draft_id, "content_type": "procedure", "facts": [{"id": "F1", "text": "Downtime is 1-3 days.", "url": URL}],
-             "blog": {"title": "What is Rejuran?", "slug": "what-is-rejuran", "markdown": "x"},
+             "created_at": "2026-10-12T00:30:00+00:00", "blog": {"title": "What is Rejuran?", "slug": slug, "markdown": "x"},
              "shortform": {"hook": "Salmon DNA on your face?", "lines": []}}
     if sponsor:
         draft["sponsor"] = sponsor
@@ -2255,25 +2265,34 @@ def test_social_only_for_deployed_posts_and_x_length_counts_link(env):
     _published("2026-W40-02-other", live=True)
     assert [p.name for p in social_mod.pending_paths()] == ["2026-W40-02-other"]
     draft = {"id": "d", "facts": [{"id": "F1", "text": "x"}], "blog": {"title": "t", "slug": "t"}}
-    room = 280 - len(social_mod.footer("")) - social_mod.URL_WEIGHT
-    assert social_mod.check(draft, {"x": "a" * room, "threads": "ok"}) == []     # 링크 줄까지 딱 280자
+    room = 280 - len(social_mod.X_LINK_FOOTER)                                  # X 새 글 소개는 링크를 답글로
+    assert social_mod.check(draft, {"x": "a" * room, "threads": "ok"}) == []     # 끝줄까지 딱 280자
     assert any("너무 김 (281/280" in p for p in social_mod.check(draft, {"x": "a" * (room + 1), "threads": "ok"}))
+    assert social_mod.x_length("Source: aad.org · x") == len("Source:  · x") + 23  # 도메인만 써도 X 는 링크로 센다
 
 
-def test_social_compose_list_and_manual_record(env):
+def test_social_compose_three_kinds_list_and_x_reply_link(env):
     env.responses["social"] = SOCIAL
     _published()
     assert social_mod.main(["compose"]) == 0
     data = common.load_json(common.content_dir("approved") / "2026-W40-01-what-is-rejuran" / "social.json")
-    assert data["status"] == "ready" and data["problems"] == []
-    assert data["posts"]["x"]["text"].endswith("AI-assisted guide with sources: https://skinboundkorea.com/what-is-rejuran/")
-    assert social_mod.x_length(data["posts"]["x"]["text"]) <= 280
+    assert set(data["items"]) == {"link", "fact", "angle"} and all(i["status"] == "ready" for i in data["items"].values())
+    link = data["items"]["link"]["channels"]
+    assert link["x"]["text"].endswith(social_mod.X_LINK_FOOTER) and "http" not in link["x"]["text"]   # X 본문엔 링크 없음
+    assert link["x"]["reply"] == "Full guide with sources: https://skinboundkorea.com/what-is-rejuran/"
+    assert link["threads"]["text"].endswith("AI-assisted guide with sources: https://skinboundkorea.com/what-is-rejuran/")
+    fact = data["items"]["fact"]["channels"]
+    assert fact["threads"]["text"].endswith("Source: pubmed.ncbi.nlm.nih.gov · AI-assisted, not medical advice")
+    assert all(social_mod.x_length(i["channels"]["x"]["text"]) <= 280 for i in data["items"].values())
     msg = social_mod.list_message()
-    assert "https://x.com/intent/post?text=Salmon%20DNA" in msg and "threads.net/intent/post?text=" in msg  # 키 없으면 작성 링크
+    assert "1. [새 글 소개]" in msg and "3. [여행 팁·흔한 오해]" in msg and "https://x.com/intent/post?text=Salmon%20DNA" in msg
     with pytest.raises(social_mod.SocialError, match="게시물 주소"):
         social_mod.record(social_mod.resolve("1"), "x", "https://evil.example/x.com")
-    assert social_mod.main(["done", "1", "x", "https://x.com/skinboundkorea/status/123"]) == 0
-    assert "x ✅ https://x.com/skinboundkorea/status/123" in social_mod.list_message()
+    out = social_mod.record(social_mod.resolve("1"), "x", "https://x.com/Skinboundkorea/status/123?s=20")
+    assert "https://x.com/intent/post?in_reply_to=123&text=Full%20guide%20with%20sources%3A%20https%3A%2F%2Fskinbound" in out
+    assert "x ✅ https://x.com/Skinboundkorea/status/123\n" in social_mod.list_message() + "\n"   # 공유 꼬리표 제거
+    fact_out = social_mod.record(social_mod.resolve("2"), "x", "https://x.com/Skinboundkorea/status/124")
+    assert "↩️" not in fact_out                                                  # 링크 없는 글은 답글 없음
     assert social_mod.pending_paths() == []                                     # 한 번만 만든다
 
 
@@ -2291,16 +2310,80 @@ def test_social_check_blocks_rule_violations(text, problem):
     assert social_mod.check(draft, {"x": "Downtime is 1-3 days; ask a licensed doctor.", "threads": "ok"}) == []
 
 
-def test_social_blocked_after_retry_and_sponsored_skipped(env, tmp_path):
-    env.responses["social"] = {**SOCIAL, "x": "The best clinic trick."}
+def test_social_blocked_kind_retried_alone_and_sponsored_skipped(env):
+    env.responses["social"] = {**SOCIAL, "link": {**SOCIAL_LINK, "x": "The best clinic trick."},
+                               "fact": {**SOCIAL["fact"], "fact_ids": []}}
     path = _published()
     data = social_mod.compose(path)
-    assert data["status"] == "blocked" and len([c for c in env.calls if c[0] == "social"]) == 2   # 1번 다시 생성
+    assert data["items"]["link"]["status"] == "blocked" and len([c for c in env.calls if c[0] == "social"]) == 2
+    assert any("근거 사실" in p for p in data["items"]["fact"]["problems"])            # 사실 글은 출처 사실이 있어야
+    assert data["items"]["angle"]["status"] == "ready"
     assert "⛔" in social_mod.list_message()
     with pytest.raises(social_mod.SocialError, match="검사"):
         social_mod.post(path, "threads")
     _published("sp-glow-1", sponsor=sponsors_mod.validate(SPONSOR))
     assert [p.name for p in social_mod.pending_paths()] == []                    # 스폰서 글: 정책 확인 전 제외
+
+
+def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkeypatch):
+    env.responses["social"] = SOCIAL
+    social_mod.compose(_published())
+    assert social_mod.daily_message(MONDAY.replace(hour=8)) == ""                # 9시 전
+    msg = social_mod.daily_message(MONDAY)
+    assert msg.startswith("[오늘의 SNS 글] 10/12(월) · 새 글 소개 — What is Rejuran?")
+    assert "'오늘 게시 완료 x <주소>' → 링크 답글" in msg
+    assert social_mod.daily_message(MONDAY.replace(hour=15)) == ""               # 하루 한 번
+    assert "사실 하나" in social_mod.daily_message(MONDAY + timedelta(days=1))
+    assert "여행 팁·흔한 오해" in social_mod.daily_message(MONDAY + timedelta(days=2))
+    assert social_mod.daily_message(MONDAY + timedelta(days=3)) == ""            # 보낼 게 없으면 조용히
+    _published("2026-W41-08-laser")                                             # 정리 글은 그 주 2편 이상일 때만
+    sunday = social_mod.daily_message(MONDAY + timedelta(days=6))
+    assert "한 주 정리" in sunday and "%E2%86%92%20What%20is%20Rejuran%3F" in sunday   # 작성 링크 안: "→ What is Rejuran?"
+    monkeypatch.setattr(social_mod, "now_kst", lambda: MONDAY + timedelta(days=7, hours=1))  # 자정 넘겨 답해도
+    assert social_mod.resolve("오늘") == social_mod.Ref("roundup-2026-W42", "roundup")
+    out = social_mod.record("오늘", "x", "https://x.com/Skinboundkorea/status/9")
+    assert "in_reply_to=9&text=All%20guides" in out
+
+
+def test_social_daily_waits_for_todays_blog_post(env, monkeypatch):
+    env.responses["social"] = SOCIAL
+    social_mod.compose(_published())
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7})
+    common.save_json(site_mod.schedule_file(), {"2026-W40-01-what-is-rejuran": {"date": "2026-10-01", "at": ""},
+                                                "2026-W40-09-later": {"date": "2026-10-12", "at": ""}})
+    _published("2026-W40-09-later", live=False)
+    assert social_mod.daily_message(MONDAY) == ""                               # 오늘 글이 아직 안 올라옴 → 정오까지 대기
+    assert "새 글 소개" in social_mod.daily_message(MONDAY.replace(hour=12))     # 정오 지나면 남은 글이라도
+
+
+def test_social_old_format_keeps_posted_link_and_adds_new_kinds(env):
+    env.responses["social"] = SOCIAL
+    path = _published()
+    common.save_json(path / "social.json", {
+        "draft_id": path.name, "title": "What is Rejuran?", "created_at": "2026-10-08T15:50:14+00:00",
+        "blog_url": "https://skinboundkorea.com/what-is-rejuran/", "status": "ready", "problems": [],
+        "posts": {"x": {"text": "old x", "posted": {"url": "https://x.com/a/status/1", "at": "t"}},
+                  "threads": {"text": "old t", "posted": {"url": "https://www.threads.com/share/B", "at": "t"}}}})
+    assert [p.name for p in social_mod.pending_paths()] == [path.name]           # fact·angle 이 없다
+    data = social_mod.compose(path)
+    assert data["items"]["link"]["channels"]["x"]["posted"]["url"] == "https://x.com/a/status/1"
+    assert {"fact", "angle"} <= set(data["items"]) and social_mod.pending_paths() == []
+    assert "사실 하나" in social_mod.daily_message(MONDAY)                         # 이미 올린 소개는 다시 안 보낸다
+
+
+def test_blog_publish_schedule_assigns_mon_wed_fri_one_per_day(env, monkeypatch):
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7})
+    saturday = datetime(2026, 10, 10, 11, 0, tzinfo=site_mod.KST)
+    monkeypatch.setattr(site_mod, "now_kst", lambda: saturday)
+    _published("2026-W41-07-a", live=False)
+    _published("2026-W41-09-b", live=False)
+    assert site_mod.collect_posts() == []                                       # 아직 게시일 전
+    sched = common.load_json(site_mod.schedule_file())
+    assert [sched[k]["date"] for k in ("2026-W41-07-a", "2026-W41-09-b")] == ["2026-10-12", "2026-10-14"]
+    assert "10/12(월) 07:00" in site_mod.schedule_message()
+    monkeypatch.setattr(site_mod, "now_kst", lambda: datetime(2026, 10, 12, 7, 5, tzinfo=site_mod.KST))
+    posts = site_mod.collect_posts()
+    assert [p["draft"]["id"] for p in posts] == ["2026-W41-07-a"] and posts[0]["date"].startswith("2026-10-12T07:00")
 
 
 def test_threads_api_post_and_token_refresh(env, tmp_path, monkeypatch):
