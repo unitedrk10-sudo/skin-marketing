@@ -67,7 +67,8 @@ class RenderError(RuntimeError):
 # ---------------- 음성 ----------------
 
 def render_format() -> str:
-    return (load_yaml("channels.yaml").get("shortform") or {}).get("format", "video")
+    value = (load_yaml("channels.yaml").get("shortform") or {}).get("format", "video")
+    return "off" if value in (False, None, "off") else str(value)  # YAML 은 따옴표 없는 off 를 False 로 읽는다
 
 
 def tts_configured() -> bool:

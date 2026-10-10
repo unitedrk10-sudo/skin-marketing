@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from pipeline import llm
-from pipeline.common import draft_dirs, get_logger, load_draft, load_json, load_review, read_prompt, render, run_cli, save_json
+from pipeline.common import shortform_on, draft_dirs, get_logger, load_draft, load_json, load_review, read_prompt, render, run_cli, save_json
 
 log = get_logger("translate")
 
@@ -30,7 +30,7 @@ def source_texts(path: Path) -> dict:
     return {"findings": [f["message"] for f in human._issues(review)],
             "medical": [t for t, _ in human.medical_sentences(draft)],
             "practice": [t for t, _ in human.medical_sentences(draft, lambda f: f.get("kind") == PRACTICE_KIND)],
-            "script": [ln.get("voice", "") for ln in (draft.get("shortform") or {}).get("lines", [])],
+            "script": [ln.get("voice", "") for ln in (draft.get("shortform") or {}).get("lines", [])] if shortform_on() else [],
             "blog": (draft.get("blog") or {}).get("markdown", "")}
 
 

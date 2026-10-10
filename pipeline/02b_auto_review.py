@@ -40,6 +40,7 @@ from pipeline.common import (
     run_cli,
     save_json,
     script_text,
+    shortform_on,
 )
 
 log = get_logger("02b_auto_review")
@@ -323,7 +324,8 @@ def check_cross(draft: dict) -> tuple[list[Finding], dict]:
     if llm.is_external("cross_review"):
         return [Finding("cross", "pending", "Claude Code 교차 검수 대기")], {"pending": True}
     text = prompt("cross_review", today=date.today().isoformat(), facts=facts_text(draft.get("facts", [])),
-                  script=script_text(draft), blog=blog_text(draft))
+                  script=script_text(draft) if shortform_on() else "(no short-form video is produced — review the blog only)",
+                  blog=blog_text(draft))
     data, result = llm.generate_json("cross_review", text)
     findings = [
         Finding("cross", "caution", f"[{f.get('where', '?')}/{f.get('severity', 'minor')}] {f.get('issue', '')}"
@@ -364,6 +366,8 @@ def review(path: Path, fetch=fetch_page) -> dict:
     findings += source_findings
     cross_findings, cross = check_cross(draft)
     findings += cross_findings
+    if not shortform_on():  # 숏폼 중단: 대본은 게시되지 않으므로 대본 지적은 뺀다
+        findings = [f for f in findings if not f.message.startswith("[script")]
     for issue in (draft.get("precheck") or {}).get("issues", []):  # 생성 모델 자체 점검은 참고용
         findings.append(Finding("precheck", "info", f"[1차 점검/{issue.get('severity')}] {issue.get('fix', '')}",
                                 issue.get("quote", "")))

@@ -100,6 +100,12 @@ def load_yaml(name: str) -> dict:
     return yaml.safe_load((CONFIG_DIR / name).read_text(encoding="utf-8")) or {}
 
 
+def shortform_on() -> bool:
+    """숏폼 영상을 만드는가 (channels.yaml shortform.format: off 면 대본은 검수·메시지에서 빠진다, 2026-10-10)."""
+    value = (load_yaml("channels.yaml").get("shortform") or {}).get("format", "video")
+    return value not in (False, None, "off")  # YAML 은 따옴표 없는 off 를 False 로 읽는다
+
+
 def read_prompt(name: str) -> str:
     return (PROMPT_DIR / f"{name}.md").read_text(encoding="utf-8")
 

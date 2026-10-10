@@ -45,6 +45,7 @@ from pipeline.common import (
     run_cli,
     save_json,
     script_text,
+    shortform_on,
 )
 
 log = get_logger("03_review")
@@ -155,7 +156,9 @@ def review_doc(path: Path) -> Path:
         out += ["", "## 블로그 (한국어 번역)", "", ko["blog"], "", "## 원문(영어) — 블로그", "", blog_text(draft)]
     else:
         out += ["", "## 블로그", "", blog_text(draft)]
-    out += ["", "## 숏폼 대본", "", script_text(draft), "", "## 사실과 원문 인용"]
+    if shortform_on():
+        out += ["", "## 숏폼 대본", "", script_text(draft)]
+    out += ["", "## 사실과 원문 인용"]
     for f in draft.get("facts", []):
         out.append(f"- [{f['id']}] {f['text']}\n  > {f.get('quote', '')}\n  {f['url']}")
     doc = path / f"{draft['id']}.md"
@@ -181,9 +184,7 @@ def draft_message(path: Path, number: int, total: int) -> str:
     """텔레그램에 초안 하나를 통째로 보내는 메시지 — 걸린 항목 → 대본 → 블로그 전문 → 출처 (길면 Hermes 가 나눠 보낸다)."""
     draft, review = load_draft(path), load_review(path)
     sf, blog = draft.get("shortform") or {}, draft.get("blog") or {}
-    secs = sf.get("estimated_seconds")
-    out = [f"[초안 {number}/{total} · 글번호 {code(draft['id'])}] {GRADE_ICON[(review or {}).get('grade')]} "
-           f"{sf.get('title') or draft['topic']['title']}" + (f" ({secs}s)" if secs else ""),
+    out = [f"[초안 {number}/{total} · 글번호 {code(draft['id'])}] {GRADE_ICON[(review or {}).get('grade')]} {title(draft)}",
            f"답장 예: `{number} 승인` · `{number} 수정: …` (또는 `{code(draft['id'])} 승인`)"]
     if draft.get("sponsor"):
         out.append(f"💼 {draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}")
@@ -209,15 +210,27 @@ def draft_message(path: Path, number: int, total: int) -> str:
         for i, (text, urls) in enumerate(practice):
             out.append(f"• {ko['practice'][i] if ko else text}")
             out += [f"   ↳ {u}" for u in urls]
-    out += ["", "🎬 숏폼 대본"]
-    for i, ln in enumerate(sf.get("lines", []), 1):
-        refs = f"  [{','.join(ln['fact_ids'])}]" if ln.get("fact_ids") else ""
-        out.append(f"{i}. {ko['script'][i - 1] if ko else ln.get('voice', '')}{refs}")
-    out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}")
-    sections = re.findall(r"(?m)^##\s+(.+)$", blog.get("markdown", ""))
-    out += ["", f"📝 블로그: {blog.get('title', '')}" + (f" ({' · '.join(s.strip() for s in sections)})" if sections else ""),
-            f"   여행·일반 문장은 생략했습니다. 전문: `{number}번 블로그 보여줘`"]
+    if shortform_on():
+        out += ["", "🎬 숏폼 대본"]
+        for i, ln in enumerate(sf.get("lines", []), 1):
+            refs = f"  [{','.join(ln['fact_ids'])}]" if ln.get("fact_ids") else ""
+            out.append(f"{i}. {ko['script'][i - 1] if ko and ko['script'] else ln.get('voice', '')}{refs}")
+        out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}")
+    if ko:  # 숏폼이 없으니 블로그 전문(한국어)을 바로 읽게 한다
+        out += ["", f"📝 블로그 전문 (한국어 번역) — 영어 제목: {blog.get('title', '')}", "", ko["blog"]]
+    else:
+        sections = re.findall(r"(?m)^##\s+(.+)$", blog.get("markdown", ""))
+        out += ["", f"📝 블로그: {blog.get('title', '')}" + (f" ({' · '.join(s.strip() for s in sections)})" if sections else ""),
+                f"   여행·일반 문장은 생략했습니다. 전문: `{number}번 블로그 보여줘`"]
     return "\n".join(out)
+
+
+def title(draft: dict) -> str:
+    """검수 메시지 제목 — 숏폼이 꺼져 있으면 블로그 제목 (영상 제목·길이 없음)."""
+    sf, blog = draft.get("shortform") or {}, draft.get("blog") or {}
+    if shortform_on() and sf.get("title"):
+        return sf["title"] + (f" ({sf['estimated_seconds']}s)" if sf.get("estimated_seconds") else "")
+    return blog.get("title") or draft["topic"]["title"]
 
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(])|\n+")
@@ -237,7 +250,7 @@ def medical_sentences(draft: dict, which=is_medical_fact) -> list[tuple[str, lis
         found = urls(re.findall(r"\[(F\d+)\]", sentence))
         if found:
             out.append((re.sub(r"\s+", " ", MD_NOISE.sub("", sentence)).strip(), found))
-    for ln in (draft.get("shortform") or {}).get("lines", []):
+    for ln in (draft.get("shortform") or {}).get("lines", []) if shortform_on() else []:
         found = urls(ln.get("fact_ids", []))
         if found:
             out.append((f"(대본) {ln.get('voice', '')}", found))
@@ -263,8 +276,9 @@ def _draft_summary(path: Path, draft: dict, review: dict | None) -> list[str]:
         out.append(f"   {ISSUE_ICON[f['severity']]} {f['message'][:140]}")
     if len(issues) > MAX_ISSUES:
         out.append(f"   … 외 {len(issues) - MAX_ISSUES}건 (첨부 파일)")
-    out.append("   🎬 대본:")
-    out += [f"      · {ln.get('voice', '')}" for ln in (draft.get("shortform") or {}).get("lines", [])]
+    if shortform_on():
+        out.append("   🎬 대본:")
+        out += [f"      · {ln.get('voice', '')}" for ln in (draft.get("shortform") or {}).get("lines", [])]
     return out
 
 
@@ -288,8 +302,7 @@ def list_message(stage: str, compact: bool = False) -> str:
         draft, review = load_draft(path), load_review(path)
         sf = draft.get("shortform") or {}
         grade = (review or {}).get("grade")
-        secs = sf.get("estimated_seconds")
-        head = f"{i}. [{code(draft_id)}] {sf.get('title') or draft['topic']['title']}" + (f" ({secs}s)" if secs else "")
+        head = f"{i}. [{code(draft_id)}] {title(draft)}"
         line = f"{head} {GRADE_ICON[grade]}"
         if draft.get("sponsor"):
             line += f" 💼{draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}"

@@ -107,6 +107,8 @@ def env(tmp_path, monkeypatch):
         monkeypatch.delenv(k, raising=False)  # 셸에 .env 를 불러 둔 상태로 테스트해도 실제 API 를 부르지 않게
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
     monkeypatch.setattr(importlib.import_module("pipeline.site"), "publish_schedule", lambda: None)  # 기본: 승인 즉시 게시
+    for name in ("pipeline.02b_auto_review", "pipeline.03_review", "pipeline.translate"):  # 기본: 숏폼 켠 상태로 시험
+        monkeypatch.setattr(importlib.import_module(name), "shortform_on", lambda: True)
     fake = FakeLLM()
     fake.responses["translate"] = {}  # 검수용 번역: 기본은 실패 → 영어 원문 (번역 테스트에서 따로 넣는다)
     llm.set_backend(fake)
@@ -838,7 +840,8 @@ def test_worker_sends_each_draft_then_summary(worker_env):
     assert "1. [W40-01] What is Rejuran?" in message
 
 
-def test_medical_sentences_list_only_medical_citations():
+def test_medical_sentences_list_only_medical_citations(monkeypatch):
+    monkeypatch.setattr(human_mod, "shortform_on", lambda: True)  # 대본 줄도 포함되는 경우
     draft = {"facts": [{"id": "F1", "url": "https://www.aad.org/a", "kind": "downtime"},
                        {"id": "F2", "url": "https://english.visitkorea.or.kr/x", "kind": "travel"}],
              "blog": {"markdown": "## Recovery\n\n- **Redness** may last 1-3 days [F1]. The palace opens at 9:00 [F2]. "
@@ -2586,3 +2589,18 @@ def test_review_message_in_korean_with_stable_post_number(env):
     common.save_json(path / "draft.json", draft)
     assert translate.cached(path) is None
     assert "승인 → approved" in human_mod.apply("W40-01 승인", confirm=True)[0]             # 글번호로 답해도 된다
+
+
+def test_shortform_off_hides_script_everywhere(env, monkeypatch):
+    for name in ("pipeline.02b_auto_review", "pipeline.03_review", "pipeline.translate"):
+        monkeypatch.setattr(importlib.import_module(name), "shortform_on", lambda: False)
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml: {"shortform": {"format": False}} if n == "channels.yaml" else _o(n))
+    assert common.shortform_on() is False                                           # YAML 의 off(=False) 도 꺼짐
+    created = make_draft(env)
+    path = common.find_draft(created if isinstance(created, str) else created["id"])[1]
+    human_mod.build_batch("drafts")
+    msg = human_mod.draft_message(path, 1, 1)
+    assert "🎬" not in msg and "(대본)" not in msg and "s)" not in msg.splitlines()[0]
+    doc = human_mod.review_doc(path).read_text(encoding="utf-8")
+    assert "## 숏폼 대본" not in doc
+    assert importlib.import_module("pipeline.translate").source_texts(path)["script"] == []
