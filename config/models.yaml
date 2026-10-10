@@ -57,6 +57,11 @@ stages:
     timeout_sec: 60  # 한 줄은 보통 5~10초 — 실제 운영에서 응답 없이 멈춘 호출이 있어 짧게 끊고 재시도
 
   # 검수 단계는 작성 모델(Claude)과 다른 회사 모델이 맡는다.
+  translate:       # 03 검수용 한국어 번역 (텔레그램 검수 메시지·첨부 — 게시되지 않는 참고용, pipeline/translate.py)
+    provider: gemini
+    model: gemini-3.8-flash
+    thinking: low
+
   source_check:    # 02b ② 출처 본문 대조
     provider: gemini
     model: gemini-3.8-flash

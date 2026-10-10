@@ -85,7 +85,9 @@ GENERIC_WORDS = {
     "korean", "korea", "seoul", "gangnam", "local", "licensed", "reputable", "right", "good", "skin", "dermatology",
     "derma", "aesthetic", "aesthetics", "medical", "cosmetic", "most", "many", "some", "every",
 }
-INSTITUTION = re.compile(r"\b(?:Academy|Association|Society|Journal|College|Institute|Ministry|Agency|Administration|Board)\b", re.I)
+INSTITUTION = re.compile(r"\b(?:Academy|Association|Society|Journal|College|Institute|Ministry|Agency|Administration|Board"
+                         # 출처로 이름을 밝히는 공공·학술 의료기관 (환자 안내문 출처, 2026-10-10) — 병원 홍보가 아니라 출처 표기
+                         r"|Cleveland Clinic|Mayo Clinic|Memorial Sloan Kettering|Johns Hopkins|NHS|Teaching Hospitals)\b", re.I)
 
 # 시술 × 여행 글의 날짜별 일정에는 시술 다음 날 관찰일이 있어야 한다 (_rules "observation day")
 ITINERARY = re.compile(r"\bday\s*[1-9]\b", re.I)

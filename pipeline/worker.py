@@ -221,6 +221,10 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     if changed:
         # 초안마다 메시지를 따로 보내고, 크론 출력(마지막에 도착)은 번호·답장 예시만 담은 요약으로.
         # 따로 보낼 수 없으면 한 메시지 + 초안별 첨부 파일로.
+        try:
+            importlib.import_module("pipeline.translate").ensure_stage("drafts")  # 검수 메시지를 한국어로 (실패 시 영어)
+        except Exception as e:  # noqa: BLE001
+            log.warning("검수용 번역 실패: %s", e)
         summary = human_mod.list_message("drafts", compact=True)
         sent = summary != "검수 대기 없음" and send_each(human_mod.draft_messages("drafts"), sender)
         message = summary if sent else human_mod.list_message("drafts")

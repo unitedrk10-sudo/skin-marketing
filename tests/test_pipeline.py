@@ -108,6 +108,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
     monkeypatch.setattr(importlib.import_module("pipeline.site"), "publish_schedule", lambda: None)  # 기본: 승인 즉시 게시
     fake = FakeLLM()
+    fake.responses["translate"] = {}  # 검수용 번역: 기본은 실패 → 영어 원문 (번역 테스트에서 따로 넣는다)
     llm.set_backend(fake)
     web.set_fetcher(ok_fetch)  # 출처 페이지 수집도 네트워크 없이
     yield fake
@@ -533,7 +534,7 @@ def _two_reviewed_drafts(env):
 def test_list_and_approve_moves_files_and_logs_agreement(env, tmp_path):
     first, second = _two_reviewed_drafts(env)
     msg = human_mod.list_message("drafts")
-    assert "1. What is Rejuran?" in msg and "✅" in msg and "⚠️" in msg
+    assert "1. [W40-01] What is Rejuran?" in msg and "✅" in msg and "⚠️" in msg
     out = human_mod.apply("1 승인\n2 폐기")
     assert (common.content_dir("approved") / first / "draft.json").exists()
     assert (common.content_dir("rejected") / second / "history.json").exists()
@@ -563,7 +564,7 @@ def test_review_message_readable_on_phone(env):
     media = re.findall(r"^MEDIA:`(.+)`$", msg, re.M)
     assert len(media) == 2 and all(Path(m).exists() for m in media)
     doc = Path(media[1]).read_text(encoding="utf-8")
-    assert doc.startswith(f"# {second}") and "## 검수에서 걸린 항목" in doc and "## 블로그" in doc
+    assert doc.startswith(f"# [W40-02] {second}") and "## 검수에서 걸린 항목" in doc and "## 블로그" in doc
     assert f"> {QUOTE}" in doc and URL in doc  # 사실별 원문 인용·출처
 
 
@@ -572,7 +573,7 @@ def test_approved_draft_can_be_withdrawn_before_publishing(env):
     human_mod.list_message("drafts")
     human_mod.apply("전체 승인", confirm=True)
     msg = human_mod.list_message("approved")
-    assert msg.startswith("[승인됨 2건") and "1. What is Rejuran?" in msg
+    assert msg.startswith("[승인됨 2건") and "1. [W40-01] What is Rejuran?" in msg
     with pytest.raises(human_mod.ReplyError):
         human_mod.apply("1 승인", stage="approved")  # 승인됨 단계에서는 철회(폐기)만
     out = human_mod.apply("2 폐기", stage="approved")
@@ -772,7 +773,7 @@ def test_worker_full_cycle_then_silent(worker_env):
     worker_mod.request_drafts("1")
     message, failures = worker_mod.run(review_runner=fake_claude())
     assert failures == []
-    assert "1. What is Rejuran?" in message and "✅" in message
+    assert "1. [W40-01] What is Rejuran?" in message and "✅" in message
     assert not list(worker_mod.requests_dir().glob("*.json"))
     message, failures = worker_mod.run(review_runner=fake_claude())
     assert message == "" and failures == []  # 할 일 없으면 조용한 틱
@@ -828,13 +829,13 @@ def test_worker_sends_each_draft_then_summary(worker_env):
     sent = []
     message, failures = worker_mod.run(review_runner=fake_claude(), sender=lambda text: sent.append(text) or True)
     assert not failures and len(sent) == 2
-    assert sent[0].startswith("[초안 1/2]") and "🎬 숏폼 대본" in sent[0] and "📝 블로그: Rejuran explained" in sent[0]
+    assert sent[0].startswith("[초안 1/2 · 글번호 W40-01]") and "🎬 숏폼 대본" in sent[0] and "📝 블로그: Rejuran explained" in sent[0]
     # 남은 지적 → 의료 문장과 출처 → 대본 순, 블로그 전문은 요청할 때만
     assert sent[0].index("🔎 남은 지적") < sent[0].index("🩺 의료 정보 확인") < sent[0].index("🎬 숏폼 대본")
     assert f"• It uses polynucleotides.\n   ↳ {URL}" in sent[0] and f"• (대본) Rejuran uses polynucleotides.\n   ↳ {URL}" in sent[0]
     assert "Results vary; ask a licensed doctor." not in sent[0] and "`1번 블로그 보여줘`" in sent[0]
     assert "↑ 초안 전문은 위 메시지에" in message and "MEDIA:" not in message and "🎬" not in message  # 요약만
-    assert "1. What is Rejuran?" in message
+    assert "1. [W40-01] What is Rejuran?" in message
 
 
 def test_medical_sentences_list_only_medical_citations():
@@ -2562,3 +2563,26 @@ def test_ncbi_pages_use_eutilities():
     assert web.ncbi_api_url("https://pmc.ncbi.nlm.nih.gov/articles/PMC12471997/").endswith("db=pmc&id=PMC12471997&rettype=xml")
     assert "db=pubmed&id=26719647" in web.ncbi_api_url("https://pubmed.ncbi.nlm.nih.gov/26719647/")
     assert web.ncbi_api_url("https://www.aad.org/x") is None
+
+
+def test_review_message_in_korean_with_stable_post_number(env):
+    common.save_json(common.content_dir("topics") / "2026-W40.json", TOPICS)
+    created = make_draft(env)
+    path = common.find_draft(created if isinstance(created, str) else created["id"])[1]
+    translate = importlib.import_module("pipeline.translate")
+    texts = translate.source_texts(path)
+    env.responses["translate"] = {"findings": [f"지적 {i}" for i, _ in enumerate(texts["findings"])],
+                                  "medical": [f"의료 문장 {i} [F1]" for i, _ in enumerate(texts["medical"])],
+                                  "practice": [], "script": [f"대본 {i}" for i, _ in enumerate(texts["script"])],
+                                  "blog": "## 리쥬란(Rejuran)이란?\n한국어 본문 [F1]"}
+    assert translate.ensure_stage("drafts") == 1 and translate.cached(path) is not None
+    human_mod.build_batch("drafts")
+    msg = human_mod.draft_message(path, 1, 1)
+    assert msg.startswith("[초안 1/1 · 글번호 W40-01]") and "🇰🇷 검수용 한국어 번역" in msg and "대본 0" in msg
+    doc = human_mod.review_doc(path).read_text(encoding="utf-8")
+    assert "## 블로그 (한국어 번역)" in doc and "한국어 본문 [F1]" in doc and "## 원문(영어) — 블로그" in doc
+    draft = common.load_json(path / "draft.json")
+    draft["blog"]["markdown"] += "\nNew sentence."                                       # 내용이 바뀌면 다시 번역
+    common.save_json(path / "draft.json", draft)
+    assert translate.cached(path) is None
+    assert "승인 → approved" in human_mod.apply("W40-01 승인", confirm=True)[0]             # 글번호로 답해도 된다

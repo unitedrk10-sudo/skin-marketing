@@ -139,14 +139,23 @@ def _issues(review: dict | None) -> list[dict]:
 def review_doc(path: Path) -> Path:
     """휴대폰에서 읽는 검수용 파일 (텔레그램 첨부): 걸린 항목 → 대본 → 블로그 → 사실별 원문 인용·출처."""
     draft, review = load_draft(path), load_review(path)
-    out = [f"# {draft['id']}", "", f"자동 검수: {GRADE_ICON[(review or {}).get('grade')]} {(review or {}).get('grade') or '미실시'}"]
+    ko = _korean(path)
+    out = [f"# [{code(draft['id'])}] {draft['id']}", "",
+           f"자동 검수: {GRADE_ICON[(review or {}).get('grade')]} {(review or {}).get('grade') or '미실시'}"]
+    if ko:
+        out.append("(한국어 번역은 검수용 참고 — 게시되는 글은 아래 '원문(영어)' 그대로)")
     issues = _issues(review)
     if issues:
         out += ["", "## 검수에서 걸린 항목"]
-        out += [f"- {ISSUE_ICON[f['severity']]} {f['message']}" + (f"\n  > {f['quote']}" if f["quote"] else "") for f in issues]
+        msgs = ko["findings"] if ko else [f["message"] for f in issues]
+        out += [f"- {ISSUE_ICON[f['severity']]} {m}" + (f"\n  > {f['quote']}" if f["quote"] else "") for f, m in zip(issues, msgs)]
     if (review or {}).get("always_human"):
         out += ["", "👤 사람 확인 필요: " + ", ".join(review["always_human"])]
-    out += ["", "## 숏폼 대본", "", script_text(draft), "", "## 블로그", "", blog_text(draft), "", "## 사실과 원문 인용"]
+    if ko:
+        out += ["", "## 블로그 (한국어 번역)", "", ko["blog"], "", "## 원문(영어) — 블로그", "", blog_text(draft)]
+    else:
+        out += ["", "## 블로그", "", blog_text(draft)]
+    out += ["", "## 숏폼 대본", "", script_text(draft), "", "## 사실과 원문 인용"]
     for f in draft.get("facts", []):
         out.append(f"- [{f['id']}] {f['text']}\n  > {f.get('quote', '')}\n  {f['url']}")
     doc = path / f"{draft['id']}.md"
@@ -154,13 +163,28 @@ def review_doc(path: Path) -> Path:
     return doc
 
 
+def code(draft_id: str) -> str:
+    """사람이 부르기 쉬운 고정 글번호: 2026-W41-07-hanbok… → W41-07 (주차-주제 번호, 검수 단계가 바뀌어도 같다)."""
+    m = re.match(r"\d{4}-(W\d{2})-(\d{2})", draft_id)
+    return f"{m.group(1)}-{m.group(2)}" if m else draft_id[:14]
+
+
+def _korean(path: Path) -> dict | None:
+    """만들어 둔 검수용 한국어 번역 (워커가 메시지 보내기 전에 만든다). 없으면 None → 영어."""
+    try:
+        return importlib.import_module("pipeline.translate").cached(path)
+    except Exception:  # noqa: BLE001 — 번역 문제로 검수 메시지가 막히면 안 된다
+        return None
+
+
 def draft_message(path: Path, number: int, total: int) -> str:
     """텔레그램에 초안 하나를 통째로 보내는 메시지 — 걸린 항목 → 대본 → 블로그 전문 → 출처 (길면 Hermes 가 나눠 보낸다)."""
     draft, review = load_draft(path), load_review(path)
     sf, blog = draft.get("shortform") or {}, draft.get("blog") or {}
     secs = sf.get("estimated_seconds")
-    out = [f"[초안 {number}/{total}] {GRADE_ICON[(review or {}).get('grade')]} {sf.get('title') or draft['topic']['title']}"
-           + (f" ({secs}s)" if secs else "")]
+    out = [f"[초안 {number}/{total} · 글번호 {code(draft['id'])}] {GRADE_ICON[(review or {}).get('grade')]} "
+           f"{sf.get('title') or draft['topic']['title']}" + (f" ({secs}s)" if secs else ""),
+           f"답장 예: `{number} 승인` · `{number} 수정: …` (또는 `{code(draft['id'])} 승인`)"]
     if draft.get("sponsor"):
         out.append(f"💼 {draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}")
     if (review or {}).get("always_human"):
@@ -168,23 +192,27 @@ def draft_message(path: Path, number: int, total: int) -> str:
     fixes = [r["note"] for r in draft.get("revisions", []) if r.get("kind") == "fix"]
     if fixes:
         out.append(f"🛠 {fixes[-1]} — 아래는 고친 뒤에도 남은 지적")
+    ko = _korean(path)  # 검수용 한국어 번역 (없거나 실패하면 영어 원문)
+    if ko:
+        out.append("🇰🇷 검수용 한국어 번역 — 게시되는 글은 영어 원문 그대로 (첨부 파일 끝에 원문)")
     issues = _issues(review)
-    out += ["", "🔎 남은 지적" + ("" if issues else ": 없음")] + [f"{ISSUE_ICON[f['severity']]} {f['message']}" for f in issues]
+    msgs = ko["findings"] if ko else [f["message"] for f in issues]
+    out += ["", "🔎 남은 지적" + ("" if issues else ": 없음")] + [f"{ISSUE_ICON[f['severity']]} {m}" for f, m in zip(issues, msgs)]
     medical = medical_sentences(draft)
     out += ["", f"🩺 의료 정보 확인 ({len(medical)}문장) — 문장과 출처가 맞는지 봐 주세요"]
-    for text, urls in medical:
-        out.append(f"• {text}")
+    for i, (text, urls) in enumerate(medical):
+        out.append(f"• {ko['medical'][i] if ko else text}")
         out += [f"   ↳ {u}" for u in urls]
     practice = medical_sentences(draft, lambda f: f.get("kind") == PRACTICE_KIND)
     if practice:  # 블로그에는 병원 링크 없이 "[clinic websites]" 로만 나간다
         out += ["", f"🏥 병원 사이트 공통 정보 ({len(practice)}문장) — 블로그엔 병원명·링크 없이 게시, 근거 병원 확인용"]
-        for text, urls in practice:
-            out.append(f"• {text}")
+        for i, (text, urls) in enumerate(practice):
+            out.append(f"• {ko['practice'][i] if ko else text}")
             out += [f"   ↳ {u}" for u in urls]
     out += ["", "🎬 숏폼 대본"]
     for i, ln in enumerate(sf.get("lines", []), 1):
         refs = f"  [{','.join(ln['fact_ids'])}]" if ln.get("fact_ids") else ""
-        out.append(f"{i}. {ln.get('voice', '')}{refs}")
+        out.append(f"{i}. {ko['script'][i - 1] if ko else ln.get('voice', '')}{refs}")
     out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}")
     sections = re.findall(r"(?m)^##\s+(.+)$", blog.get("markdown", ""))
     out += ["", f"📝 블로그: {blog.get('title', '')}" + (f" ({' · '.join(s.strip() for s in sections)})" if sections else ""),
@@ -247,7 +275,7 @@ def list_message(stage: str, compact: bool = False) -> str:
         return {"drafts": "검수 대기 없음", "approved": "승인된 초안 없음"}.get(stage, "게시 전 확인 대기 없음")
     lines = []
     if stage == "drafts":
-        lines.append(f"[초안 검수 {len(ids)}건 (숏폼+블로그)] 답장 예: `1,3 승인` · `2 수정: 가격 출처 다시` · `4 폐기` · `전체 승인`")
+        lines.append(f"[초안 검수 {len(ids)}건 (블로그)] 답장 예: `1,3 승인` · `2 수정: 가격 출처 다시` · `4 폐기` · `전체 승인` (번호 대신 글번호 W41-07 도 됨)")
         lines.append("↑ 초안 전문은 위 메시지에 하나씩 보냈습니다." if compact else
                      "초안별 전문(블로그·사실별 원문 인용)은 첨부 파일로 보냅니다.")
     elif stage == "approved":
@@ -261,7 +289,7 @@ def list_message(stage: str, compact: bool = False) -> str:
         sf = draft.get("shortform") or {}
         grade = (review or {}).get("grade")
         secs = sf.get("estimated_seconds")
-        head = f"{i}. {sf.get('title') or draft['topic']['title']}" + (f" ({secs}s)" if secs else "")
+        head = f"{i}. [{code(draft_id)}] {sf.get('title') or draft['topic']['title']}" + (f" ({secs}s)" if secs else "")
         line = f"{head} {GRADE_ICON[grade]}"
         if draft.get("sponsor"):
             line += f" 💼{draft['sponsor']['name_ko']} 광고 · 병원확인 {'✔' if sponsor_confirmed(path) else '대기'}"
@@ -279,7 +307,9 @@ def list_message(stage: str, compact: bool = False) -> str:
         if review:
             issues = _issues(review)
             if issues:
-                line += f" {issues[0]['message']}" + (f" 외 {len(issues) - 1}건" if len(issues) > 1 else "")
+                ko = _korean(path)
+                first = ko["findings"][0] if ko and ko["findings"] else issues[0]["message"]
+                line += f" {first}" + (f" 외 {len(issues) - 1}건" if len(issues) > 1 else "")
         lines.append(line)
         preview = path / "carousel" / "preview.jpg"
         if stage == "rendered" and preview.exists():  # 사진 넘기기형: 슬라이드 전체를 한 장으로 미리 보기
@@ -327,8 +357,10 @@ def _targets(cmd: Command, batch: list[str]) -> list[str]:
 
 def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]:
     """답장을 처리하고 텔레그램으로 돌려줄 결과 줄들을 반환한다."""
-    commands = parse_reply(reply)
     batch = load_batch(stage)
+    codes = {code(d).upper(): str(i) for i, d in enumerate(batch, 1)}
+    reply = re.sub(r"(?i)\bW\d{2}-\d{2}\b", lambda m: codes.get(m.group(0).upper(), m.group(0)), reply)
+    commands = parse_reply(reply)
     # 전부 검증한 뒤에 실행한다 (한 줄이 틀려 일부만 처리되는 일이 없도록)
     stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered", "approved"}, "publish_ok": {"rendered"},
                 "sponsor_ok": {"drafts"}, "reopen": {"approved", "rendered"}}
