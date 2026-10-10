@@ -154,6 +154,38 @@ def card(title: str, site_name: str, tagline: str, out: Path, ad_label: str = ""
     return out
 
 
+def social_assets(out_dir: Path) -> list[Path]:
+    """SNS 프로필용 이미지 (사람이 직접 올린다 — Threads API 는 프로필 수정이 없고 X 는 유료).
+    - profile.png 800×800: 차콜 바탕 + 크림 이탤릭 S. 원형으로 잘려도 S 가 가운데·여유 있게 (원 안 지름 70%)
+    - x-banner.png 1500×500: 크림 바탕 + 로고 묶음 + 슬로건. X 는 왼쪽 아래에 프로필 사진이 겹치고 휴대폰에서 위아래가 잘리므로
+      내용은 오른쪽·가운데 띠에만"""
+    from PIL import Image, ImageDraw
+    out_dir.mkdir(parents=True, exist_ok=True)
+    made = []
+    n = 800
+    prof = Image.new("RGB", (n, n), BG)
+    draw = ImageDraw.Draw(prof)
+    font = _serif(int(n * .62), italic=True)
+    box = draw.textbbox((0, 0), "S", font=font)
+    draw.text(((n - (box[2] - box[0])) / 2 - box[0], (n - (box[3] - box[1])) / 2 - box[1]), "S", font=font, fill=FG)
+    prof.save(out_dir / "profile.png", "PNG", optimize=True)
+    made.append(out_dir / "profile.png")
+
+    w, h = 1500, 500
+    banner = Image.new("RGB", (w, h), FG)
+    draw = ImageDraw.Draw(banner)
+    f = 64  # 로고 묶음 글자 크기 → 심볼 1.63F
+    sym = round(f * LOCKUP["symbol"])
+    x0 = 560  # 왼쪽 아래 프로필 사진 자리를 피해 가운데보다 오른쪽에서 시작
+    lockup(banner, x0, 120, f, BG, (125, 112, 98))
+    slogan = _serif(46, italic=True)
+    draw.text((x0, 120 + sym + 44), "Korean skin treatments, explained honestly.", font=slogan, fill=BG)
+    draw.text((x0, 120 + sym + 112), "skinboundkorea.com", font=_font(26), fill=(125, 112, 98))
+    banner.save(out_dir / "x-banner.png", "PNG", optimize=True)
+    made.append(out_dir / "x-banner.png")
+    return made
+
+
 def icons(out_dir: Path) -> None:
     """파비콘(.ico 16·32·48)·PNG 아이콘·홈 화면 아이콘·웹 앱 매니페스트."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -170,3 +202,19 @@ def icons(out_dir: Path) -> None:
             img = full
         img.save(out_dir / name, "PNG", optimize=True)
     symbol(192, inverse=True).save(out_dir / "icon-inverse-192.png", "PNG", optimize=True)  # 어두운 꼬리말용
+
+
+def main(argv: list[str] | None = None) -> int:
+    """python -m pipeline.og social  → assets/brand/social/ 에 SNS 프로필 사진·X 배너 (사람이 직접 올린다)."""
+    import argparse
+    parser = argparse.ArgumentParser(description="브랜드 이미지")
+    parser.add_argument("cmd", choices=["social"])
+    parser.parse_args(argv)
+    for f in social_assets(BRAND_DIR / "social"):
+        print(f)
+    return 0
+
+
+if __name__ == "__main__":
+    from pipeline.common import run_cli
+    run_cli("og", main)
