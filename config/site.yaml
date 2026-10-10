@@ -12,6 +12,10 @@ byline: Skinbound Editorial Team  # 사람 의사·전문의 명의 금지 (자�
 contact_email: hello@skinboundkorea.com  # 2026-10-10 Cloudflare Email Routing (받기 전용 → 개인 메일로 전달). 소개·개인정보 페이지에 표시
 cloudflare_project: skin-site     # Cloudflare Pages 프로젝트명 (wrangler pages deploy)
 posts_on_home: 30
+indexnow_key: "9c92fdd682b5fa530af168170339bdde"   # IndexNow (공개 값 — 사이트에 /<key>.txt 로 게시). 배포 때 새 글·수정 글 주소를 Bing 등에 바로 알린다
+social_profiles:                # 공식 SNS 계정 — 구조화 데이터 sameAs (검색·AI 가 같은 브랜드로 묶게)
+  - https://www.threads.com/@skinboundkorea
+  - https://x.com/Skinboundkorea
 publish_schedule:               # 블로그 게시 요일 (2026-10-10 결정: 월·수·금, 하루 1편). 승인된 글은 다음 빈 요일에 배정
   days: [mon, wed, fri]         # 배정은 content/site/schedule.json 에 고정 — 확인: python -m pipeline.site schedule
   hour: 7                       # 한국 시간. 매시 배포 크론이 이 시각 이후 첫 실행에 올린다 → SNS 오늘의 글(9시) 전에 게시

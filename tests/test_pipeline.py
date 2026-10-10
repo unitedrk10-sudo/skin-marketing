@@ -2475,3 +2475,51 @@ def test_x_api_is_optional_and_signed(env, monkeypatch):
     monkeypatch.setattr(social_mod, "_http", lambda m, u, params=None, headers=None, body=None:
                         sent.update(body=json.loads(body), auth=headers["authorization"]) or {"data": {"id": "99"}})
     assert social_mod.x_post("hello") == "https://x.com/i/web/status/99" and sent["body"] == {"text": "hello"}
+
+
+def test_blog_publish_reminder_evening_before_and_morning_of_empty_day(env, monkeypatch):
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7})
+    sunday = datetime(2026, 10, 11, 18, 5, tzinfo=site_mod.KST)
+    assert site_mod.publish_reminder(sunday.replace(hour=17)) == ""             # 18시 전
+    msg = site_mod.publish_reminder(sunday)
+    assert msg.startswith("⏰ 내일(10/12 월) 블로그에 올라갈 글이 없습니다") and "주제 후보" in msg
+    assert site_mod.publish_reminder(sunday.replace(hour=22)) == ""             # 한 번만
+    _published("2026-W41-07-a", state="drafts", live=False)
+    monday = datetime(2026, 10, 12, 9, 10, tzinfo=site_mod.KST)
+    assert "오늘(10/12 월)" in (m := site_mod.publish_reminder(monday)) and "검수 대기 초안 1건 — 승인하면 바로" in m
+    monkeypatch.setattr(site_mod, "now_kst", lambda: datetime(2026, 10, 13, 18, 30, tzinfo=site_mod.KST))
+    _published("2026-W41-09-b", live=False)                                      # 승인된 글 → 수요일 배정
+    assert site_mod.publish_reminder(datetime(2026, 10, 13, 18, 30, tzinfo=site_mod.KST)) == ""
+
+
+def test_site_tracks_modified_date_and_pings_indexnow_for_new_and_changed(site_env, monkeypatch):
+    monkeypatch.setattr(site_mod, "config", lambda: {**site_mod.load_yaml("site.yaml"), "domain": "skinbound.example",
+                                                     "indexnow_key": "k123", "cloudflare_project": "p"})
+    path = _published("2026-W40-01-what-is-rejuran", live=False)
+    draft = common.load_json(path / "draft.json")
+    common.save_json(path / "draft.json", {**draft, "created_at": "2026-09-01T00:00:00+00:00"})
+    pinged = []
+    monkeypatch.setattr(site_mod, "indexnow", lambda cfg, urls: pinged.append(urls) or "🔎 IndexNow")
+    monkeypatch.setattr(site_mod.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 0})())
+    msg = site_mod.deploy()
+    assert "IndexNow" in msg and pinged[-1] == ["https://skinbound.example/what-is-rejuran/", "https://skinbound.example/"]
+    assert (site_mod.dist_dir() / "k123.txt").read_text() == "k123"                 # 소유 확인 파일
+    html_ = (site_mod.dist_dir() / "what-is-rejuran" / "index.html").read_text(encoding="utf-8")
+    assert "Published 2026-09-01" in html_ and "Updated" not in html_.split("min read")[0].split("Published")[1]
+    assert '"sameAs": ["https://www.threads.com/@skinboundkorea"' in html_
+    draft = common.load_json(path / "draft.json")
+    draft["blog"]["markdown"] = "y"                                                  # 게시 뒤 내용 수정
+    common.save_json(path / "draft.json", draft)
+    msg = site_mod.deploy()
+    assert "- 수정: https://skinbound.example/what-is-rejuran/" in msg and pinged[-1][0].endswith("/what-is-rejuran/")
+    html_ = (site_mod.dist_dir() / "what-is-rejuran" / "index.html").read_text(encoding="utf-8")
+    assert "<span>Updated 20" in html_ and '"dateModified": "20' in html_
+
+
+def test_ai_traffic_classifies_referrers_and_bots():
+    ai = importlib.import_module("pipeline.ai_traffic")
+    assert ai.ai_service("chatgpt.com") == "ChatGPT" and ai.ai_service("www.perplexity.ai") == "Perplexity"
+    assert ai.ai_service("m.facebook.com") is None
+    assert ai.bot_name("Mozilla/5.0 ... compatible; ChatGPT-User/1.0; +https://openai.com/bot") == ("live", "ChatGPT")
+    assert ai.bot_name("Mozilla/5.0 (compatible; PerplexityBot/1.0)") == ("index", "Perplexity 색인")
+    assert ai.bot_name("Mozilla/5.0 Chrome/120") is None

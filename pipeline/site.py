@@ -22,7 +22,9 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import urllib.error
 import urllib.parse
+import urllib.request
 from urllib.parse import urlparse
 
 import markdown
@@ -151,6 +153,74 @@ def apply_schedule(posts: list[dict], include_scheduled: bool = False) -> list[d
         if live or include_scheduled:
             out.append({**p, "date": slot["at"] or p["date"], "scheduled": not live})
     return out
+
+
+REMIND_EVENING = 18  # 전날 이 시각(KST) 이후 — 내일 게시일이 비어 있으면 알린다
+
+
+def reminder_file() -> Path:
+    return content_dir() / "site" / "reminders.json"
+
+
+def publish_reminder(now: datetime | None = None) -> str:
+    """게시일(월·수·금)에 올라갈 글이 없으면 알린다 — 전날 18시 이후, 당일 9시 이후 각 한 번."""
+    rule = publish_schedule()
+    if not rule:
+        return ""
+    now = now or now_kst()
+    collect_posts()  # 승인된 글의 게시일 배정
+    f = schedule_file()
+    taken = {v["date"] for v in (load_json(f) if f.exists() else {}).values()}
+    due = []
+    tomorrow = now.date() + timedelta(days=1)
+    if now.hour >= REMIND_EVENING and tomorrow.weekday() in rule["days"] and tomorrow.isoformat() not in taken:
+        due.append(("내일", tomorrow))
+    if now.hour >= 9 and now.date().weekday() in rule["days"] and now.date().isoformat() not in taken:
+        due.append(("오늘", now.date()))
+    sent = load_json(reminder_file()) if reminder_file().exists() else []
+    due = [(label, day) for label, day in due if f"{day}:{label}" not in sent]
+    if not due:
+        return ""
+    waiting = [p for p in draft_dirs("drafts") if (p / "draft.json").exists()]
+    names = "월화수목금토일"
+    lines = []
+    for label, day in due:
+        lines.append(f"⏰ {label}({day:%m/%d} {names[day.weekday()]}) 블로그에 올라갈 글이 없습니다 "
+                     f"(게시일 {'·'.join(names[d] for d in rule['days'])} {rule['hour']:02d}:00).")
+        sent.append(f"{day}:{label}")
+    when = "내일 07:00 에" if due[0][0] == "내일" else "바로 (1시간 안에)"
+    if waiting:
+        lines.append(f"- 검수 대기 초안 {len(waiting)}건 — 승인하면 {when} 게시됩니다 (먼저 승인한 글부터).")
+    else:
+        lines.append("- 검수 대기 초안도 없습니다 — 이번 주 주제 후보에서 골라 주세요 (초안·자동 검수까지 보통 30분~1시간).")
+    save_json(reminder_file(), sent[-60:])
+    return "\n".join(lines)
+
+
+def content_log_file() -> Path:
+    return content_dir() / "site" / "content_log.json"
+
+
+def track_modified(posts: list[dict], now: datetime | None = None) -> list[str]:
+    """글 내용(본문·사실)이 처음 게시 뒤 바뀌면 수정 시각을 기록한다 → post["modified"]. 반환: 이번에 바뀐 글의 slug."""
+    f = content_log_file()
+    log_ = load_json(f) if f.exists() else {}
+    stamp = (now or datetime.now(timezone.utc)).isoformat()
+    changed = []
+    for p in posts:
+        blog, did = p["draft"]["blog"], p["draft"]["id"]
+        digest = hashlib.sha256(json.dumps([blog.get("title"), blog.get("markdown"), p["draft"].get("facts", [])],
+                                           ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        entry = log_.get(did)
+        if entry is None:
+            log_[did] = {"hash": digest, "updated_at": ""}
+        elif entry["hash"] != digest:
+            log_[did] = {"hash": digest, "updated_at": stamp}
+            changed.append(p["slug"])
+        updated = log_[did]["updated_at"]
+        p["modified"] = updated if updated and updated > p["date"] else p["date"]
+    save_json(f, log_)
+    return changed
 
 
 def schedule_message() -> str:
@@ -421,17 +491,24 @@ Sponsored posts are clearly labeled advertisements.</p></div>
 <div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}{partners}</div></div></footer>
 </body></html>"""
 
+def organization(cfg: dict) -> dict:
+    """브랜드 정보 — 공식 SNS 계정(sameAs)을 붙여 검색·AI 가 같은 브랜드로 묶게 한다."""
+    base = base_url(cfg)
+    return {"@type": "Organization", "name": cfg["name"], **({"url": base + "/"} if base else {}),
+            **({"sameAs": list(cfg["social_profiles"])} if cfg.get("social_profiles") else {})}
+
+
 def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> list[dict]:
     draft, blog = post["draft"], post["draft"]["blog"]
     base = base_url(cfg)
-    org = {"@type": "Organization", "name": cfg["name"], **({"url": base + "/"} if base else {})}
+    org = organization(cfg)
     article = {
         "@context": "https://schema.org",
         "@type": ["Article", "MedicalWebPage"],
         "headline": blog.get("title", ""),
         "description": blog.get("meta_description", ""),
         "datePublished": post["date"],
-        "dateModified": post["date"],
+        "dateModified": post.get("modified") or post["date"],
         "author": {**org, "name": cfg["byline"]},
         "publisher": org,
         "inLanguage": cfg.get("language", "en"),
@@ -625,13 +702,15 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
         photo = (f'<figure class="wrap art-img"><img src="{esc(image["hero"])}" alt="" width="1600" height="900" '
                  f'fetchpriority="high">{f"<figcaption>{credit}</figcaption>" if credit else ""}</figure>')
     # 사실·출처 개수, 사람 승인 같은 운영 지표는 독자 화면에 내지 않는다 (2026-10-10) — 검수 과정은 About 페이지에서만 설명
+    modified = post.get("modified") or post["date"]
+    updated = f"<span>Updated {esc(modified[:10])}</span>" if modified[:10] > post["date"][:10] else ""
     heads = H2_WITH_ID.findall(body_html)
     toc = "".join(f'<li><a href="#{i}">{re.sub(r"<[^>]+>", "", t)}</a></li>' for i, t in heads)
     body = f"""<div class="wrap crumbs"><a href="/#guides">Guides</a> &nbsp;/&nbsp; {esc(category_label(draft))}</div>
 <header class="wrap art-hd"><p class="kicker">{esc(category_label(draft))}</p>
 <h1>{esc(blog.get('title', ''))}</h1>
 {f'<p class="sub">{esc(blog["meta_description"])}</p>' if blog.get("meta_description") else ""}
-<div class="ameta">{badge}<span>Updated {esc(post['date'][:10])}</span><span>{read_minutes(blog.get("markdown", ""))} min read</span></div></header>
+<div class="ameta">{badge}<span>Published {esc(post['date'][:10])}</span>{updated}<span>{read_minutes(blog.get("markdown", ""))} min read</span></div></header>
 {photo}
 <div class="wrap art-grid"><aside class="side">{f'<p class="label">On this page</p><ol>{toc}</ol>' if toc else ""}
 <div class="doc"><b>Not medical advice.</b> Every medical statement links to its source. Results and side effects vary —
@@ -726,7 +805,7 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
     hero_img = cfg.get("_hero_image")
     base = base_url(cfg)
     site_ld = {"@context": "https://schema.org", "@type": "WebSite", "name": cfg["name"], "description": cfg["description"],
-               **({"url": base + "/"} if base else {})}
+               **({"url": base + "/"} if base else {}), "publisher": organization(cfg)}
     body = f"""<div class="wrap"><section class="hero"><div><p class="kicker">Skin treatments in Korea, for international visitors</p>
 <h1>Korean skin treatments, <em>explained honestly.</em></h1>
 <p class="sub">{esc(cfg['description'])}</p>
@@ -953,6 +1032,7 @@ def build(out: Path | None = None) -> dict:
     cfg = config()
     out = out or dist_dir()
     posts = collect_posts()
+    changed = track_modified(posts)
     links = tracked_links(posts)
     if out.exists():
         shutil.rmtree(out)
@@ -997,6 +1077,8 @@ def build(out: Path | None = None) -> dict:
     write("404.html", page(cfg, f"Not found — {cfg['name']}", '<div class="page"><h1>Page not found</h1><p><a href="/">Back to all guides</a></p></div>',
                            path="/404", noindex=True))
     write("robots.txt", render_robots(cfg))
+    if cfg.get("indexnow_key"):  # IndexNow 소유 확인 파일 (Bing 등에 새 글 주소를 바로 알린다)
+        write(f"{cfg['indexnow_key']}.txt", cfg["indexnow_key"])
     write("llms.txt", render_llms_txt(cfg, posts))
     write("rss.xml", render_rss(cfg, posts))
     if cfg["domain"]:
@@ -1008,10 +1090,28 @@ def build(out: Path | None = None) -> dict:
         if f.is_file():
             digest.update(str(f.relative_to(out)).encode() + f.read_bytes())
     return {"posts": len(posts), "sponsored": sum(1 for p in posts if p["draft"].get("sponsor")),
-            "slugs": [p["slug"] for p in posts], "hash": digest.hexdigest()}
+            "slugs": [p["slug"] for p in posts], "hash": digest.hexdigest(), "changed": changed}
 
 
 WORKER_COMPAT_DATE = "2026-10-01"
+INDEXNOW_API = "https://api.indexnow.org/indexnow"  # Bing·Yandex·Naver 등이 공유 (ChatGPT 검색·Copilot 은 Bing 색인을 쓴다)
+
+
+def indexnow(cfg: dict, urls: list[str]) -> str:
+    """새 글·바뀐 글 주소를 IndexNow 로 알린다. 실패해도 배포는 그대로 (다음 크롤에서 sitemap 으로 잡힌다)."""
+    key = cfg.get("indexnow_key")
+    if not (key and cfg["domain"] and urls):
+        return ""
+    body = json.dumps({"host": cfg["domain"], "key": key, "keyLocation": f"https://{cfg['domain']}/{key}.txt",
+                       "urlList": urls[:10000]}).encode()
+    req = urllib.request.Request(INDEXNOW_API, data=body, method="POST",
+                                 headers={"content-type": "application/json; charset=utf-8"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return f"🔎 IndexNow: 주소 {len(urls)}개 알림 ({resp.status})"
+    except (urllib.error.URLError, OSError) as e:
+        log.warning("IndexNow 실패 (배포는 완료): %s", e)
+        return ""
 
 
 def deploy() -> str:
@@ -1031,11 +1131,16 @@ def deploy() -> str:
     if proc.returncode != 0:
         raise RuntimeError(f"wrangler deploy 실패: {(proc.stderr or proc.stdout)[-500:]}")
     new = [s for s in result["slugs"] if s not in state.get("slugs", [])]
-    save_json(state_file(), {"hash": result["hash"], "slugs": result["slugs"], "deployed_at": datetime.now(timezone.utc).isoformat()})
     base = base_url(cfg) or f"https://{cfg['cloudflare_project']}.workers.dev"
+    # 처음 한 번은 전체, 이후엔 새 글·내용이 바뀐 글 + 첫 화면
+    ping = result["slugs"] if not state.get("indexnow") else [*new, *(s for s in result["changed"] if s not in new)]
+    pinged = indexnow(cfg, [f"{base}/{s}/" for s in ping] + ([f"{base}/"] if ping else []))
+    save_json(state_file(), {"hash": result["hash"], "slugs": result["slugs"], "deployed_at": datetime.now(timezone.utc).isoformat(),
+                             "indexnow": bool(state.get("indexnow") or pinged)})
     lines = [f"🌐 블로그 업데이트: 글 {result['posts']}개 (스폰서 {result['sponsored']})"]
     lines += [f"- 새 글: {base}/{s}/" for s in new]
-    return "\n".join(lines)
+    lines += [f"- 수정: {base}/{s}/" for s in result["changed"] if s not in new]
+    return "\n".join(lines + ([pinged] if pinged else []))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -253,8 +253,10 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             if blocked:
                 message = (message + "\n\n" if message else "") + "\n".join(blocked)
         daily = social_mod.daily_message()  # 오전 9시(한국 시간) 이후 하루 한 번 — 오늘 올릴 글 1개
-        if daily:
-            message = (message + "\n\n" if message else "") + daily
+        reminder = importlib.import_module("pipeline.site").publish_reminder()  # 게시일(월·수·금)에 올라갈 글이 없으면
+        for part in (reminder, daily):
+            if part:
+                message = (message + "\n\n" if message else "") + part
     except Exception as e:  # noqa: BLE001 — SNS 글 실패가 워커 전체를 멈추지 않게
         failures.append(f"SNS 글 처리 실패: {e}")
         log.exception("SNS 글 처리 실패")

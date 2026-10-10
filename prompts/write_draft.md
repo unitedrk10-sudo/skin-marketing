@@ -44,7 +44,8 @@ CLINIC PAGES (C1, C2, …) are different clinics' own websites. You may use them
 
 ## Blog post ({{min_words}}-{{max_words}} words)
 - Do not start with an H1 title (the title is added separately). Start with a 2-3 sentence intro that answers the reader's question directly.
-- H2 sections that match the angle (e.g. How it works / Who it suits / Pain & downtime / Sessions / Typical price range / Risks / Planning around your trip).
+- H2 sections that match the angle. Write most H2s as the question a reader would actually type or ask an AI assistant (e.g. "How long is the downtime after laser toning?", "When can I go out in the sun after a skin booster?", "Where does a Bukchon walk fit in a treatment trip?") rather than labels like "Downtime".
+- Answer first: the first 1-2 sentences under each H2 answer that question directly and completely on their own (a reader or an AI quoting only those sentences should get a correct, sourced, hedged answer), then add detail. Keep each fact in its own clear sentence with its [F#] — no packing several claims into one sentence.
 - After every sentence that uses a fact, put its id in square brackets, e.g. "Downtime is usually 1-3 days [F4]."
 - A short "Things to discuss with your doctor" checklist and an FAQ with 3-5 questions written as questions a reader would ask.
 - End with the AI disclosure sentence from the rules.

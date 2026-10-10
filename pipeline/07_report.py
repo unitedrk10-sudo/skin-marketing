@@ -92,6 +92,11 @@ def extras() -> list[str]:
     except Exception as e:  # noqa: BLE001
         log.warning("유입 집계 실패: %s", e)
     try:
+        from pipeline import ai_traffic
+        lines += ai_traffic.report_lines(7)  # AI 답변에서 온 방문·AI 봇이 읽어 간 글
+    except Exception as e:  # noqa: BLE001
+        log.warning("AI 유입 집계 실패: %s", e)
+    try:
         from pipeline import demand
         tables = demand.all_scores()
         for name, label in (("procedures", "시술"), ("attractions", "관광지")):

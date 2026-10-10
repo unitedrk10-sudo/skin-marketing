@@ -76,7 +76,9 @@ def tts_configured() -> bool:
 
 
 def ready() -> bool:
-    """렌더링할 수 있는가 — 사진 넘기기형은 키가 필요 없다 (Pixabay 표지 사진은 키가 있을 때만)."""
+    """렌더링할 수 있는가 — 사진 넘기기형은 키가 필요 없다 (Pixabay 표지 사진은 키가 있을 때만). format: off 면 숏폼 중단."""
+    if render_format() == "off":
+        return False
     return render_format() == "carousel" or tts_configured()
 
 
@@ -368,6 +370,8 @@ def videos_this_week(now: datetime | None = None) -> int:
 def pending(limit: int | None = None, now: datetime | None = None) -> list[Path]:
     """렌더링할 승인 초안. 영상 형식은 주 video_per_week 편까지만 — 그 주에 승인된 글 중 수요 점수가 높은 순.
     나머지 승인 글은 블로그로만 나간다 (블로그는 approved 이후 상태면 게시)."""
+    if render_format() == "off":
+        return []
     paths = [p for p in draft_dirs("approved") if (p / "draft.json").exists()]
     if render_format() == "video":
         now = now or datetime.now(timezone.utc)

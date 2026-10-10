@@ -29,15 +29,16 @@
 - 워커(Hermes 크론): `python -m pipeline.worker run` / 주제 선택 요청: `python -m pipeline.worker request-drafts --pick 1,3`
 - 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` (병원 권역 중심 여행 코스 글: `--course`, sponsors.yaml `zone` 필요) / 목록 점검 `python -m pipeline.sponsors check`
-- 블로그 사이트: `python -m pipeline.site build|deploy` (site/dist → Cloudflare Pages)
+- 블로그 사이트: `python -m pipeline.site build|deploy|schedule` (site/dist → Cloudflare Workers 정적 자산). 배포 때 새 글·내용이 바뀐 글 주소를 IndexNow(`site.yaml indexnow_key`, Bing → ChatGPT 검색·Copilot)로 알리고, 내용이 바뀐 글은 수정일 표시·dateModified (`content/site/content_log.json`)
+- AI 유입: `python -m pipeline.ai_traffic [--days 7]` — AI 답변에서 온 방문(Web Analytics 유입 도메인)·AI 봇 실시간 조회(ChatGPT-User 등, 토큰에 Zone Analytics Read 필요). 주간 리포트에 자동 포함
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
-- 숏폼 렌더링: `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered). 형식은 `config/channels.yaml` `shortform.format`:
+- 숏폼 렌더링: **2026-10-10 중단** (`shortform.format: off` — 수익이 나기 전까지 블로그·Threads·X 만). `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered). 형식은 `config/channels.yaml` `shortform.format`:
   `video`(2026-10-07 기본, 시험 운영 주 `video_per_week` 2편) = Gemini TTS Kore(1.1배) + 실제 영상 클립 2.6초 컷(`pipeline/broll.py`: 직접 모은 클립 `content/library/videos/<장면>/` → Pixabay `PIXABAY_API_KEY`, 사람·병원 태그 제외, 줄마다 후보 썸네일 묶음을 Claude `pick_visuals` 가 고름) + 위 장면 제목·아래 단어 강조 자막 + 배경 음악(`content/library/music/` 에 있으면).
   `carousel`(보류 — 글자 슬라이드는 시험해 보니 약함) = 사진 넘기기형 `pipeline/carousel.py`, `--refresh <draft_id>` 로 상태 이동 없이 다시.
   주력은 블로그(구글 검색)·Threads·X 이고 숏폼은 작게 시험한다 — 같은 틀 영상을 많이 올리면 유튜브 "대량 생산·반복 콘텐츠"(2026-07)·스팸 판정에 가까워진다.
   게시 키트: `python -m pipeline.06_publish kits|status|done <id> <채널> <URL>` (ready_to_publish 전용 → published) / 주간 리포트: `python -m pipeline.07_report`
 - X·Threads 글: `python -m pipeline.social compose|today|list|post <N|오늘> threads|done <N|오늘> <x|threads> <URL>` — 게시된 중립 블로그 글마다 3종(link 새 글 소개 · fact 사실 하나 · angle 여행 팁/흔한 오해, 사실 목록만, 02b 규칙 검사, 작성은 Claude `social`) + 일요일 한 주 정리(그 주 2편 이상, 코드가 제목으로). 매일 9시(KST, `channels.yaml text_social.daily`) 이후 워커가 "오늘의 SNS 글" 1개: 일요일 정리 → 안 보낸 link → fact·angle, 오늘 게시 예정 블로그 글이 안 올라왔으면 정오까지 대기. X 는 작성 링크로 사람이 게시(API 유료라 기본 꺼짐, 웹 자동 조작은 약관 위반이라 만들지 않음) — link·정리 글은 본문에 링크 없이 `done … x <URL>` 이 링크 답글 작성 링크(in_reply_to)를 돌려준다. Threads 는 무료 API (실패하면 오류만 알리고 다른 방법으로 올리지 않는다). 스폰서 글은 `channels.yaml sponsored_policy` 에서 x·threads 허용 전까지 제외
-- 블로그 게시 일정: `config/site.yaml publish_schedule` (월·수·금 7시 KST, 하루 1편) — 승인된 글은 다음 빈 요일에 배정(`content/site/schedule.json` 고정), 확인 `python -m pipeline.site schedule`
+- 블로그 게시 일정: `config/site.yaml publish_schedule` (월·수·금 7시 KST, 하루 1편) — 승인된 글은 다음 빈 요일에 배정(`content/site/schedule.json` 고정), 확인 `python -m pipeline.site schedule`. 게시일에 올라갈 글이 없으면 워커가 전날 18시·당일 9시에 텔레그램 리마인드(`site.publish_reminder`)
 - 유입 분석(영업용 데이터셋): `python -m pipeline.analytics report [--month YYYY-MM | --days 90]` → `reports/analytics/`
 - Hermes 설치·운영: `hermes/README.md` (`.venv` 파이썬으로 `hermes/install.py`), 텔레그램 답장 스킬: `hermes/skills/skin-marketing/SKILL.md`
 

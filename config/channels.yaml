@@ -8,7 +8,8 @@ shortform:
   # 형식 (2026-10-07): video = TTS + 실제 영상 클립(Claude 가 고름) | carousel = 사진 넘기기형(글자 슬라이드 — 시험해 보니 약해서 보류)
   # 주력은 블로그. 숏폼은 작게 시험: 주 video_per_week 편(그 주 승인 글 중 수요 점수 순), 4주 뒤 조회수·블로그 유입으로 계속할지 판단.
   # 같은 틀의 영상을 많이 올리면 유튜브 "대량 생산·반복 콘텐츠"(2026-07)·스팸 판정에 가까워진다 — 편수를 늘리기 전에 다시 검토.
-  format: video
+  # 2026-10-10 중단: 수익이 나기 전까지 블로그·Threads·X 만 운영 (영상·사진 넘기기형 렌더링 안 함). 다시 하려면 video 로
+  format: off
   video_per_week: 2
   carousel_channels: [instagram, tiktok]   # 사진 넘기기형일 때만 (유튜브 쇼츠는 올릴 수 없다)
   duration_sec: [30, 60]
