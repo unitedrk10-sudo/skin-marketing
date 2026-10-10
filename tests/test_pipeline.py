@@ -2536,3 +2536,29 @@ def test_blog_weekend_check_lists_next_week_slots(env, monkeypatch):
     assert site_mod.publish_reminder(saturday.replace(hour=9)) == ""
     assert not web.is_clinic_host("https://www.leedsth.nhs.uk/patients/resources/after-your-laser-treatment/")
     assert not web.is_clinic_host("https://dermatology.ucsf.edu/aftercare")       # 공공·대학 병원 환자 안내문은 출처 가능
+
+
+def test_reopen_unpublished_post_keeps_its_slot_and_block_needs_confirm(env, monkeypatch):
+    human = importlib.import_module("pipeline.03_review")
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7})
+    monkeypatch.setattr(site_mod, "now_kst", lambda: datetime(2026, 10, 10, 16, 0, tzinfo=site_mod.KST))
+    _published("2026-W41-07-a", state="rendered", live=False)
+    site_mod.collect_posts()                                                        # → 월 배정
+    human.build_batch("rendered")
+    out = human.apply("1 되돌리기: best 빼고 경복궁 공식 출처 보강", stage="rendered")
+    assert "검수로 되돌림 + 수정 요청" in out[0] and (common.content_dir("drafts") / "2026-W41-07-a").exists()
+    assert site_mod.publish_reminder(datetime(2026, 10, 11, 18, 5, tzinfo=site_mod.KST)).count("⏰ 내일(10/12 월)") == 1
+    common.save_json(common.content_dir("drafts") / "2026-W41-07-a" / "review.json", {"grade": "block", "findings": []})
+    human.build_batch("drafts")
+    assert "⛔ 자동검수 차단" in human.apply("1 승인")[0]                             # 번호로 골라도 ⛔ 는 재확인
+    assert "승인 → approved" in human.apply("1 승인", confirm=True)[0]
+    assert common.load_json(site_mod.schedule_file())["2026-W41-07-a"]["date"] == "2026-10-12"   # 같은 날 유지
+    human.build_batch("approved")
+    common.save_json(site_mod.state_file(), {"hash": "h", "slugs": ["2026-w41-07-a"]})
+    assert "이미 블로그에 게시된" in human.apply("1 되돌리기", stage="approved")[0]
+
+
+def test_ncbi_pages_use_eutilities():
+    assert web.ncbi_api_url("https://pmc.ncbi.nlm.nih.gov/articles/PMC12471997/").endswith("db=pmc&id=PMC12471997&rettype=xml")
+    assert "db=pubmed&id=26719647" in web.ncbi_api_url("https://pubmed.ncbi.nlm.nih.gov/26719647/")
+    assert web.ncbi_api_url("https://www.aad.org/x") is None

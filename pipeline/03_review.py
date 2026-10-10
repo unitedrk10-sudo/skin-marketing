@@ -50,7 +50,8 @@ from pipeline.common import (
 log = get_logger("03_review")
 
 ALLOWED_MOVES = {("drafts", "approved"), ("drafts", "rejected"), ("rendered", "ready_to_publish"), ("rendered", "rejected"),
-                 ("approved", "rejected")}
+                 ("approved", "rejected"),
+                 ("approved", "drafts"), ("rendered", "drafts")}  # 되돌리기: 블로그에 아직 안 올라간 승인 글을 고치려고 검수로 (2026-10-10)
 GRADE_ICON = {"pass": "✅", "caution": "⚠️", "pending": "⏳", "block": "⛔", None: "❔"}
 NUMS = r"(\d+(?:\s*[,，]\s*\d+|\s*~\s*\d+|\s*-\s*\d+|\s+\d+)*)"
 
@@ -61,7 +62,7 @@ class ReplyError(ValueError):
 
 @dataclass
 class Command:
-    action: str  # approve | revise | reject | publish_ok | sponsor_ok
+    action: str  # approve | revise | reject | publish_ok | sponsor_ok | reopen
     numbers: list[int] = field(default_factory=list)  # 빈 목록 = 전체
     note: str = ""
 
@@ -91,6 +92,8 @@ def parse_reply(reply: str) -> list[Command]:
             commands.append(Command("approve", _numbers(m.group(1))))
         elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:병원\s*확인|clinic\s*ok|sponsor\s*ok)", line, re.I):
             commands.append(Command("sponsor_ok", _numbers(m.group(1))))
+        elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:되돌리기|되돌려|reopen)(?:\s*(?:수정)?\s*[:：]\s*(.+))?", line, re.I):
+            commands.append(Command("reopen", _numbers(m.group(1)), (m.group(2) or "").strip()))
         elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:폐기|reject|drop)", line, re.I):
             commands.append(Command("reject", _numbers(m.group(1))))
         elif m := re.fullmatch(NUMS + r"\s*(?:번)?\s*(?:[가-힣]+\s*)?(?:수정|revise|fix)\s*[:：]\s*(.+)", line, re.I):
@@ -328,7 +331,7 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
     batch = load_batch(stage)
     # 전부 검증한 뒤에 실행한다 (한 줄이 틀려 일부만 처리되는 일이 없도록)
     stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered", "approved"}, "publish_ok": {"rendered"},
-                "sponsor_ok": {"drafts"}}
+                "sponsor_ok": {"drafts"}, "reopen": {"approved", "rendered"}}
     hint = {"approve": "렌더링 영상은 `게시 OK` 로 답해주세요",
             "revise": "렌더링 영상 수정(재렌더링)은 아직 미구현입니다",
             "publish_ok": "`게시 OK` 는 렌더링 영상 확인(--stage rendered) 단계에서만 씁니다"}
@@ -359,6 +362,10 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             if grade == "pending" and not confirm:  # 번호로 골라도 Claude Code 검수 전에는 보류
                 out.append(f"- {draft_id}: ⏳ Claude Code 검수 대기 — 결과 반영 후 다시 승인하거나 `--confirm`")
                 continue
+            if grade == "block" and not confirm:  # 번호로 골라도 차단(⛔)은 한 번 더 확인
+                out.append(f"- {draft_id}: ⛔ 자동검수 차단 — 걸린 내용을 확인했고 그래도 승인하려면 '재확인 승인'(--confirm), "
+                           "고치려면 `N 수정: …`")
+                continue
             if not cmd.numbers and grade != "pass" and not confirm:
                 out.append(f"- {draft_id}: {GRADE_ICON[grade]} 자동검수 {grade or '미실시'} — 번호로 따로 승인하거나 `전체 승인` 재확인 필요")
                 continue
@@ -375,6 +382,17 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             record_agreement(draft_id, grade, "revise")
             importlib.import_module("pipeline.worker").enqueue("revise", draft_id=draft_id, note=cmd.note)
             out.append(f"- {draft_id}: 수정 요청 접수 — 재생성·검수 후 다시 보내드립니다")
+        elif cmd.action == "reopen":
+            live = importlib.import_module("pipeline.social").live_slugs()
+            if draft_id in live:
+                out.append(f"- {draft_id}: 이미 블로그에 게시된 글이라 되돌릴 수 없습니다")
+                continue
+            move(draft_id, stage, "drafts")  # 게시 일정 자리는 그대로 (다시 승인하면 같은 날)
+            if cmd.note:
+                importlib.import_module("pipeline.worker").enqueue("revise", draft_id=draft_id, note=cmd.note)
+                out.append(f"- {draft_id}: 검수로 되돌림 + 수정 요청 접수 — 재생성·검수 후 다시 보내드립니다 (게시일 유지)")
+            else:
+                out.append(f"- {draft_id}: 검수로 되돌림 (게시일 유지) — `N 수정: …` 으로 고친 뒤 다시 승인해 주세요")
         elif cmd.action == "publish_ok":
             move(draft_id, "rendered", "ready_to_publish")
             out.append(f"- {draft_id}: 게시 OK → ready_to_publish")

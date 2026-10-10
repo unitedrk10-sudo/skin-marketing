@@ -198,6 +198,8 @@ def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRe
     """프롬프트는 stdin 으로. 도구는 cfg.tools (기본: 없음). 저장소 밖 빈 폴더에서 실행해 CLAUDE.md·MCP 를 읽지 않는다."""
     cmd = [os.environ.get("CLAUDE_BIN", "claude"), "-p", "--output-format", "json", "--strict-mcp-config",
            "--no-session-persistence", "--tools", ",".join(cfg.get("tools") or [])]
+    if cfg.get("tools"):  # -p 는 확인 창이 없으므로 쓰게 한 도구는 미리 허용해야 실제로 쓴다 (없으면 "권한 없음" 답변)
+        cmd += ["--allowedTools", ",".join(cfg["tools"])]
     if cfg.get("model"):
         cmd += ["--model", cfg["model"]]
     if system:

@@ -127,8 +127,13 @@ def apply_schedule(posts: list[dict], include_scheduled: bool = False) -> list[d
     sched = load_json(f) if f.exists() else {}
     deployed = set(load_json(state_file()).get("slugs", [])) if state_file().exists() else set()
     now = now_kst()
-    taken = {v["date"] for v in sched.values()}
     changed = False
+    ids = {p["draft"]["id"] for p in posts}
+    reopened = {p.name for p in draft_dirs("drafts")}  # 승인 뒤 고치려고 검수로 되돌린 글 — 다시 승인하면 같은 날
+    for did in [d for d in sched if d not in ids and d not in reopened and sched[d]["date"] >= now.date().isoformat()]:
+        sched.pop(did)  # 폐기된 글의 자리는 비운다
+        changed = True
+    taken = {v["date"] for v in sched.values()}
     for p in sorted(posts, key=lambda x: x["date"]):
         did = p["draft"]["id"]
         if did in sched:
@@ -168,9 +173,9 @@ def publish_reminder(now: datetime | None = None) -> str:
     if not rule:
         return ""
     now = now or now_kst()
-    collect_posts()  # 승인된 글의 게시일 배정
+    approved = {p["draft"]["id"] for p in collect_posts(include_scheduled=True)}  # 게시일 배정도 여기서
     f = schedule_file()
-    taken = {v["date"] for v in (load_json(f) if f.exists() else {}).values()}
+    taken = {v["date"] for did, v in (load_json(f) if f.exists() else {}).items() if did in approved}  # 되돌린 글의 자리는 빈 것으로
     due = []
     tomorrow = now.date() + timedelta(days=1)
     if now.hour >= REMIND_EVENING and tomorrow.weekday() in rule["days"] and tomorrow.isoformat() not in taken:

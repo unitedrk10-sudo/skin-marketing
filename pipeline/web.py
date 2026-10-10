@@ -45,8 +45,35 @@ PDF_MAX_BYTES = 15_000_000
 PDF_MAX_PAGES = 40
 
 
+# NCBI(PMC·PubMed) 웹 페이지는 2026-10 부터 자동 접근에 봇 확인(reCAPTCHA) 화면을 띄운다.
+# 확인을 우회하지 않고, NCBI 가 프로그램 접근용으로 제공하는 공식 E-utilities 로 같은 논문 본문을 받는다.
+EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?tool=skin-marketing&"
+PMC_ARTICLE = re.compile(r"^(?:pmc\.ncbi\.nlm\.nih\.gov/articles|(?:www\.)?ncbi\.nlm\.nih\.gov/pmc/articles)/(PMC\d+)", re.I)
+PUBMED_ARTICLE = re.compile(r"^pubmed\.ncbi\.nlm\.nih\.gov/(\d+)", re.I)
+
+
+def ncbi_api_url(url: str) -> str | None:
+    """PMC·PubMed 논문 주소 → E-utilities 주소 (본문 대조는 원래 주소 기준 그대로)."""
+    path = re.sub(r"^https?://", "", url.strip())
+    if m := PMC_ARTICLE.match(path):
+        return EUTILS + f"db=pmc&id={m.group(1)}&rettype=xml"
+    if m := PUBMED_ARTICLE.match(path):
+        return EUTILS + f"db=pubmed&id={m.group(1)}&rettype=abstract&retmode=text"
+    return None
+
+
 def fetch_page(url: str) -> tuple[int, str]:
-    """(HTTP 상태, 본문 텍스트). 연결 실패는 상태 0. PDF(FDA 문서·논문 등)는 글자를 뽑는다."""
+    """(HTTP 상태, 본문 텍스트). 연결 실패는 상태 0. PDF(FDA 문서·논문 등)는 글자를 뽑는다.
+    PMC·PubMed 논문은 E-utilities 로 받는다 (웹 페이지는 봇 확인 화면)."""
+    if api := ncbi_api_url(url):
+        status, text = _fetch(api)
+        if status == 200 and text.lstrip().startswith("<"):
+            text = html_to_text(re.sub(r"(?is)<(ref-list|back)\b.*?</\1>", " ", text))  # 참고문헌 목록은 뺀다
+        return status, text
+    return _fetch(url)
+
+
+def _fetch(url: str) -> tuple[int, str]:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/pdf,*/*"})
     try:
         with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:

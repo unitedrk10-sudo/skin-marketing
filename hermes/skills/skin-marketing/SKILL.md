@@ -49,6 +49,12 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - 병원에 보낼 최종본은 "N번 보여줘" 와 같은 방법으로 `script.md`, `blog.md` 를 보낸다.
 - 종료 코드 2 (`❓`): 메시지를 보여주고 다시 물어본다.
 
+## 2-0. 승인한 글 고치기 ("N번 승인한 거 고치고 싶어", "되돌려서 수정") — 블로그에 아직 안 올라간 글만
+- 먼저 목록: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review list --stage approved` (영상까지 만들어진 예전 글은 `--stage rendered`) → 어느 글인지 확인받은 뒤:
+  `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<N 되돌리기: 수정 내용>" --stage approved` (또는 `--stage rendered`)
+- 검수 단계로 돌아가고 게시일(월·수·금 자리)은 그대로 — 고친 뒤 다시 승인하면 같은 날 올라간다. 이미 블로그에 올라간 글은 되돌릴 수 없다고 안내.
+- 번호로 승인했는데 `⛔ 자동검수 차단` 이 나오면: 걸린 내용을 보여주고 "그래도 승인할지" 확인받은 뒤에만 `--confirm` 을 붙여 다시 실행한다. 보통은 `N 수정: …` 을 권한다.
+
 ## 2-1. 승인 철회 ("승인한 거 취소해줘", "N번 글 내려줘" — 영상·블로그 게시 전)
 - 먼저 목록: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review list --stage approved` → 번호를 보여주고 어느 글인지 **확인받은 뒤** 실행:
   `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review apply "<N 폐기>" --stage approved`
