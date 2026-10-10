@@ -201,13 +201,14 @@ a{color:inherit;text-decoration:none}img{display:block;max-width:100%}
 .meta{font-size:13px;color:var(--muted)}
 .badge{display:inline-block;background:var(--adbg);color:var(--ad);border:1px solid var(--ad);border-radius:5px;padding:0 7px;
 font-size:12px;font-weight:700;letter-spacing:0;text-transform:none}
-.hd{border-bottom:1px solid var(--line);background:var(--bg)}.hd-in{display:flex;align-items:center;height:92px}
+.hd{border-bottom:1px solid var(--line);background:var(--bg)}.hd-in{display:flex;align-items:center;height:84px}
 /* 팔레트 '차콜' (site.yaml palette: charcoal) — 차콜·아이보리·토프, 포인트 버건디는 같다 */
 html[data-palette=charcoal]{--bg:#F8F6F1;--ink:#1A1A1A;--muted:#6E6A64;--line:#E6E0D6;--sage:#7D7062;--sage-soft:#F0ECE6;
 --sand:#EFE9E1;--deep:#1F1F1F}
 .brand{margin-right:auto;display:flex;align-items:center;line-height:1}
-/* 심볼: 둥근 모서리가 끝나는 지점(곧은 옆선 위·아래 끝)을 Skinbound 꼭대기·KOREA 바닥에 맞춤 — 글자 덩어리 36px ÷ (1 - 2×22%) ≈ 65px */
-.brand img{width:65px;height:65px;border-radius:22%;margin-right:14px}
+/* 로고 묶음 비율 (2026-10-10 확정, 워드마크 글자 크기 F 기준): 심볼 1.63F · KOREA 0.32F(자간 .52em) · 간격 0.47F.
+   머리말 F=30px → 심볼 49px. 꼬리말·링크 미리보기 카드(og.lockup)도 같은 비율 */
+.brand img{width:49px;height:49px;border-radius:22%;margin-right:14px}
 .wm{display:inline-flex;flex-direction:column;align-items:center}
 .wm b{font-family:var(--serif);font-weight:400;font-size:30px;letter-spacing:-.01em;line-height:26px;display:block}
 .wm small{font-family:var(--sans);font-size:9.5px;line-height:10px;letter-spacing:.52em;margin-right:-.52em;margin-top:2px;font-weight:500;color:var(--muted);display:block}
@@ -334,11 +335,11 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     wordmark = f'<span class="wm"><b>{name}</b><small>KOREA</small></span>'  # 워드마크: Skinbound + 자간 넓힌 KOREA
     return f"""<!doctype html>
 <html lang="{lang or cfg.get('language', 'en')}" data-palette="{esc(cfg.get('palette') or 'green')}"><head>{''.join(head)}</head>
-<body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/" aria-label="{name} Korea"><img src="/icon-192.png" alt="" width="65" height="65">{wordmark}</a>
+<body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/" aria-label="{name} Korea"><img src="/icon-192.png" alt="" width="49" height="49">{wordmark}</a>
 <nav><a href="/#guides">Guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
 </div></header>
 <main>{body}</main>
-<footer class="ft"><div class="wrap ft-in"><div><span class="brand">{wordmark}</span>
+<footer class="ft"><div class="wrap ft-in"><div><span class="brand"><img src="/icon-inverse-192.png" alt="" width="49" height="49">{wordmark}</span>
 <p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
 <div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a></div>
