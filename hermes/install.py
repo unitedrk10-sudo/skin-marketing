@@ -37,10 +37,11 @@ def _py(*args: str) -> dict:
 JOBS: list[tuple[str, str | None, list[dict]]] = [
     ("skin-law-sync", "0 8 * * 1", [_py("pipeline.law_sync")]),
     # 주간 주제: 먼저 코드 업데이트 (law_sync 가 갱신한 legal/ 은 버리고 받음 — 다음 동기화 때 다시 생성됨)
-    ("skin-weekly-topics", "0 9 * * 1", [
+    # 목요일: 다음 주 게시용 주제 (주말 검수 → 월·수·금 게시, 2026-10-10)
+    ("skin-weekly-topics", "0 9 * * 4", [
         {"cmd": ["{git}", "checkout", "-q", "--", "legal/"], "on_fail": "", "quiet": True},
         {"cmd": ["{git}", "pull", "-q", "--ff-only"], "on_fail": "(코드 업데이트 실패 — 기존 코드로 진행)", "quiet": True},
-        _py("pipeline.01_topics", "--from-seed", "6"),  # 초기 주제 목록 소진 후 자동으로 Gemini 조사
+        _py("pipeline.01_topics", "--next-week", "--from-seed", "6"),  # 초기 주제 목록 소진 후 자동으로 Gemini 조사
     ]),
     ("skin-worker", "every 10m", [_py("pipeline.worker", "run")]),
     ("skin-traffic-report", "0 10 * * 1", [_py("pipeline.tracker", "report", "--days", "7")]),

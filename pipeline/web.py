@@ -24,7 +24,10 @@ REDIRECT_HOSTS = {"vertexaisearch.cloud.google.com"}
 # 도메인으로 추정하므로 검수에서는 ⚠️ 주의 (사람이 판단), 출처 수집에서는 제외
 CLINIC_HOST = re.compile(r"clinic|derma|hospital|plastic|surgery|aesthetic|medispa", re.I)
 # 도메인에 clinic·surgery 등이 들어가도 공신력 있는 의학 정보원·학회
-MEDICAL_REFERENCE_HOSTS = ("mayoclinic.org", "clevelandclinic.org", "plasticsurgery.org", "asds.net", "bad.org.uk")
+MEDICAL_REFERENCE_HOSTS = ("mayoclinic.org", "clevelandclinic.org", "plasticsurgery.org", "asds.net", "bad.org.uk",
+                           "nhs.uk", "mskcc.org", "hopkinsmedicine.org", "nih.gov")
+# 공공·대학 병원의 환자 안내문 (실무 수치 — 며칠·몇 주·SPF — 가 있는 출처, 2026-10-10): 공공·학술 도메인은 병원 사이트로 보지 않는다
+PUBLIC_SUFFIXES = (".gov", ".edu", ".ac.uk", ".gov.uk", ".nhs.uk", ".gov.au", ".edu.au")
 
 
 def host(url: str) -> str:
@@ -33,7 +36,7 @@ def host(url: str) -> str:
 
 def is_clinic_host(url_or_host: str) -> bool:
     h = host(url_or_host) if "://" in url_or_host else url_or_host.lower().removeprefix("www.")
-    if any(h == r or h.endswith("." + r) for r in MEDICAL_REFERENCE_HOSTS):
+    if any(h == r or h.endswith("." + r) for r in MEDICAL_REFERENCE_HOSTS) or h.endswith(PUBLIC_SUFFIXES):
         return False
     return bool(CLINIC_HOST.search(h))
 

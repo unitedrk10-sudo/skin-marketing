@@ -19,7 +19,7 @@
 - 법령 조회: `python -m pipeline.law_api search 의료법` / `python -m pipeline.law_api article 의료법 27`
 - 법령 동기화: `python -m pipeline.law_sync`
 - LLM 설정 점검: `python -m pipeline.llm check`
-- 주간 주제: `python -m pipeline.01_topics` / 초기 주제 목록에서: `--from-seed 6` (`config/seed_topics.yaml`, 소진 시 Gemini 로 자동 전환). 추천 순서 = 수요 점수 (`python -m pipeline.demand`: `config/procedures.yaml`·`config/attractions.yaml` 관심도 사전값 + 글별 조회수·링크 클릭, 같은 시술·관광지 주 2개까지)
+- 주간 주제: **목요일 09:00 다음 주 게시용** (`--next-week`, 2026-10-10 — 목·금 주제 선택 → 초안 → 토·일 검수 → 월·수·금 게시). 토·일 10시 이후 다음 주 빈 게시일이 있으면 워커가 알림(`site.weekend_check`). `python -m pipeline.01_topics` / 초기 주제 목록에서: `--from-seed 6` (`config/seed_topics.yaml`, 소진 시 Gemini 로 자동 전환). 추천 순서 = 수요 점수 (`python -m pipeline.demand`: `config/procedures.yaml`·`config/attractions.yaml` 관심도 사전값 + 글별 조회수·링크 클릭, 같은 시술·관광지 주 2개까지)
 - 주제 구성: `config/channels.yaml` `topic_quota` (주 6개 = 시술 정보 4 + 시술 × 여행 2), 유형 안에서는 수요 점수 순 (`01_topics.pick`). `content_axes` 에 없는 축의 주제는 후보에서 빠진다 — 관광지만 다루는 `travel_guide` 는 2026-10-06 제외.
 - 관광지 데이터(시술 × 여행 글용): `config/attractions.yaml` 속성으로 코스 규칙을 프롬프트에 넣는다 (`pipeline/attractions.py`, 관찰일 가능 목록 `python -m pipeline.attractions`)
 - 관광지 트렌드: `python -m pipeline.trends scan|show` — 주 1회 Gemini 검색 스캔(01_topics 가 자동 실행, `content/trends/`), 관광지 점수에 트렌드(+최대 0.4)·계절(`season`, 이번·다음 달 +0.15) 가산, 신규 장소는 주제 조사 프롬프트의 수요 정보로만(주제 후보로 직접 올리지 않음). 맛집·카페 트렌드(food)도 같이 스캔 → 근처 관광지 점수(×0.75)·시술 × 여행 글 프롬프트(출처 포함). 출처 없는 트렌드는 버리고 21일 지난 스캔은 무시. 식당·카페 이름은 독립 출처가 있는 무상 편집 예시로만 (`_rules.md`)

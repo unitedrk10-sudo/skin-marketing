@@ -178,9 +178,12 @@ def publish_reminder(now: datetime | None = None) -> str:
     if now.hour >= 9 and now.date().weekday() in rule["days"] and now.date().isoformat() not in taken:
         due.append(("오늘", now.date()))
     sent = load_json(reminder_file()) if reminder_file().exists() else []
+    weekend = weekend_check(now, rule, taken, sent)
     due = [(label, day) for label, day in due if f"{day}:{label}" not in sent]
     if not due:
-        return ""
+        if weekend:
+            save_json(reminder_file(), sent[-60:])
+        return weekend
     waiting = [p for p in draft_dirs("drafts") if (p / "draft.json").exists()]
     names = "월화수목금토일"
     lines = []
@@ -194,6 +197,30 @@ def publish_reminder(now: datetime | None = None) -> str:
     else:
         lines.append("- 검수 대기 초안도 없습니다 — 이번 주 주제 후보에서 골라 주세요 (초안·자동 검수까지 보통 30분~1시간).")
     save_json(reminder_file(), sent[-60:])
+    return "\n".join(([weekend, ""] if weekend else []) + lines)
+
+
+WEEKEND_HOUR = 10  # 토·일 이 시각(KST) 이후 — 다음 주 게시일이 다 찼는지 한 번씩
+
+
+def weekend_check(now: datetime, rule: dict, taken: set[str], sent: list[str]) -> str:
+    """토·일 오전: 다음 주 게시일(월·수·금) 배정 현황 — 빈 날이 있으면 알린다 (주말 검수용). sent 에 기록을 더한다."""
+    if now.weekday() not in (5, 6) or now.hour < WEEKEND_HOUR or f"{now.date()}:weekend" in sent:
+        return ""
+    monday = now.date() + timedelta(days=7 - now.weekday())
+    days = [monday + timedelta(days=d) for d in rule["days"]]
+    empty = [d for d in days if d.isoformat() not in taken]
+    sent.append(f"{now.date()}:weekend")
+    if not empty:
+        return ""
+    names = "월화수목금토일"
+    status = " · ".join(f"{names[d.weekday()]} {'✅' if d.isoformat() in taken else '❌'}" for d in days)
+    waiting = [p for p in draft_dirs("drafts") if (p / "draft.json").exists()]
+    lines = [f"📅 다음 주 블로그 ({monday:%m/%d}~): {status}"]
+    if waiting:
+        lines.append(f"- 검수 대기 초안 {len(waiting)}건 — 승인하면 빈 날부터 순서대로 배정됩니다.")
+    else:
+        lines.append(f"- 빈 날 {len(empty)}개 — 주제 후보에서 골라 주세요 (초안·자동 검수까지 보통 30분~1시간).")
     return "\n".join(lines)
 
 

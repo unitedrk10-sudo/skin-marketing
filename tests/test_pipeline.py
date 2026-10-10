@@ -2480,7 +2480,7 @@ def test_x_api_is_optional_and_signed(env, monkeypatch):
 def test_blog_publish_reminder_evening_before_and_morning_of_empty_day(env, monkeypatch):
     monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7})
     sunday = datetime(2026, 10, 11, 18, 5, tzinfo=site_mod.KST)
-    assert site_mod.publish_reminder(sunday.replace(hour=17)) == ""             # 18시 전
+    assert site_mod.publish_reminder(sunday.replace(hour=17)).startswith("📅 다음 주")   # 18시 전: 주말 점검만
     msg = site_mod.publish_reminder(sunday)
     assert msg.startswith("⏰ 내일(10/12 월) 블로그에 올라갈 글이 없습니다") and "주제 후보" in msg
     assert site_mod.publish_reminder(sunday.replace(hour=22)) == ""             # 한 번만
@@ -2523,3 +2523,16 @@ def test_ai_traffic_classifies_referrers_and_bots():
     assert ai.bot_name("Mozilla/5.0 ... compatible; ChatGPT-User/1.0; +https://openai.com/bot") == ("live", "ChatGPT")
     assert ai.bot_name("Mozilla/5.0 (compatible; PerplexityBot/1.0)") == ("index", "Perplexity 색인")
     assert ai.bot_name("Mozilla/5.0 Chrome/120") is None
+
+
+def test_blog_weekend_check_lists_next_week_slots(env, monkeypatch):
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7})
+    saturday = datetime(2026, 10, 10, 10, 30, tzinfo=site_mod.KST)
+    monkeypatch.setattr(site_mod, "now_kst", lambda: saturday)
+    _published("2026-W41-07-a", live=False)                                      # → 월 배정
+    msg = site_mod.publish_reminder(saturday)
+    assert msg.startswith("📅 다음 주 블로그 (10/12~): 월 ✅ · 수 ❌ · 금 ❌") and "주제 후보" in msg
+    assert site_mod.publish_reminder(saturday.replace(hour=12)) == ""               # 하루 한 번
+    assert site_mod.publish_reminder(saturday.replace(hour=9)) == ""
+    assert not web.is_clinic_host("https://www.leedsth.nhs.uk/patients/resources/after-your-laser-treatment/")
+    assert not web.is_clinic_host("https://dermatology.ucsf.edu/aftercare")       # 공공·대학 병원 환자 안내문은 출처 가능

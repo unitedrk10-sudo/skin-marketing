@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 from pipeline import demand, llm, trends
 from pipeline.common import (
@@ -183,9 +183,14 @@ def build(week: str, count: int) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="주간 주제 후보 생성")
     parser.add_argument("--week", default=iso_week())
+    parser.add_argument("--next-week", action="store_true",
+                        help="다음 주 게시용 (목요일 실행 → 주말 검수 → 월·수·금 게시, 2026-10-10)")
     parser.add_argument("--count", type=int, default=load_yaml("channels.yaml").get("topics_per_week", 6))
     parser.add_argument("--from-seed", type=int, metavar="N", help="조사해 둔 초기 주제 N개 사용 (Gemini 호출 없음)")
     args = parser.parse_args(argv)
+    if args.next_week:
+        today = date.today()
+        args.week = iso_week(today + timedelta(days=7 - today.weekday()))  # 다음 월요일의 주
 
     scan = trends.ensure_fresh()  # 관광지 트렌드 주 1회 스캔 (실패해도 계속)
     data = from_seed(args.week, args.from_seed) if args.from_seed else None
@@ -197,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     save_json(path, data)
     log.info("주제 %d건 저장: %s", len(data["topics"]), path)
     print(telegram_message(args.week, data["topics"]))
+    if args.next_week:
+        print("\n📅 다음 주 블로그 월·수·금 3편 — 3개 골라 주시면 금요일까지 초안이 오고, 주말에 검수하면 월요일부터 순서대로 올라갑니다.")
     if scan and (scan["attractions"] or scan["emerging"] or scan.get("food")):
         hot = sorted(scan["attractions"].items(), key=lambda x: -x[1]["trend"])[:3]
         names = load_yaml("attractions.yaml").get("attractions") or {}
