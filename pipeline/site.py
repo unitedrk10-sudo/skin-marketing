@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import html
 import json
 import os
@@ -31,7 +32,7 @@ import markdown
 
 from pipeline import clinics, og, site_images, sponsors, tracker
 from pipeline.common import (PRACTICE_KIND, ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json,
-                             load_yaml, run_cli, save_json, slugify)
+                             load_review, load_yaml, run_cli, save_json, slugify)
 
 log = get_logger("site")
 
@@ -173,9 +174,11 @@ def publish_reminder(now: datetime | None = None) -> str:
     if not rule:
         return ""
     now = now or now_kst()
-    approved = {p["draft"]["id"] for p in collect_posts(include_scheduled=True)}  # 게시일 배정도 여기서
+    approved = {p["draft"]["id"]: p for p in collect_posts(include_scheduled=True)}  # 게시일 배정도 여기서
     f = schedule_file()
-    taken = {v["date"] for did, v in (load_json(f) if f.exists() else {}).items() if did in approved}  # 되돌린 글의 자리는 빈 것으로
+    # 날짜 → 그날 올라갈 글 (되돌린 글의 자리는 빈 것으로)
+    by_date = {v["date"]: approved[did] for did, v in (load_json(f) if f.exists() else {}).items() if did in approved}
+    taken = set(by_date)
     due = []
     tomorrow = now.date() + timedelta(days=1)
     if now.hour >= REMIND_EVENING and tomorrow.weekday() in rule["days"] and tomorrow.isoformat() not in taken:
@@ -183,7 +186,7 @@ def publish_reminder(now: datetime | None = None) -> str:
     if now.hour >= 9 and now.date().weekday() in rule["days"] and now.date().isoformat() not in taken:
         due.append(("오늘", now.date()))
     sent = load_json(reminder_file()) if reminder_file().exists() else []
-    weekend = weekend_check(now, rule, taken, sent)
+    weekend = weekend_check(now, rule, by_date, sent)
     due = [(label, day) for label, day in due if f"{day}:{label}" not in sent]
     if not due:
         if weekend:
@@ -205,27 +208,56 @@ def publish_reminder(now: datetime | None = None) -> str:
     return "\n".join(([weekend, ""] if weekend else []) + lines)
 
 
-WEEKEND_HOUR = 10  # 토·일 이 시각(KST) 이후 — 다음 주 게시일이 다 찼는지 한 번씩
+WEEKEND_HOUR = 10  # 토·일 이 시각(KST) 이후 — 다음 주 현황
 
 
-def weekend_check(now: datetime, rule: dict, taken: set[str], sent: list[str]) -> str:
-    """토·일 오전: 다음 주 게시일(월·수·금) 배정 현황 — 빈 날이 있으면 알린다 (주말 검수용). sent 에 기록을 더한다."""
+def _post_status(path: Path) -> tuple[str, str]:
+    """(아이콘, 남은 지적 요약) — 자동 검수 결과 기준, 한국어 번역이 있으면 한국어."""
+    human = importlib.import_module("pipeline.03_review")
+    review = load_review(path) or {}
+    issues = human._issues(review)
+    if not issues:
+        return human.GRADE_ICON.get(review.get("grade"), "❔"), ""
+    ko = human._korean(path)
+    first = ko["findings"][0] if ko and ko.get("findings") else issues[0]["message"]
+    first = re.sub(r"^\[[^\]]*\]\s*", "", first).split(" → ")[0][:70]
+    return human.GRADE_ICON.get(review.get("grade"), "❔"), f"지적 {len(issues)}건 남음 ({first})"
+
+
+def weekend_check(now: datetime, rule: dict, by_date: dict[str, dict], sent: list[str]) -> str:
+    """주말 검수용 다음 주 현황 (2026-10-11): 토 10시 이후 항상 — 날짜별 글·남은 지적·빈 날·검수 대기 초안.
+    일 10시 이후에는 빈 날이나 검수 대기 초안이 남았을 때만 다시. sent 에 기록을 더한다."""
     if now.weekday() not in (5, 6) or now.hour < WEEKEND_HOUR or f"{now.date()}:weekend" in sent:
         return ""
+    human = importlib.import_module("pipeline.03_review")
     monday = now.date() + timedelta(days=7 - now.weekday())
     days = [monday + timedelta(days=d) for d in rule["days"]]
-    empty = [d for d in days if d.isoformat() not in taken]
-    sent.append(f"{now.date()}:weekend")
-    if not empty:
-        return ""
-    names = "월화수목금토일"
-    status = " · ".join(f"{names[d.weekday()]} {'✅' if d.isoformat() in taken else '❌'}" for d in days)
+    empty = [d for d in days if d.isoformat() not in by_date]
     waiting = [p for p in draft_dirs("drafts") if (p / "draft.json").exists()]
-    lines = [f"📅 다음 주 블로그 ({monday:%m/%d}~): {status}"]
-    if waiting:
-        lines.append(f"- 검수 대기 초안 {len(waiting)}건 — 승인하면 빈 날부터 순서대로 배정됩니다.")
-    else:
-        lines.append(f"- 빈 날 {len(empty)}개 — 주제 후보에서 골라 주세요 (초안·자동 검수까지 보통 30분~1시간).")
+    sent.append(f"{now.date()}:weekend")
+    if now.weekday() == 6 and not empty and not waiting:
+        return ""  # 일요일: 남은 일이 없으면 조용히
+    names = "월화수목금토일"
+    lines = [f"📅 다음 주 블로그 현황 ({monday:%m/%d}~)" + (" — 아직 남은 일" if now.weekday() == 6 else "")]
+    check = []
+    for d in days:
+        post = by_date.get(d.isoformat())
+        if not post:
+            lines.append(f"{names[d.weekday()]} ❌ 비어 있음")
+            continue
+        icon, note = _post_status(post["path"])
+        c = human.code(post["draft"]["id"])
+        lines.append(f"{names[d.weekday()]} ✅ [{c}] {post['draft']['blog'].get('title', '')} {icon}" + (f" — {note}" if note else ""))
+        if note:
+            check.append(f"{c}(⚠️ 승인됨, 보강하려면 `{c} 되돌리기: …`)")
+    for p in waiting:
+        icon, note = _post_status(p)
+        c = human.code(p.name)
+        lines.append(f"🕓 검수 대기 [{c}] {load_draft(p)['blog'].get('title', '')} {icon}" + (f" — {note}" if note else ""))
+        check.append(f"{c}(검수 대기 → 승인하면 빈 날부터 배정)")
+    if empty and not waiting:
+        check.append(f"빈 날 {len(empty)}개 — 주제 후보에서 골라 주세요 (초안·자동 검수까지 보통 30분~1시간)")
+    lines.append("🔎 검토 필요: " + (" · ".join(check) if check else "없음 — 다음 주 준비 완료"))
     return "\n".join(lines)
 
 

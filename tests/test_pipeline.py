@@ -2534,10 +2534,21 @@ def test_blog_weekend_check_lists_next_week_slots(env, monkeypatch):
     saturday = datetime(2026, 10, 10, 10, 30, tzinfo=site_mod.KST)
     monkeypatch.setattr(site_mod, "now_kst", lambda: saturday)
     _published("2026-W41-07-a", live=False)                                      # → 월 배정
+    common.save_json(common.content_dir("approved") / "2026-W41-07-a" / "review.json", {"grade": "caution", "findings": [
+        {"check": "cross", "severity": "caution", "message": "[blog/major] Side effects not mentioned → add", "quote": ""}]})
     msg = site_mod.publish_reminder(saturday)
-    assert msg.startswith("📅 다음 주 블로그 (10/12~): 월 ✅ · 수 ❌ · 금 ❌") and "주제 후보" in msg
+    assert msg.startswith("📅 다음 주 블로그 현황 (10/12~)")
+    assert "월 ✅ [W41-07] What is Rejuran? ⚠️ — 지적 1건 남음 (Side effects not mentioned)" in msg
+    assert "수 ❌ 비어 있음" in msg and "W41-07(⚠️ 승인됨" in msg and "빈 날 2개" in msg
     assert site_mod.publish_reminder(saturday.replace(hour=12)) == ""               # 하루 한 번
     assert site_mod.publish_reminder(saturday.replace(hour=9)) == ""
+    _published("2026-W41-09-b", live=False)
+    _published("2026-W41-10-c", live=False)                                         # 다음 주가 다 참
+    sunday = saturday + timedelta(days=1)
+    assert site_mod.publish_reminder(sunday) == ""                                  # 일요일: 남은 일 없으면 조용히
+    _published("2026-W41-11-d", state="drafts", live=False)
+    common.save_json(site_mod.reminder_file(), [])
+    assert "🕓 검수 대기 [W41-11]" in site_mod.publish_reminder(sunday)               # 검수 대기가 있으면 다시
     assert not web.is_clinic_host("https://www.leedsth.nhs.uk/patients/resources/after-your-laser-treatment/")
     assert not web.is_clinic_host("https://dermatology.ucsf.edu/aftercare")       # 공공·대학 병원 환자 안내문은 출처 가능
 

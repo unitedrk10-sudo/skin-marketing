@@ -385,3 +385,13 @@ topics:
     has_price: false
 
   # ---------- 관광지 소개·코스 (travel_guide) — AI 검색 유입 통로 (2026-09-28 조사: 서울AI재단 2025 외국인 방문 분석) ----------
+  # ---------- 추가 (2026-10-10, W41-07 검수에서 나온 아이템) ----------
+  - id: bruising-swelling-after-injectables
+    wave: 1
+    axis: procedure
+    title: "Bruising and swelling after Botox, fillers and skin boosters: how long, and when to plan photos"
+    angle: "What sources say about how long bruising, swelling and redness usually last after botulinum toxin, fillers and PN skin boosters, what commonly helps (cold compress etc.), how much it varies person to person, and how to schedule photo days (hanbok, weddings, trips) around it."
+    why_now: "Travelers plan hanbok and photo days around treatments; the hanbok guide review showed readers need a dedicated side-effects timeline."
+    keywords: [bruising after botox how long, filler swelling how long, rejuran bumps how long, korea treatment before photos]
+    hook: "Bruise after your injection — how long until photos?"
+    has_price: false
