@@ -74,6 +74,8 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - X 는 메시지의 작성 링크를 사람이 눌러 직접 [게시]한다 (X API 는 유료라 기본 꺼짐). 웹 화면 자동 조작으로 올려 달라는 요청은 거절한다 — X 약관 위반·계정 정지 위험.
 - "오늘 스레드 올려" / "2 스레드 올려": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social post 오늘 threads` (번호면 `post 2 threads`, Threads API, 무료)
 - "오늘 게시 완료 x <URL>" / "X 올렸어 <URL>" / "2 게시 완료 x <URL>": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social done 오늘 x <URL>` (번호면 `done 2 x <URL>`, Threads 를 손으로 올렸으면 `threads`)
+- **x.com/…/status/… 주소만 단독으로 오면** (직전에 `[오늘의 SNS 글]` 이 있었으면) "오늘 게시 완료 x <주소>" 로 보고 바로 `done 오늘 x <주소>` 를 실행한다. threads.com 주소면 `done 오늘 threads <주소>`. 다른 명령을 찾거나 파일을 뒤지지 않는다.
+- 링크 답글은 **새 글 소개(월·수·금)와 한 주 정리(일)** 에만 있다. 사실 하나·여행 팁 글은 링크가 없는 글이라 답글이 없다 — "답글 없음(링크 없는 글)" 이라고 알려준다.
   → 출력에 `↩️ 링크 답글` 작성 링크가 있으면 **그대로** 보낸다 (누르면 방금 올린 X 글에 링크 답글이 채워진 화면이 열린다).
 - 남은 글 다시 보기: `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.social list` / 오늘의 글 다시 보기: `... -m pipeline.social today`
 - "블로그 일정" / "언제 올라가?": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.site schedule` (월·수·금 7시, 하루 1편)
