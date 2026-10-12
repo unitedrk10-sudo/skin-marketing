@@ -2293,7 +2293,7 @@ def test_social_compose_three_kinds_list_and_x_reply_link(env):
     with pytest.raises(social_mod.SocialError, match="게시물 주소"):
         social_mod.record(social_mod.resolve("1"), "x", "https://evil.example/x.com")
     out = social_mod.record(social_mod.resolve("1"), "x", "https://x.com/Skinboundkorea/status/123?s=20")
-    assert "https://x.com/intent/post?in_reply_to=123&text=Full%20guide%20with%20sources%3A%20https%3A%2F%2Fskinbound" in out
+    assert "`Full guide with sources: https://skinboundkorea.com/what-is-rejuran/`" in out and "intent" not in out
     assert "x ✅ https://x.com/Skinboundkorea/status/123\n" in social_mod.list_message() + "\n"   # 공유 꼬리표 제거
     fact_out = social_mod.record(social_mod.resolve("2"), "x", "https://x.com/Skinboundkorea/status/124")
     assert "↩️" not in fact_out                                                  # 링크 없는 글은 답글 없음
@@ -2335,7 +2335,7 @@ def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkey
     assert social_mod.daily_message(MONDAY.replace(hour=8)) == ""                # 9시 전
     msg = social_mod.daily_message(MONDAY)
     assert msg.startswith("[오늘의 SNS 글] 10/12(월) · 새 글 소개 — What is Rejuran?")
-    assert "'오늘 게시 완료 x <주소>' → 링크 답글" in msg
+    assert "'오늘 게시 완료 x <주소>' → 답글로 붙일 블로그 링크 문구" in msg
     assert social_mod.daily_message(MONDAY.replace(hour=15)) == ""               # 하루 한 번
     assert "사실 하나" in social_mod.daily_message(MONDAY + timedelta(days=1))
     assert "여행 팁·흔한 오해" in social_mod.daily_message(MONDAY + timedelta(days=2))
@@ -2346,7 +2346,7 @@ def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkey
     monkeypatch.setattr(social_mod, "now_kst", lambda: MONDAY + timedelta(days=7, hours=1))  # 자정 넘겨 답해도
     assert social_mod.resolve("오늘") == social_mod.Ref("roundup-2026-W42", "roundup")
     out = social_mod.record("오늘", "x", "https://x.com/Skinboundkorea/status/9")
-    assert "in_reply_to=9&text=All%20guides" in out
+    assert "`All guides with sources: https://skinboundkorea.com/`" in out
 
 
 def test_social_daily_waits_for_todays_blog_post(env, monkeypatch):

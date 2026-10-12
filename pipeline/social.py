@@ -7,7 +7,7 @@
     오늘 게시 예정 글이 아직 안 올라왔으면 정오까지 기다린다 (그날은 그 글의 link 가 나가게).
   - X: 기본은 **작성 링크(intent)** — 텔레그램의 링크를 누르면 글이 채워진 X 작성 화면이 열리고 사람이 [게시]를 누른다.
        link·정리 글은 본문에 링크를 넣지 않고(외부 링크가 있으면 노출이 줄어든다고 알려져 있다) 답글로 단다:
-       'N 게시 완료 x <주소>' 를 받으면 그 게시물에 다는 링크 답글 작성 링크(in_reply_to)를 돌려준다.
+       'N 게시 완료 x <주소>' 를 받으면 답글로 붙여 넣을 링크 문구를 돌려준다 (X 앱은 작성 링크의 in_reply_to 를 무시해 새 글이 된다).
        X API 는 유료라 기본 꺼짐 (config/channels.yaml text_social.x.mode: api 로 켤 수 있다, OAuth 1.0a 사용자 토큰).
        웹 화면을 자동 조작해 올리는 방식은 X 약관(공개 인터페이스 외 자동 접근 금지) 위반·계정 정지 위험이라 만들지 않는다.
   - Threads: Threads API(무료)로 올린다. link 는 본문 끝에 링크.
@@ -18,7 +18,7 @@
     python -m pipeline.social today              # 오늘의 글 (오전 9시 이후 하루 한 번, 워커가 부른다)
     python -m pipeline.social list               # 남은 글: 번호·종류·작성 링크·상태
     python -m pipeline.social post 오늘 threads   # API 게시 (번호 · 오늘 · draft_id[:종류])
-    python -m pipeline.social done 오늘 x https://x.com/skinboundkorea/status/...   # 손으로 올린 게시 기록 (+ X 링크 답글 작성 링크)
+    python -m pipeline.social done 오늘 x https://x.com/skinboundkorea/status/...   # 손으로 올린 게시 기록 (+ X 링크 답글 문구)
 """
 
 from __future__ import annotations
@@ -430,7 +430,7 @@ def _channel_lines(ref_word: str, item: dict) -> list[str]:
             lines.append(f"x: '{ref_word} X 올려' (API, 유료)\n{c['text']}")
         else:
             after = (f"게시 후 '{ref_word} 게시 완료 {ch} <주소>'" +
-                     (" → 링크 답글 작성 링크를 보내드립니다" if c.get("reply") else ""))
+                     (" → 답글로 붙일 블로그 링크 문구를 보내드립니다" if c.get("reply") else ""))
             lines.append(f"{ch}: {intent_link(ch, c['text'])}\n   {after}")
     return lines
 
@@ -555,9 +555,9 @@ def record(target: Ref | Path | str, channel: str, url: str, kind: str = "link")
     out = f"✅ {data['title']} ({LABEL.get(ref.kind, ref.kind)}) — {channel} 게시 기록"
     reply = item["channels"][channel].get("reply")
     if channel == "x" and reply:
-        link = reply_link(url, reply)
-        out += (f"\n↩️ 링크 답글 — 눌러서 [답글] 게시:\n{link}" if link
-                else f"\n↩️ 주소에서 게시물 번호를 못 찾았습니다. 답글로 직접 붙여 넣으세요:\n{reply}")
+        # X 앱은 작성 링크의 답글 지정(in_reply_to)을 무시하고 새 글로 올린다 (2026-10-12 확인) → 문구를 복사해 직접 답글로
+        out += (f"\n↩️ 링크 답글: 방금 올린 글 {url} 을 열고 [답글] → 아래 문구를 붙여 넣으세요 (탭하면 복사)\n"
+                f"`{reply}`")
     return out
 
 
