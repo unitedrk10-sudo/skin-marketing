@@ -2626,3 +2626,16 @@ def test_approve_waits_for_pending_revise(env):
     assert "수정 요청 접수" in human_mod.apply("1 수정: best 빼기")[0]
     assert "🛠 수정 요청 처리 중" in human_mod.apply("1 승인", confirm=True)[0]     # 수정이 버려지지 않게
     assert (common.content_dir("drafts") / draft_id).exists()
+
+
+@pytest.mark.parametrize("text,flagged", [
+    ("This serum heals damaged skin overnight.", True),
+    ("A cream that treats acne.", True),
+    ("Treat PA and SPF numbers as a helpful guide.", False),
+    ("Ask your treating clinic first.", False),
+    ("Use gentle products while your skin is healing.", False),
+    ('No cosmetic may claim it will "treat" a skin condition.', False),
+])
+def test_cosmetic_rule_skips_non_claim_uses(text, flagged):
+    m = review_mod.COSMETIC_PATTERNS.search(text)
+    assert m and (not review_mod._cosmetic_context_ok(text, m)) == flagged

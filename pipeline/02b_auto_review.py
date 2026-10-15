@@ -151,6 +151,23 @@ def _in_question(text: str, m: re.Match) -> bool:
     return bool(end) and end.group(0) == "?"
 
 
+# 화장품 효능 주장이 아닌 쓰임 (2026-10-15 W43-01 오탐): "treat X as", 시술하는 병원·의사, 시술 뒤 피부가 낫는 중, 따옴표로 인용한 금지 주장
+COSMETIC_OK_AFTER = re.compile(r"\s*(?:\S+\s+){0,5}?as\b|\s+(?:clinic|clinics|doctor|doctors|dermatologist|physician|provider|team)\b", re.I)
+COSMETIC_OK_HEALING = re.compile(r"(?:skin|it|it's|is|still|while|after)\s+(?:is\s+|still\s+)?healing|healing\s+(?:skin|period|window|process|phase|time)", re.I)
+
+
+def _cosmetic_context_ok(text: str, m: re.Match) -> bool:
+    word = m.group(0).lower()
+    before, after = text[max(0, m.start() - 25):m.start()], text[m.end():m.end() + 40]
+    if before.rstrip().endswith(("\"", "'", "“", "‘")):
+        return True  # 'it will "treat" a skin condition' — 금지 주장을 설명하는 인용
+    if word.startswith("treat") and COSMETIC_OK_AFTER.match(after):
+        return True
+    if word.startswith("heal") and COSMETIC_OK_HEALING.search(text[max(0, m.start() - 20):m.end() + 15]):
+        return True
+    return False
+
+
 def _snippet(text: str, m: re.Match, pad: int = 30) -> str:
     return text[max(0, m.start() - pad) : m.end() + pad].replace("\n", " ").strip()
 
@@ -202,9 +219,10 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
     if draft.get("content_type") == "skincare":
         for where, text in texts.items():
             for m in COSMETIC_PATTERNS.finditer(text):
-                if NEGATION.search(text[max(0, m.start() - 30):m.start()]):
+                if NEGATION.search(text[max(0, m.start() - 30):m.start()]) or _cosmetic_context_ok(text, m):
                     continue  # "cosmetics can't claim to treat..." 같은 설명은 허용
-                findings.append(Finding("rules", "block", f"[{where}] 화장품을 의약품처럼 표현 (화장품법 §13)", _snippet(text, m)))
+                findings.append(Finding("rules", "block", f"[{where}] 화장품을 의약품처럼 표현 (화장품법 §13): '{m.group(0)}'",
+                                        _snippet(text, m)))
 
     if draft.get("content_type") == "procedure_travel" and ITINERARY.search(texts["blog"]) \
             and not OBSERVATION_DAY.search(texts["blog"]):

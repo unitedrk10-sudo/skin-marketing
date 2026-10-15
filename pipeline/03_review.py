@@ -198,7 +198,11 @@ def draft_message(path: Path, number: int, total: int) -> str:
         out.append("🇰🇷 검수용 한국어 번역 — 게시되는 글은 영어 원문 그대로 (첨부 파일 끝에 원문)")
     issues = _issues(review)
     msgs = ko["findings"] if ko else [f["message"] for f in issues]
-    out += ["", "🔎 남은 지적" + ("" if issues else ": 없음")] + [f"{ISSUE_ICON[f['severity']]} {m}" for f, m in zip(issues, msgs)]
+    out += ["", "🔎 남은 지적" + ("" if issues else ": 없음")]
+    for f, m in zip(issues, msgs):  # 어디가 걸렸는지 원문 구절도 같이 (영어 원문 그대로 — 게시되는 문장)
+        out.append(f"{ISSUE_ICON[f['severity']]} {m}")
+        if f.get("quote") and len(f["quote"]) < 400:
+            out.append(f"   ↳ 걸린 곳: “…{f['quote'].strip()}…”")
     medical = medical_sentences(draft)
     out += ["", f"🩺 의료 정보 확인 ({len(medical)}문장) — 문장과 출처가 맞는지 봐 주세요"]
     for i, (text, urls) in enumerate(medical):
