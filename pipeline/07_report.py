@@ -74,6 +74,48 @@ def agreement(since: date) -> tuple[int, int]:
     return sum(int(r.get("agree") or 0) for r in rows), len(rows)
 
 
+STAGES = ["1단계 (1~4주): 전부 사람 검수", "2단계 (5~8주): ⚠️·⛔ 전부 + ✅ 20% 무작위",
+          "3단계 (9주~): ⚠️·⛔ 전부 + ✅ 10% 무작위"]  # 기획서 6-0 신뢰 단계 — 완전 위임은 하지 않는다
+
+
+def trust_check(today: date | None = None) -> list[str]:
+    """4주마다 신뢰 단계 점검 (channels.yaml review.trust_start, 2026-10-15). 그 4주 동안의 자동 등급 ↔ 사람 판단.
+    점검 주가 아니면 빈 목록. 단계 전환은 사람이 정한다 — 여기서는 숫자와 권고만."""
+    from pipeline.common import load_yaml
+    cfg = (load_yaml("channels.yaml").get("review") or {})
+    if not cfg.get("trust_start"):
+        return []
+    today = today or date.today()
+    start = date.fromisoformat(str(cfg["trust_start"]))
+    every = int(cfg.get("check_weeks", 4)) * 7
+    elapsed = (today - start).days + 1
+    if elapsed < every or elapsed % every >= 7:  # 4주가 찬 그 주의 리포트에서만
+        return []
+    k = elapsed // every
+    since, until = start + timedelta(days=every * (k - 1)), start + timedelta(days=every * k - 1)
+    path = log_dir() / "review_agreement.csv"
+    rows = [r for r in csv.DictReader(path.open(encoding="utf-8"))
+            if since.isoformat() <= r.get("date", "") <= until.isoformat()] if path.exists() else []
+    if not rows:
+        return [f"🧭 신뢰 단계 점검 ({k * 4}주차): 검수 기록 없음"]
+    grades = Counter(r["auto_grade"] for r in rows)
+    agree = sum(int(r.get("agree") or 0) for r in rows)
+    missed = [r["draft_id"] for r in rows if r["auto_grade"] == "pass" and r["human_decision"] != "approve"]
+    caution_ok = sum(1 for r in rows if r["auto_grade"] == "caution" and r["human_decision"] == "approve")
+    stage = STAGES[min(k, len(STAGES)) - 1]
+    lines = [f"🧭 신뢰 단계 점검 ({k * 4}주차, {since:%m/%d}~{until:%m/%d}) — 지금: {stage}",
+             f"   검수 {len(rows)}건 · 자동 등급 ✅{grades['pass']} ⚠️{grades['caution']} ⛔{grades['block']} · "
+             f"자동-사람 일치 {agree}/{len(rows)} ({round(agree * 100 / len(rows))}%)",
+             f"   ✅ 인데 사람이 고치거나 폐기: {len(missed)}건" + (f" ({', '.join(m[:10] for m in missed[:3])})" if missed else ""),
+             f"   ⚠️ 인데 그대로 승인: {caution_ok}건 (많으면 ⚠️ 기준이 넓다는 뜻 — 기준 조정 검토)"]
+    nxt = STAGES[min(k, len(STAGES) - 1)]
+    if missed:
+        lines.append(f"   → 권고: 단계 유지 (✅ 에서 놓친 것이 있음). 놓친 항목을 규칙에 추가")
+    elif k < len(STAGES):
+        lines.append(f"   → 권고: 다음 단계 가능 — {nxt}. 전환은 사람이 결정 (개발 세션에서 반영)")
+    return lines
+
+
 def extras() -> list[str]:
     """블로그·유입·수요 — 각각 실패해도 리포트는 나간다."""
     lines = []
@@ -126,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="주간 리포트")
     parser.add_argument("--days", type=int, default=7)
     args = parser.parse_args(argv)
-    text = message(collect(args.days), extras())
+    text = message(collect(args.days), extras() + trust_check())
     path = ROOT / "reports" / "weekly" / f"{iso_week()}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n", encoding="utf-8")

@@ -2639,3 +2639,19 @@ def test_approve_waits_for_pending_revise(env):
 def test_cosmetic_rule_skips_non_claim_uses(text, flagged):
     m = review_mod.COSMETIC_PATTERNS.search(text)
     assert m and (not review_mod._cosmetic_context_ok(text, m)) == flagged
+
+
+def test_trust_check_every_four_weeks(env, monkeypatch):
+    report = importlib.import_module("pipeline.07_report")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_start": "2026-10-05", "check_weeks": 4}} if n == "channels.yaml" else _o(n))
+    path = common.log_dir() / "review_agreement.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("date,draft_id,auto_grade,human_decision,agree\n"
+                    "2026-10-06,a,caution,approve,0\n2026-10-10,b,pass,approve,1\n2026-10-15,c,pass,revise,0\n", encoding="utf-8")
+    assert report.trust_check(date(2026, 10, 25)) == []                              # 4주 전
+    lines = report.trust_check(date(2026, 11, 1))                                    # 4주가 찬 일요일
+    assert "4주차, 10/05~11/01" in lines[0] and "1단계" in lines[0]
+    assert "✅ 인데 사람이 고치거나 폐기: 1건" in "\n".join(lines) and "단계 유지" in lines[-1]
+    assert report.trust_check(date(2026, 11, 8)) == []                               # 다음 점검은 8주차
+    assert "8주차" in report.trust_check(date(2026, 11, 29))[0]

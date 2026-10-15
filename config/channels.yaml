@@ -80,3 +80,8 @@ sponsored_policy:
     allowed: false
     why: "Meta 브랜디드 콘텐츠 정책(Threads) 확인 전 — 확인 후 allowed: true 와 requires 로 바꾼다"
 # SNS 프로필 링크에는 스폰서 병원 링크를 걸지 않는다 (대가 관계 링크 = 브랜디드 콘텐츠로 볼 여지). 프로필 → 우리 블로그 → 스폰서 글 → 병원.
+
+# 사람 검수 신뢰 단계 (기획서 6-0) — 4주마다 주간 리포트에 점검(07_report.trust_check). 단계 전환은 사람이 결정, 완전 위임은 하지 않는다
+review:
+  trust_start: 2026-10-05   # 첫 검수 주의 월요일 → 4주 점검 11/1(일) 리포트, 8주 11/29
+  check_weeks: 4
