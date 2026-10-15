@@ -2563,6 +2563,8 @@ def test_reopen_unpublished_post_keeps_its_slot_and_block_needs_confirm(env, mon
     out = human.apply("1 되돌리기: best 빼고 경복궁 공식 출처 보강", stage="rendered")
     assert "검수로 되돌림 + 수정 요청" in out[0] and (common.content_dir("drafts") / "2026-W41-07-a").exists()
     assert site_mod.publish_reminder(datetime(2026, 10, 11, 18, 5, tzinfo=site_mod.KST)).count("⏰ 내일(10/12 월)") == 1
+    for f in importlib.import_module("pipeline.worker").requests_dir().glob("*.json"):
+        f.unlink()                                                                      # 워커가 수정 요청을 처리한 뒤
     common.save_json(common.content_dir("drafts") / "2026-W41-07-a" / "review.json", {"grade": "block", "findings": []})
     human.build_batch("drafts")
     assert "⛔ 자동검수 차단" in human.apply("1 승인")[0]                             # 번호로 골라도 ⛔ 는 재확인
@@ -2615,3 +2617,12 @@ def test_shortform_off_hides_script_everywhere(env, monkeypatch):
     doc = human_mod.review_doc(path).read_text(encoding="utf-8")
     assert "## 숏폼 대본" not in doc
     assert importlib.import_module("pipeline.translate").source_texts(path)["script"] == []
+
+
+def test_approve_waits_for_pending_revise(env):
+    created = make_draft(env)
+    draft_id = created if isinstance(created, str) else created["id"]
+    human_mod.build_batch("drafts")
+    assert "수정 요청 접수" in human_mod.apply("1 수정: best 빼기")[0]
+    assert "🛠 수정 요청 처리 중" in human_mod.apply("1 승인", confirm=True)[0]     # 수정이 버려지지 않게
+    assert (common.content_dir("drafts") / draft_id).exists()

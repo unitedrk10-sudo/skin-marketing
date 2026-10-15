@@ -71,7 +71,7 @@ def test_register_only_selected_jobs(monkeypatch):
     install.register_jobs("telegram", {"skin-worker", "skin-weekly-topics"})
     created = [c for c in calls if c[1:3] == ["cron", "create"]]
     assert [c[c.index("--name") + 1] for c in created] == ["skin-weekly-topics"]  # worker 는 이미 있음
-    assert created[0][3] == "0 9 * * 1" and created[0][created[0].index("--script") + 1] == "skin-weekly-topics.py"
+    assert created[0][3] == "0 9 * * 4" and created[0][created[0].index("--script") + 1] == "skin-weekly-topics.py"
 
 
 def test_register_reports_silent_hermes_failures(monkeypatch):

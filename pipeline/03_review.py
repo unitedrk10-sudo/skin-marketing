@@ -359,6 +359,19 @@ def record_agreement(draft_id: str, auto_grade: str | None, decision: str) -> No
         w.writerow([date.today().isoformat(), draft_id, auto_grade or "", decision, int(agree)])
 
 
+def _revise_pending(draft_id: str) -> bool:
+    """워커가 아직 처리하지 않은 수정 요청이 있는가."""
+    queue = importlib.import_module("pipeline.worker").requests_dir()
+    for f in queue.glob("*.json") if queue.exists() else []:
+        try:
+            req = load_json(f)
+        except (OSError, ValueError):
+            continue
+        if req.get("kind") == "revise" and req.get("draft_id") == draft_id:
+            return True
+    return False
+
+
 def _targets(cmd: Command, batch: list[str]) -> list[str]:
     if not cmd.numbers:
         return list(batch)
@@ -404,6 +417,9 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             out.append(f"- {draft_id}: 💼 병원 확인 전 — 병원에 최종본을 보내 확인받은 뒤 `N 병원확인` 을 먼저 보내주세요")
             continue
         if cmd.action == "approve":
+            if _revise_pending(draft_id):  # 수정 요청이 처리되기 전에 승인하면 수정이 버려진다 (2026-10-10 W41-07)
+                out.append(f"- {draft_id}: 🛠 수정 요청 처리 중 — 고친 초안의 검수 요청이 오면 그때 승인해 주세요")
+                continue
             if grade == "pending" and not confirm:  # 번호로 골라도 Claude Code 검수 전에는 보류
                 out.append(f"- {draft_id}: ⏳ Claude Code 검수 대기 — 결과 반영 후 다시 승인하거나 `--confirm`")
                 continue
