@@ -157,10 +157,15 @@ class LawApiClient:
         else:
             raise LawApiError(f"{endpoint} 요청 실패: {last_err}")
         try:
-            return json.loads(body)
+            data = json.loads(body)
         except json.JSONDecodeError as e:
             # OC 미승인·오류 시 JSON 대신 HTML 안내 페이지가 온다
             raise LawApiError(f"JSON 이 아닌 응답 (OC 승인 여부 확인): {body[:200]!r}") from e
+        if isinstance(data, dict) and "result" in data and "msg" in data:
+            # 예: {"result": "사용자 정보 검증에 실패하였습니다.", "msg": "... 서버장비의 IP주소 및 도메인주소를 등록해 주세요."}
+            # — 빈 결과로 넘기면 동기화가 '변경 없음'으로 보인다
+            raise LawApiError(f"{data['result']} {data['msg']} (open.law.go.kr → OPEN API 신청 정보에 이 PC 의 IP 등록)")
+        return data
 
     def search(self, query: str, display: int = 20) -> list[LawSummary]:
         return parse_search(self._get("lawSearch.do", target="law", query=query, display=display))
