@@ -2655,3 +2655,26 @@ def test_trust_check_every_four_weeks(env, monkeypatch):
     assert "✅ 인데 사람이 고치거나 폐기: 1건" in "\n".join(lines) and "단계 유지" in lines[-1]
     assert report.trust_check(date(2026, 11, 8)) == []                               # 다음 점검은 8주차
     assert "8주차" in report.trust_check(date(2026, 11, 29))[0]
+
+
+def test_social_reaction_lines_from_insights(env, monkeypatch):
+    env.responses["social"] = SOCIAL
+    social_mod.compose(_published())
+    social_mod.record(social_mod.resolve("1"), "threads", "https://www.threads.com/@skinboundkorea/post/abc")
+    monkeypatch.setenv("THREADS_ACCESS_TOKEN", "t")
+
+    def fake_http(method, url, params=None, headers=None, body=None):
+        if url.endswith("/me"):
+            return {"id": "42"}
+        if url.endswith("/42/threads_insights"):
+            return {"data": [{"name": "views", "values": [{"value": 30}, {"value": 12}]},
+                             {"name": "likes", "values": [{"value": 2}]},
+                             {"name": "followers_count", "total_value": {"value": 5}}]}
+        return {"access_token": "t"}
+    monkeypatch.setattr(social_mod, "_http", fake_http)
+    lines = social_mod.reaction_lines(7)
+    assert lines[0].startswith("💬 SNS 게시 (지난 7일): Threads 1 · X 0")
+    assert "조회 42 · 좋아요 2" in lines[1] and "팔로워 5" in lines[1]
+    monkeypatch.setattr(social_mod, "_http", lambda *a, **k: (_ for _ in ()).throw(
+        social_mod.SocialError('GET x → 403: {"error":{"code":10,"message":"Application does not have permission"}}')))
+    assert "인사이트 권한 필요" in social_mod.reaction_lines(7)[1]

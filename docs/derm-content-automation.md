@@ -310,23 +310,23 @@ Hermes → 텔레그램 메시지 예시 (휴대폰에서 바로 판단하도록
 
 1. **Hermes 설정 마무리**
    - [x] Gemini API 키 등록 — 저장소 `.env` 의 `GEMINI_API_KEY` (2026-09-28 `pipeline.llm check` 6단계 통과)
-   - [ ] `config.yaml`에 Gemini 공급자 등록, 기본 모델 지정
-   - [ ] 텔레그램 봇 생성 (BotFather) → Hermes 메신저 게이트웨이 연결 → DM 페어링
-   - [ ] 텔레그램으로 간단한 대화·파일 전송 테스트
-   - [x] 국가법령정보 Open API 신청(open.law.go.kr) → `LAW_API_OC` 환경변수 등록 (2026-09-27 연동 확인)
+   - [x] `config.yaml`에 Gemini 공급자 등록, 기본 모델 지정 (Hermes 대화 모델 gemini-flash-latest)
+   - [x] 텔레그램 봇 생성 (BotFather) → Hermes 메신저 게이트웨이 연결 → DM 페어링
+   - [x] 텔레그램으로 간단한 대화·파일 전송 테스트 (메시지 연속 수신은 대기열 방식 `busy_input_mode: queue`, 2026-10-15)
+   - [x] 국가법령정보 Open API 신청(open.law.go.kr) → `LAW_API_OC` 환경변수 등록 (2026-09-27 연동 확인, 2026-10-16 이 PC IP 등록·OC 값 정정 후 주간 동기화 정상)
 2. **Claude Code로 파이프라인 개발**
    - [x] 폴더 구조 생성, `CLAUDE.md` 작성
-   - [x] `llm.py` → `01_topics.py` → `02_draft.py` 순으로 구현 (+ `02b_auto_review.py`, `03_review.py`) — 가짜 LLM 테스트 완료, 실제 키로 단독 실행 테스트 남음
-   - [ ] 프롬프트 작성 완료(`prompts/`, 공통 규칙 `_rules.md`) → 샘플 3편으로 품질 확인 남음 (`weekly_report.md` 는 07 구현 시)
-   - [x] TTS·영상 합성 → `04_render_video.py` (Google TTS Chirp3 + ffmpeg 자막 영상, b-roll 은 수동 편집) — 실제 키로 1편 확인 남음
+   - [x] `llm.py` → `01_topics.py` → `02_draft.py` 순으로 구현 (+ `02b_auto_review.py`, `03_review.py`) — 실제 운영 중 (2026-10)
+   - [x] 프롬프트 작성 완료(`prompts/`, 공통 규칙 `_rules.md`) — 실제 글로 품질 확인·개선 중
+   - [x] TTS·영상 합성 → `04_render_video.py` (Gemini TTS + 무료 영상 클립) — 2026-10-10 숏폼 중단
    - [x] 게시 → `06_publish.py` 채널별 게시 키트 + 게시 기록 (예약 게시 도구·플랫폼 API 연결은 이후)
    - [x] 주간 리포트 → `07_report.py`, 블로그 공유 이미지·아이콘 (`og.py`)
 3. **Hermes에 운영 등록**
-   - [ ] `hermes/install.py` 로 크론 + 텔레그램 스킬 등록 — PC 작업 순서: `docs/pc-setup-checklist.md`
-   - [ ] `.env` 키 입력, `skin-check.py` 로 점검
-   - [ ] 실패 알림 확인
-4. **시험 운영 1주** (게시는 비공개/테스트 계정)
-5. **본격 게시 시작**
+   - [x] `hermes/install.py` 로 크론 + 텔레그램 스킬 등록 — PC 작업 순서: `docs/pc-setup-checklist.md`
+   - [x] `.env` 키 입력, `skin-check.py` 로 점검
+   - [x] 실패 알림 확인
+4. ~~**시험 운영 1주**~~ — 완료
+5. **본격 게시 시작** — 2026-10-06 블로그 첫 글, 2026-10-10 Threads·X
 
 ---
 
@@ -356,7 +356,7 @@ Hermes → 텔레그램 메시지 예시 (휴대폰에서 바로 판단하도록
 ## 12. 사업 구조 및 법적 확인 사항
 
 > 조문은 국가법령정보 Open API 수집본(`legal/digest.md`, 2026-09-27 조회) 기준. `law_sync.py`가 주 1회 변경을 감지한다. 본 장은 법률 자문이 아니다.
-> 국민신문고 서면 질의는 **보류** (광고 대행 단계에서는 진행하지 않음, 3단계 착수 전 재검토).
+> 국민신문고 서면 질의: 2026-10-16 **진행으로 변경** — 변호사 확인 대신 신문고 질의(`docs/inquiry-sinmungo-2026-10.md`) 후 규제 샌드박스(모두의 창업)로 푼다. 회신 받으면 12-1·12-3-1 결정에 반영.
 
 ### 12-0. 현재: 정보 콘텐츠 채널
 - 출처 원칙 (2026-09-28 결정): 중립 글은 병원 사이트를 출처·링크로 쓰지 않는다 (특정 병원 무상 노출 = 광고·유인 소지, 스폰서 상품 가치 훼손, 병원 사이트는 광고물이라 근거로 약함). 신뢰는 공식 출처(논문·정부·학회·제조사 제품 페이지)와 **Medical Korea 외국인환자 유치의료기관 명단** 같은 공식 조회 링크로 확보. 병원 링크는 스폰서 글에만.

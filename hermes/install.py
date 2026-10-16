@@ -66,6 +66,11 @@ import os
 import subprocess
 import sys
 
+# 이 스크립트가 직접 쓰는 안내(건너뜀 알림 등)도 UTF-8 로 — Windows 기본(cp949)이면 한글이 깨진다
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 REPO = {repo!r}
 PYTHON = {python!r}
 CLAUDE_BIN = {claude!r}

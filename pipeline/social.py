@@ -566,7 +566,7 @@ def record(target: Ref | Path | str, channel: str, url: str, kind: str = "link")
 THREADS_GRAPH = "https://graph.threads.com"  # Meta 문서 기준 새 주소 (예전 graph.threads.net)
 THREADS_API = f"{THREADS_GRAPH}/v1.0"
 REFRESH_AFTER_DAYS = 50
-THREADS_SCOPES = "threads_basic,threads_content_publish"
+THREADS_SCOPES = "threads_basic,threads_content_publish,threads_manage_insights"  # insights = 주간 리포트 반응 수 (2026-10-16)
 # 처음 연결(threads-auth)에서 로그인 뒤 돌아올 주소 — 서버가 없으니 localhost 로 보내고 주소창의 code 를 복사한다.
 # 앱 대시보드 Threads 사용 사례 설정의 "리디렉션 콜백 URL" 에 똑같이 넣어야 한다.
 DEFAULT_REDIRECT = "https://localhost/"
@@ -681,6 +681,76 @@ def threads_post(text: str) -> str:
             time.sleep(10)
     info = _http("GET", f"{THREADS_API}/{post['id']}", {"fields": "permalink", "access_token": token})
     return info.get("permalink") or f"https://www.threads.net/@{me.get('username', '')}/post/{post['id']}"
+
+
+# ---------------- 반응 수 (주간 리포트) ----------------
+
+THREADS_METRICS = ("views", "likes", "replies", "reposts")
+X_EMBED = "https://cdn.syndication.twimg.com/tweet-result?id={id}&lang=en&token=4"  # 공개 임베드 정보 (비공식, 실패해도 리포트는 나감)
+
+
+def posted_since(days: int) -> list[tuple[str, str, str]]:
+    """(채널, 게시물 주소, 제목) — 최근 days 일 안에 게시 기록된 것."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    out = []
+    for _, data, item in entries(include_done=True):
+        for ch, c in item["channels"].items():
+            if c.get("posted") and c["posted"].get("at", "") >= cutoff:
+                out.append((ch, c["posted"]["url"], data["title"]))
+    return out
+
+
+def threads_reactions(days: int = 7) -> dict:
+    """계정 전체 지난 days 일 조회·좋아요·답글·리포스트 + 팔로워 (threads_manage_insights 권한 필요)."""
+    token = threads_token()
+    me = _http("GET", f"{THREADS_API}/me", {"fields": "id", "access_token": token})
+    until = int(time.time())
+    data = _http("GET", f"{THREADS_API}/{me['id']}/threads_insights",
+                 {"metric": ",".join((*THREADS_METRICS, "followers_count")), "since": until - days * 86400,
+                  "until": until, "access_token": token})
+    out = {}
+    for m in data.get("data", []):
+        if m.get("total_value"):
+            out[m["name"]] = int(m["total_value"].get("value", 0))
+        else:
+            out[m["name"]] = sum(int(v.get("value", 0)) for v in m.get("values", []))
+    return out
+
+
+def x_reactions(urls: list[str]) -> dict:
+    """X 게시물들의 좋아요·답글 합계 (공개 임베드 정보). 못 읽은 게시물은 건너뛴다."""
+    likes = replies = read = 0
+    for url in urls:
+        m = STATUS_ID.search(url)
+        if not m:
+            continue
+        try:
+            with urllib.request.urlopen(X_EMBED.format(id=m.group(1)), timeout=15) as resp:
+                d = json.loads(resp.read().decode())
+        except (urllib.error.URLError, OSError, ValueError):
+            continue
+        likes += int(d.get("favorite_count") or 0)
+        replies += int(d.get("conversation_count") or 0)
+        read += 1
+    return {"posts": len(urls), "read": read, "likes": likes, "replies": replies}
+
+
+def reaction_lines(days: int = 7) -> list[str]:
+    """주간 리포트용. 권한·연결이 없으면 이유를 짧게."""
+    posted = posted_since(days)
+    n = {ch: sum(1 for c, _, _ in posted if c == ch) for ch in CHANNELS}
+    lines = [f"💬 SNS 게시 (지난 {days}일): Threads {n['threads']} · X {n['x']}"]
+    try:
+        t = threads_reactions(days)
+        lines.append(f"   Threads: 조회 {t.get('views', 0)} · 좋아요 {t.get('likes', 0)} · 답글 {t.get('replies', 0)} · "
+                     f"리포스트 {t.get('reposts', 0)} · 팔로워 {t.get('followers_count', '-')}")
+    except SocialError as e:
+        hint = " (Threads 인사이트 권한 필요 — threads-auth 다시 연결)" if "permission" in str(e).lower() or "(#10)" in str(e) else ""
+        lines.append(f"   Threads 반응: 확인 못 함{hint}")
+    x = x_reactions([u for c, u, _ in posted if c == "x"])
+    if x["posts"]:
+        lines.append(f"   X: 좋아요 {x['likes']} · 답글 {x['replies']} (게시물 {x['read']}/{x['posts']}개 확인, 조회수는 X API 유료라 없음)")
+    return lines
 
 
 # ---------------- X API (선택, 유료) ----------------

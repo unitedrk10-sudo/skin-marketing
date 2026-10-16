@@ -134,6 +134,11 @@ def extras() -> list[str]:
     except Exception as e:  # noqa: BLE001
         log.warning("유입 집계 실패: %s", e)
     try:
+        from pipeline import social
+        lines += social.reaction_lines(7)  # Threads·X 반응 수
+    except Exception as e:  # noqa: BLE001
+        log.warning("SNS 반응 집계 실패: %s", e)
+    try:
         from pipeline import ai_traffic
         lines += ai_traffic.report_lines(7)  # AI 답변에서 온 방문·AI 봇이 읽어 간 글
     except Exception as e:  # noqa: BLE001
