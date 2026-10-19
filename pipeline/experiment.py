@@ -188,6 +188,7 @@ def daily_message(now: datetime | None = None) -> str:
         except (ExperimentError, llm.LLMError) as e:
             _save(exp_id(entry), {"id": exp_id(entry), **entry, "status": "failed", "error": str(e)[:300]})
             out.append(f"⚠️ 실험({exp_id(entry)}) 시작 실패: {e}")
+        break  # 워커 한 번에 하나 — A 하나가 30~40분이라 여러 개를 한 번에 하면 Hermes 1시간 제한에 걸려 메시지가 사라진다
     return "\n\n".join(out)
 
 
@@ -204,6 +205,7 @@ def poll_message() -> str:
                 data.update(status="build_failed", error=str(e)[:300])
                 save_json(f, data)
                 out.append(f"⚠️ 실험 {data['id']} 편집 실패: {e}")
+            break  # 한 번에 하나 (daily_message 와 같은 이유)
     return "\n\n".join(out)
 
 
