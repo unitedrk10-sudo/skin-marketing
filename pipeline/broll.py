@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import subprocess
 import urllib.parse
 import urllib.request
@@ -215,5 +216,16 @@ def fetch(cand: dict, work: Path) -> Path:
         return Path(cand["file"])
     out = work / f"{cand['id'].replace(':', '_')}.mp4"
     if not out.exists():
-        out.write_bytes(_get(cand["url"], 180).read())
+        # 느리게 조금씩 오는 서버는 소켓 timeout 에 안 걸려 몇십 분 멈춘다 (2026-10-19) → 전체 시간·크기 상한
+        deadline, data = time.monotonic() + FETCH_SECONDS, bytearray()
+        with _get(cand["url"], 30) as resp:
+            while chunk := resp.read(1 << 16):
+                data += chunk
+                if time.monotonic() > deadline or len(data) > FETCH_MAX_BYTES:
+                    raise TimeoutError(f"클립 내려받기 {FETCH_SECONDS}s·{FETCH_MAX_BYTES >> 20}MB 초과")
+        out.write_bytes(bytes(data))
     return out
+
+
+FETCH_SECONDS = 90
+FETCH_MAX_BYTES = 60 << 20
