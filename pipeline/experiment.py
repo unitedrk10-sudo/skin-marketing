@@ -215,9 +215,22 @@ def start(entry: dict) -> str:
            "Flow 전용 구글 계정·별도 프로필의 Aside 에서 루틴 실행: 아래 프롬프트 5개를 Flow(Veo 3.1 Lite, 9:16)로 생성·내려받기")
     lines = [f"[오늘의 실험 {eid}] {METHOD_LABEL[entry['method']]} — {data['title']}", how,
              f"내려받은 영상을 이름 그대로 이 PC 폴더에 넣어 주세요 (순서는 프롬프트와 파일 이름으로 맞춤, 헷갈리면 앞에 1_, 2_…): {root() / eid / 'clips'}",
-             "다 넣으면 자동으로 편집해 보내 드립니다 (바로 하려면 '실험 영상 넣었어').", ""]
-    lines += [f"{s['n']}. {s['prompt']}" for s in scenes]
+             "다 넣으면 자동으로 편집해 보내 드립니다 (바로 하려면 '실험 영상 넣었어')."]
+    if send_prompts(scenes):
+        lines.append(f"프롬프트 {len(scenes)}개는 복사하기 쉽게 한 개씩 따로 보냈습니다 (1번부터 순서대로).")
+    else:
+        lines += [""] + [f"{s['n']}. {s['prompt']}" for s in scenes]
     return "\n".join(lines)
+
+
+def send_prompts(scenes: list[dict]) -> bool:
+    """장면 프롬프트를 텔레그램에 한 개씩 (2026-10-20 — Flow 에 하나씩 복사해 붙여 넣기 쉽게). 실패하면 한 번 더, 그래도 실패면 False."""
+    worker = importlib.import_module("pipeline.worker")
+    for s in scenes:
+        if not (worker.hermes_send(s["prompt"]) or worker.hermes_send(s["prompt"])):
+            log.warning("장면 %s 프롬프트 개별 전송 실패 — 묶음 메시지에 넣음", s["n"])
+            return False
+    return True
 
 
 def exp_id(entry: dict) -> str:  # 같은 날 여러 실험 (2026-10-19 하루 몰아서) — 글번호까지 붙인다
