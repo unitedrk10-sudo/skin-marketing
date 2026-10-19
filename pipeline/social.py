@@ -61,8 +61,9 @@ from pipeline.common import (
 log = get_logger("social")
 
 CHANNELS = ("x", "threads")
-KINDS = ("link", "fact", "angle")  # 글마다 만드는 종류 (보내는 순서도 이 순서)
-LABEL = {"link": "새 글 소개", "fact": "사실 하나", "angle": "여행 팁·흔한 오해", "roundup": "한 주 정리"}
+KINDS = ("link", "fact", "angle", "ask")  # 글마다 만드는 종류 (보내는 순서도 이 순서). ask = 독자 질문 (2026-10-19)
+LABEL = {"link": "새 글 소개", "fact": "사실 하나", "angle": "여행 팁·흔한 오해", "ask": "독자에게 질문", "roundup": "한 주 정리"}
+ASK_FOOTER = "\n\n(AI-assisted · not medical advice)"
 PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
 URL_WEIGHT = 23  # X 는 링크(도메인만 쓴 것 포함)를 길이와 관계없이 23자로 센다
 INTENT = {"x": "https://x.com/intent/post?text={text}", "threads": "https://www.threads.net/intent/post?text={text}"}
@@ -168,7 +169,7 @@ def build_channels(kind: str, bodies: dict[str, str], url: str, domains: list[st
     if kind == "link":
         return {"x": {"text": bodies["x"] + X_LINK_FOOTER, "reply": reply_text(url), "posted": None},
                 "threads": {"text": bodies["threads"] + footer(url), "posted": None}}
-    end = source_footer(domains)
+    end = ASK_FOOTER if kind == "ask" else source_footer(domains)  # 질문 글은 사실을 말하지 않아 출처 줄이 없다
     return {ch: {"text": bodies[ch] + end, "posted": None} for ch in CHANNELS}
 
 
@@ -182,7 +183,7 @@ def check_item(draft: dict, kind: str, bodies: dict[str, str], channels: dict | 
     cfg = settings()
     if channels is None:
         channels = build_channels(kind, bodies, blog_url(draft), fact_domains(draft, fact_ids or []) or ["source"])
-    if kind != "link" and not fact_domains(draft, fact_ids or []):
+    if kind not in ("link", "ask") and not fact_domains(draft, fact_ids or []):
         problems.append(f"[{kind}] 근거 사실(fact_ids) 없음")
     for ch, text in bodies.items():
         if not text:
@@ -221,6 +222,7 @@ def rooms(url: str) -> dict[str, dict[str, int]]:
                     "threads": cfg["threads"]["max_chars"] - len(footer(url))}}
     for kind in ("fact", "angle"):
         out[kind] = {ch: cfg[ch]["max_chars"] - src for ch in CHANNELS}
+    out["ask"] = {ch: cfg[ch]["max_chars"] - len(ASK_FOOTER) for ch in CHANNELS}
     return {k: {ch: n - 5 for ch, n in v.items()} for k, v in out.items()}
 
 
@@ -488,7 +490,7 @@ def pick_today(now: datetime) -> Ref | None:
     candidates = [(ref, item) for ref, _, item in entries()
                   if ref.kind in KINDS and item["status"] == "ready" and not item.get("scheduled_on")
                   and not any(c.get("posted") for c in item["channels"].values())]
-    for kinds in (("link",), ("fact", "angle")):
+    for kinds in (("link",), ("fact", "angle", "ask")):
         for ref, _ in candidates:
             if ref.kind in kinds:
                 return ref

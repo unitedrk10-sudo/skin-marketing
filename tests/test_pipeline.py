@@ -2244,7 +2244,10 @@ SOCIAL = {"link": SOCIAL_LINK,
                    "fact_ids": ["F1"]},
           "angle": {"x": "A common belief: boosters mean zero downtime. What sources say: 1-3 days is common.",
                     "threads": "A common belief: skin boosters mean zero downtime. What sources say: 1-3 days is common.",
-                    "fact_ids": ["F1"]}}
+                    "fact_ids": ["F1"]},
+          "ask": {"x": "Planning a booster on a Korea trip: what's harder to fit in, downtime or sightseeing?",
+                  "threads": "Planning a skin booster on a Korea trip: what's harder to fit in, the downtime or the sightseeing?",
+                  "fact_ids": []}}
 MONDAY = datetime(2026, 10, 12, 9, 30, tzinfo=social_mod.KST)
 
 
@@ -2283,7 +2286,7 @@ def test_social_compose_three_kinds_list_and_x_reply_link(env):
     _published()
     assert social_mod.main(["compose"]) == 0
     data = common.load_json(common.content_dir("approved") / "2026-W40-01-what-is-rejuran" / "social.json")
-    assert set(data["items"]) == {"link", "fact", "angle"} and all(i["status"] == "ready" for i in data["items"].values())
+    assert set(data["items"]) == {"link", "fact", "angle", "ask"} and all(i["status"] == "ready" for i in data["items"].values())
     link = data["items"]["link"]["channels"]
     assert link["x"]["text"].endswith(social_mod.X_LINK_FOOTER) and "http" not in link["x"]["text"]   # X 본문엔 링크 없음
     assert link["x"]["reply"] == "Full guide with sources: https://skinboundkorea.com/what-is-rejuran/"
@@ -2342,7 +2345,8 @@ def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkey
     assert social_mod.daily_message(MONDAY.replace(hour=15)) == ""               # 하루 한 번
     assert "사실 하나" in social_mod.daily_message(MONDAY + timedelta(days=1))
     assert "여행 팁·흔한 오해" in social_mod.daily_message(MONDAY + timedelta(days=2))
-    assert social_mod.daily_message(MONDAY + timedelta(days=3)) == ""            # 보낼 게 없으면 조용히
+    assert "독자에게 질문" in social_mod.daily_message(MONDAY + timedelta(days=3))
+    assert social_mod.daily_message(MONDAY + timedelta(days=4)) == ""            # 보낼 게 없으면 조용히
     _published("2026-W41-08-laser")                                             # 정리 글은 그 주 2편 이상일 때만
     sunday = social_mod.daily_message(MONDAY + timedelta(days=6))
     assert "한 주 정리" in sunday and "%E2%86%92%20What%20is%20Rejuran%3F" in sunday   # 작성 링크 안: "→ What is Rejuran?"

@@ -1,4 +1,4 @@
-Write three short social posts about our blog guide, each in an X version and a Threads version. They go out on different days, so each must stand on its own.
+Write four short social posts about our blog guide, each in an X version and a Threads version. They go out on different days, so each must stand on its own.
 
 Guide title: {{title}}
 Hook used in the video: {{hook}}
@@ -20,6 +20,10 @@ The three posts:
    - X: at most {{fact_x}} characters. Threads: at most {{fact_threads}} characters.
 3. "angle" — if this is a travel guide: a practical planning tip (timing, sun, walking, recovery days around the trip). Otherwise: a common misconception vs. what the sources say ("A common belief is … What sources say: …") — the "belief" must be a general one, never attributed to a person, clinic or brand.
    - X: at most {{angle_x}} characters. Threads: at most {{angle_threads}} characters.
+4. "ask" — a question to readers that invites replies about **planning**, tied to this guide's topic (e.g. "Planning a skin treatment on a Korea trip: what's harder to fit in — the downtime or the sun?" or "Which would you want explained next: X or Y?"). One or two short lines. No facts or numbers, no medical claims, and never ask about clinics, results, experiences, reviews or photos. fact_ids may be empty.
+   - X: at most {{ask_x}} characters. Threads: at most {{ask_threads}} characters.
+
+Voice (2026-10-19): sound like a knowledgeable insider who explains plainly and takes a clear, sourced stance — candid and specific, never salesy. Open with the one thing a reader most needs to hear, not a generic hook. Our angle in one phrase: "Korean skin treatments, explained honestly."
 
 For every post:
 - An explainer's voice (never "I tried"), plain English, hedged wording ("commonly", "results vary"), no clinic or doctor names, no prices from a specific clinic, no "best/#1/guaranteed/safe/painless".
@@ -32,4 +36,5 @@ For every post:
 Return ONLY JSON:
 {"link": {"x": "…", "threads": "…", "fact_ids": ["F1"]},
  "fact": {"x": "…", "threads": "…", "fact_ids": ["F3"]},
- "angle": {"x": "…", "threads": "…", "fact_ids": ["F2"]}}
+ "angle": {"x": "…", "threads": "…", "fact_ids": ["F2"]},
+ "ask": {"x": "…", "threads": "…", "fact_ids": []}}
