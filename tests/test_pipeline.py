@@ -2760,3 +2760,10 @@ def test_experiment_orders_flow_files_and_cuts_shots_per_line(monkeypatch, tmp_p
     assert abs(sum(s[1] for s in segs) - 12.0) < 1e-6
     assert len({s[3] for s in segs[:4]}) == 4 and {s[4] for s in segs} == set(exp.ZOOMS)  # 다른 구간·번갈아 확대
     assert all(s[3] + s[1] * s[2] <= 8.3 + 1e-6 for s in segs)
+
+
+def test_experiment_sends_scene_prompts_one_by_one(env, monkeypatch):
+    exp = importlib.import_module("pipeline.experiment")
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: sent.append(text) or True)
+    assert exp.send_prompts([{"n": 1, "prompt": "A."}, {"n": 2, "prompt": "B."}]) and sent == ["A.", "B."]
