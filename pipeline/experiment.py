@@ -20,6 +20,7 @@ import argparse
 import importlib
 import json
 import math
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -43,6 +44,8 @@ PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".m4v"}
 METHOD_LABEL = {"A": "무료 영상 자동", "B": "Flow 직접 생성", "C": "Flow + Aside"}
 MIN_SPEED = 0.6  # 생성 영상(8초)을 장면 길이에 맞춰 이 배속까지만 느리게, 더 길면 반복
+SHOT_MAX = 3.2   # 한 컷 최대 길이(초) — 넘으면 같은 영상의 다른 구간으로 나눈다
+ZOOMS = (1.0, 1.18)  # 같은 영상에서 이어지는 컷은 확대 비율을 번갈아 (점프컷 완화, 고정 확대라 떨림 없음)
 
 
 class ExperimentError(RuntimeError):
@@ -101,11 +104,31 @@ def clip_files(eid: str) -> list[Path]:
     return sorted(p for p in folder.glob("*") if p.suffix.lower() in VIDEO_EXT) if folder.exists() else []
 
 
-def clip_segments(clips: list[Path]):
-    """B·C: 받은 생성 영상을 순서대로 같은 길이로 나눠 붙인다. 짧으면 조금 느리게(최대 MIN_SPEED), 그래도 모자라면 반복."""
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", text.lower()) if len(w) > 2}
+
+
+def order_clips(clips: list[Path], scenes: list[dict]) -> list[Path]:
+    """장면 순서로 정렬. 이름이 숫자로 시작하면 그 순서, 아니면 Flow 가 붙인 파일 이름(프롬프트 요약)과 장면 프롬프트의 단어 겹침으로 짝짓는다."""
+    if not scenes or len(clips) != len(scenes) or all(re.match(r"\d+", c.stem) for c in clips):
+        return sorted(clips, key=lambda c: (int(m.group()) if (m := re.match(r"\d+", c.stem)) else 10**6, c.name))
+    pairs = sorted(((len(_words(c.stem.replace("_", " ")) & _words(s["prompt"])), -i, c, i)
+                    for i, s in enumerate(scenes) for c in clips), key=lambda x: (x[0], x[1]), reverse=True)
+    picked: dict[int, Path] = {}
+    used: set[Path] = set()
+    for _, _, c, i in pairs:
+        if i not in picked and c not in used:
+            picked[i] = c
+            used.add(c)
+    return [picked[i] for i in range(len(scenes))]
+
+
+def clip_segments(clips: list[Path], scenes: list[dict] | None = None):
+    """B·C: 장면 영상을 그 장면이 맡은 대본 줄마다 다른 구간으로 쪼개 쓴다 (2026-10-20 — 한 화면 10초 정지 느낌 해소).
+    한 줄이 SHOT_MAX 보다 길면 같은 영상의 다른 구간·확대 컷으로 한 번 더 나눈다. 장면 정보가 없으면 예전처럼 같은 길이로 나눈다."""
     render = importlib.import_module("pipeline.04_render_video")
 
-    def fn(lines, timeline, total, work):
+    def even(lines, timeline, total, work):
         span = total / len(clips)
         segments, meta = [], []
         for c in clips:
@@ -114,7 +137,36 @@ def clip_segments(clips: list[Path]):
             segments.append((c, span, speed))
             meta.append({"file": c.name, "seconds": round(length, 2), "speed": round(speed, 2)})
         return segments, meta
-    return fn
+
+    def per_line(lines, timeline, total, work):
+        starts = [t["start"] for t in timeline] + [total]
+        segments, meta = [], []
+        for c, scene in zip(clips, scenes):
+            length = max(render.duration(c) - 0.3, 0.5)
+            nums = [n for n in scene.get("lines", []) if 1 <= n <= len(timeline)]
+            shots = []
+            for n in nums:
+                span = starts[n] - starts[n - 1]
+                k = max(1, math.ceil(span / SHOT_MAX))
+                shots += [span / k] * k
+            if not shots:
+                continue
+            step = length / len(shots)
+            for j, dur in enumerate(shots):
+                speed = max(MIN_SPEED, min(1.0, length / dur))
+                need = dur * speed
+                offset = 0.3 + max(0.0, min(j * step, length - need))
+                zoom = ZOOMS[j % len(ZOOMS)]
+                segments.append((c, dur, speed, offset, zoom))
+                meta.append({"file": c.name, "seconds": round(dur, 2), "from": round(offset, 2), "zoom": zoom})
+        covered = sum(s[1] for s in segments)
+        if segments and covered < total:  # 장면이 모든 줄을 덮지 않으면 마지막 컷을 늘린다
+            last = segments[-1]
+            segments[-1] = (last[0], last[1] + total - covered, *last[2:])
+        return segments, meta
+
+    usable = scenes and len(scenes) == len(clips) and all(s.get("lines") for s in scenes)
+    return per_line if usable else even
 
 
 def build(eid: str) -> str:
@@ -130,7 +182,9 @@ def build(eid: str) -> str:
         clips = clip_files(eid)
         if not clips:
             raise ExperimentError(f"{out / 'clips'} 에 영상이 없습니다")
-        fn = clip_segments(clips)
+        scenes = data.get("scenes") or []
+        clips = order_clips(clips, scenes)
+        fn = clip_segments(clips, scenes)
     render = importlib.import_module("pipeline.04_render_video")
     meta = render.make_video(draft, out, fn)
     data.update(status="done", built_at=now_iso(), render=meta)
@@ -151,7 +205,7 @@ def start(entry: dict) -> str:
     _save(eid, data)
     if entry["method"] == "A":
         return build(eid)
-    scenes = scene_prompts(draft, int(cfg.get("scenes", 5)), cfg.get("style", ""))
+    scenes = scene_prompts(draft, int(entry.get("scenes") or cfg.get("scenes", 5)), cfg.get("style", ""))
     (root() / eid / "clips").mkdir(exist_ok=True)
     (root() / eid / "prompts.txt").write_text("\n\n".join(f"{s['n']}. {s['prompt']}" for s in scenes) + "\n", encoding="utf-8")
     data.update(status="waiting_clips", scenes=scenes)
@@ -160,7 +214,7 @@ def start(entry: dict) -> str:
            if entry["method"] == "B" else
            "Flow 전용 구글 계정·별도 프로필의 Aside 에서 루틴 실행: 아래 프롬프트 5개를 Flow(Veo 3.1 Lite, 9:16)로 생성·내려받기")
     lines = [f"[오늘의 실험 {eid}] {METHOD_LABEL[entry['method']]} — {data['title']}", how,
-             f"영상은 순서대로 이름을 1, 2, 3…으로 해서 이 PC 폴더에 넣어 주세요: {root() / eid / 'clips'}",
+             f"내려받은 영상을 이름 그대로 이 PC 폴더에 넣어 주세요 (순서는 프롬프트와 파일 이름으로 맞춤, 헷갈리면 앞에 1_, 2_…): {root() / eid / 'clips'}",
              "다 넣으면 자동으로 편집해 보내 드립니다 (바로 하려면 '실험 영상 넣었어').", ""]
     lines += [f"{s['n']}. {s['prompt']}" for s in scenes]
     return "\n".join(lines)
@@ -195,9 +249,10 @@ def daily_message(now: datetime | None = None) -> str:
 def poll_message() -> str:
     """B·C: clips 폴더가 장면 수만큼 차면 편집해서 보낸다."""
     out = []
-    want = int(config().get("scenes", 5))
+    default = int(config().get("scenes", 5))
     for f in sorted(root().glob("*/experiment.json")) if root().exists() else []:
         data = load_json(f)
+        want = len(data.get("scenes") or []) or default
         if data.get("status") == "waiting_clips" and len(clip_files(data["id"])) >= want:
             try:
                 out.append(build(data["id"]))

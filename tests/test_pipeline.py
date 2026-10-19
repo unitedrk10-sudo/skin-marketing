@@ -2742,3 +2742,21 @@ def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_pat
     assert "[실험 완성 2026-10-23-B-W41-10]" in out and "MEDIA:" in out and built
     assert "✅ 2026-10-23-B-W41-10 점수 기록" in exp.score("최근", 4, 3, 5, "예")
     assert "B 12.0" in exp.summary()
+
+
+def test_experiment_orders_flow_files_and_cuts_shots_per_line(monkeypatch, tmp_path):
+    exp = importlib.import_module("pipeline.experiment")
+    render = importlib.import_module("pipeline.04_render_video")
+    scenes = [{"lines": [1, 2], "prompt": "Close-up of a bare hand resting on a textured surface."},
+              {"lines": [3], "prompt": "Overhead shot of a plain calendar on a wooden desk."}]
+    files = [tmp_path / "Calendar_on_wooden_desk_2026.mp4", tmp_path / "Hand_resting_on_textured_surface_2026.mp4"]
+    assert exp.order_clips(files, scenes) == files[::-1]                       # Flow 이름 ↔ 프롬프트 단어로 짝
+    numbered = [tmp_path / "2_b.mp4", tmp_path / "10_c.mp4", tmp_path / "1_a.mp4"]
+    assert [c.name for c in exp.order_clips(numbered, [])] == ["1_a.mp4", "2_b.mp4", "10_c.mp4"]
+    monkeypatch.setattr(render, "duration", lambda p: 8.3)
+    timeline = [{"start": 0.0}, {"start": 2.0}, {"start": 9.0}]
+    segs, _ = exp.clip_segments(files[::-1], scenes)(None, timeline, 12.0, tmp_path)
+    assert [round(s[1], 2) for s in segs] == [2.0, 2.33, 2.33, 2.33, 3.0]    # 줄마다 컷, 긴 줄은 3.2초 이하로 나눔
+    assert abs(sum(s[1] for s in segs) - 12.0) < 1e-6
+    assert len({s[3] for s in segs[:4]}) == 4 and {s[4] for s in segs} == set(exp.ZOOMS)  # 다른 구간·번갈아 확대
+    assert all(s[3] + s[1] * s[2] <= 8.3 + 1e-6 for s in segs)

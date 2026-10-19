@@ -335,12 +335,15 @@ def compose_cmd(segments: list[tuple], music: Path | None, total: float) -> list
     for i, seg in enumerate(segments):
         clip, dur = seg[0], seg[1]
         speed = seg[2] if len(seg) > 2 else 1.0  # 1 보다 작으면 느리게 (생성 영상 8초를 장면 길이에 맞출 때)
+        start = seg[3] if len(seg) > 3 else 0.3  # 같은 영상을 여러 컷으로 쪼갤 때 시작 위치
+        zoom = seg[4] if len(seg) > 4 else 1.0   # 고정 확대 (움직이는 확대가 아니라 떨림 없음)
         if clip:
-            inputs += ["-stream_loop", "-1", "-ss", "0.3", "-t", f"{dur * speed:.3f}", "-i", str(clip)]
+            inputs += ["-stream_loop", "-1", "-ss", f"{start:.3f}", "-t", f"{dur * speed:.3f}", "-i", str(clip)]
         else:
             inputs += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", f"color=c={BACKGROUND}:s={WIDTH}x{HEIGHT}:r=30"]
         slow = f"setpts={1 / speed:.4f}*PTS," if clip and speed != 1.0 else ""
-        chains.append(f"[{i}:v]{slow}fps=30,scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},"
+        w, h = (round(WIDTH * zoom / 2) * 2, round(HEIGHT * zoom / 2) * 2)
+        chains.append(f"[{i}:v]{slow}fps=30,scale={w}:{h}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},"
                       f"setsar=1,eq=brightness=-0.05,trim=duration={dur:.3f},setpts=PTS-STARTPTS[v{i}]")
     n = len(segments)
     graph = chains + ["".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[bg]", "[bg]ass=captions.ass[v]"]
