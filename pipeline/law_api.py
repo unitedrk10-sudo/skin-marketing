@@ -164,7 +164,9 @@ class LawApiClient:
         if isinstance(data, dict) and "result" in data and "msg" in data:
             # 예: {"result": "사용자 정보 검증에 실패하였습니다.", "msg": "... 서버장비의 IP주소 및 도메인주소를 등록해 주세요."}
             # — 빈 결과로 넘기면 동기화가 '변경 없음'으로 보인다
-            raise LawApiError(f"{data['result']} {data['msg']} (open.law.go.kr → OPEN API 신청 정보에 이 PC 의 IP 등록)")
+            # 가정용 인터넷은 공인 IP 가 바뀐다 (2026-10-16 .88.165 → 10-19 .89.60) — 등록할 지금 IP 를 같이 알려 준다
+            raise LawApiError(f"{data['result']} {data['msg']} (open.law.go.kr → OPEN API 신청 정보의 서버 IP 를 "
+                              f"지금 이 PC 의 공인 IP {_public_ip()} 로 등록)")
         return data
 
     def search(self, query: str, display: int = 20) -> list[LawSummary]:
@@ -182,6 +184,14 @@ class LawApiClient:
         if article:
             params["JO"] = jo_code(article)
         return parse_document(self._get("lawService.do", **params))
+
+
+def _public_ip() -> str:
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=10) as resp:
+            return resp.read().decode().strip()
+    except (urllib.error.URLError, OSError):
+        return "(확인 실패)"
 
 
 def main(argv: list[str] | None = None) -> int:
