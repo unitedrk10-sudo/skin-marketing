@@ -966,9 +966,48 @@ def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
     for p in posts:
         blog = p["draft"]["blog"]
         tag = " (sponsored)" if p["draft"].get("sponsor") else ""
-        lines.append(f"- [{blog.get('title', '')}]({base}/{p['slug']}/){tag}: {blog.get('meta_description', '')}")
-    lines += ["", "## About", f"- [Editorial policy]({base}/about/)"]
+        lines.append(f"- [{blog.get('title', '')}]({base}/{p['slug']}/){tag}: {blog.get('meta_description', '')} "
+                     f"([markdown]({base}/{p['slug']}/index.md))")
+    lines += ["", "## About", f"- [Editorial policy]({base}/about/)",
+              f"- [All guides as one Markdown file]({base}/llms-full.txt)"]
     return "\n".join(lines) + "\n"
+
+
+def render_post_md(cfg: dict, post: dict) -> str:
+    """AI 가 읽기 쉬운 글 원문 (2026-10-19, `/<slug>/index.md`·llms-full.txt) — [F#] 는 출처 링크로, 병원 공통 정보는 링크 없이."""
+    draft, blog = post["draft"], post["draft"]["blog"]
+    facts = {f["id"]: f for f in draft.get("facts", [])}
+    sources: list[str] = []
+
+    def ref(m: re.Match) -> str:
+        fact = facts.get(m.group(1))
+        if not fact:
+            return ""
+        if fact.get("kind") == PRACTICE_KIND:
+            return " (clinic websites)"
+        if fact["url"] not in sources:
+            sources.append(fact["url"])
+        return f" [{sources.index(fact['url']) + 1}]({fact['url']})"
+
+    body = FACT_REF.sub(ref, strip_leading_h1(blog.get("markdown", "")).replace("<", "&lt;"))
+    s = draft.get("sponsor")
+    head = [f"# {blog.get('title', '')}", ""]
+    if s:
+        head += [f"> {sponsors.label(s)} — this is an advertisement by {s['name_en']}.", ""]
+    head += [f"Source: {base_url(cfg)}/{post['slug']}/ · Published {post['date'][:10]}"
+             + (f" · Updated {post['modified'][:10]}" if post.get("modified", "")[:10] > post["date"][:10] else ""), ""]
+    if blog.get("meta_description"):
+        head += [f"_{blog['meta_description']}_", ""]
+    tail = ["", "## Sources"] + [f"{i}. {u}" for i, u in enumerate(sources, 1)] if sources else []
+    return "\n".join(head) + "\n" + body.strip() + "\n" + "\n".join(tail) + "\n"
+
+
+def render_llms_full(cfg: dict, posts: list[dict]) -> str:
+    parts = [f"# {cfg['name']} — all guides", "", f"> {cfg['description']}", "",
+             "Information only — not medical advice. Every medical statement links to its source.", ""]
+    for p in posts:
+        parts += ["---", "", render_post_md(cfg, p)]
+    return "\n".join(parts)
 
 
 def render_sitemap(cfg: dict, posts: list[dict]) -> str:
@@ -1000,7 +1039,15 @@ def _rfc822(iso: str) -> str:
 def render_robots(cfg: dict) -> str:
     # AI 검색·학습 크롤러를 막지 않는다 — AI 답변에 인용되는 것이 이 사이트의 목적
     sitemap = f"\nSitemap: {base_url(cfg)}/sitemap.xml" if cfg["domain"] else ""
-    return f"User-agent: *\nAllow: /\n{sitemap}\n"
+    ai = "".join(f"User-agent: {ua}\nAllow: /\n\n" for ua in AI_CRAWLERS)
+    blocked = "".join(f"User-agent: {ua}\nDisallow: /\n\n" for ua in BLOCKED_CRAWLERS)
+    return (f"# AI search and assistant crawlers are welcome — being cited in AI answers is the point of this site\n{ai}"
+            f"# Bulk scrapers with no search or citation use\n{blocked}User-agent: *\nAllow: /\n{sitemap}\n")
+
+
+AI_CRAWLERS = ("OAI-SearchBot", "ChatGPT-User", "GPTBot", "PerplexityBot", "Perplexity-User", "ClaudeBot", "Claude-User",
+               "Claude-SearchBot", "Google-Extended", "Applebot-Extended", "Bingbot")
+BLOCKED_CRAWLERS = ("Bytespider",)
 
 
 # ---------------- 스폰서 추적 링크 ----------------
@@ -1144,6 +1191,9 @@ def build(out: Path | None = None) -> dict:
     if cfg.get("indexnow_key"):  # IndexNow 소유 확인 파일 (Bing 등에 새 글 주소를 바로 알린다)
         write(f"{cfg['indexnow_key']}.txt", cfg["indexnow_key"])
     write("llms.txt", render_llms_txt(cfg, posts))
+    write("llms-full.txt", render_llms_full(cfg, posts))
+    for p in posts:
+        write(f"{p['slug']}/index.md", render_post_md(cfg, p))
     write("rss.xml", render_rss(cfg, posts))
     if cfg["domain"]:
         write("sitemap.xml", render_sitemap(cfg, posts))

@@ -1,0 +1,23 @@
+# AI 인용 점검 질문 (pipeline/citation_check.py) — 해외 독자가 AI 에 물을 법한 질문. 추이 비교를 위해 되도록 바꾸지 말고 추가만.
+# 우리가 쓴 주제 위주 + 쓸 예정인 주제. 병원 추천 질문("best clinic")은 넣지 않는다 (우리는 병원을 고르지 않는다).
+questions:
+  - How long should I avoid the sun after laser toning in Korea?
+  - Can I fly home the day after a laser treatment in Seoul?
+  - How long do Rejuran bumps last after the injection?
+  - How many Rejuran sessions are usually recommended, and how far apart?
+  - What is Juvelook and how is it different from hyaluronic acid filler?
+  - Rejuran vs Juvelook — what is the difference?
+  - Is it safe to walk around Bukchon Hanok Village after a skin booster?
+  - Should I do hanbok photos at Gyeongbokgung before or after Botox?
+  - How soon can I wear makeup after Botox?
+  - Can I go to a jjimjilbang or sauna after a skin treatment in Korea?
+  - How do I read SPF and PA ratings on Korean sunscreen?
+  - What is a "functional cosmetic" in Korea?
+  - How many days do I need in Seoul for skin treatments?
+  - Laser toning vs pico toning — what is the difference?
+  - How do I check if a Korean clinic is registered for foreign patients?
+  - What should I ask a dermatologist in Korea before a laser treatment?
+  - Is it okay to go to the beach in Jeju or Busan after a laser treatment?
+  - How long does bruising last after filler?
+  - What aftercare is recommended after a skin booster injection?
+  - How do I plan a Korea trip around a skin treatment?

@@ -12,6 +12,8 @@ Checklist to apply:
 - Anything that identifies or promotes a specific clinic or doctor
 - Facts with kind "practice" are general practices several clinics share (consultation steps, language support, booking): flag them if they carry any medical claim, or if the sentence names or hints at a particular clinic
 - Missing AI disclosure
+- Appearance anxiety or fear-driven wording (implying the reader looks old or will regret not acting, scare headlines)
+- Study results stretched beyond the study (a small or specific population presented as a general rule; who/how many omitted when the fact states it), or a favorable result quoted while the same cited fact also reports no benefit or side effects
 
 FACTS (with sources) the draft was allowed to use:
 {{facts}}

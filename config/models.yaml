@@ -62,6 +62,11 @@ stages:
     model: gemini-3.8-flash
     thinking: low
 
+  citation_check:  # AI 인용 점검 — 독자 질문에 우리 사이트가 출처로 잡히는지 (pipeline/citation_check.py, 4주마다)
+    provider: gemini
+    model: gemini-3.8-flash
+    search: true
+
   source_check:    # 02b ② 출처 본문 대조
     provider: gemini
     model: gemini-3.8-flash

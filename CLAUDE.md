@@ -31,6 +31,7 @@
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` (병원 권역 중심 여행 코스 글: `--course`, sponsors.yaml `zone` 필요) / 목록 점검 `python -m pipeline.sponsors check`
 - 블로그 사이트: `python -m pipeline.site build|deploy|schedule` (site/dist → Cloudflare Workers 정적 자산). 배포 때 새 글·내용이 바뀐 글 주소를 IndexNow(`site.yaml indexnow_key`, Bing → ChatGPT 검색·Copilot)로 알리고, 내용이 바뀐 글은 수정일 표시·dateModified (`content/site/content_log.json`)
 - SNS 반응: `social.reaction_lines` — Threads 인사이트(조회·좋아요·답글·리포스트·팔로워, `threads_manage_insights` 권한 필요 → `threads-auth` 다시 연결)·X 공개 임베드(좋아요·답글). 주간 리포트에 자동 포함
+- AI 인용 점검: `python -m pipeline.citation_check [--limit N]` — `config/citation_prompts.yaml` 질문 20개를 Gemini 검색(stage `citation_check`)으로 돌려 우리 사이트가 출처로 잡히는지, 4주 점검 주의 주간 리포트에 자동 포함 (결과 `content/reports/citations/`). 사이트는 AI 용 `llms.txt`·`llms-full.txt`·글마다 `/<slug>/index.md`, robots.txt 에 AI 크롤러별 허용(Bytespider 차단)
 - AI 유입: `python -m pipeline.ai_traffic [--days 7]` — AI 답변에서 온 방문(Web Analytics 유입 도메인)·AI 봇 실시간 조회(ChatGPT-User 등, 토큰에 Zone Analytics Read 필요). 주간 리포트에 자동 포함
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
 - 숏폼 렌더링: **2026-10-10 중단** (`shortform.format: off` — 수익이 나기 전까지 블로그·Threads·X 만). `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered). 형식은 `config/channels.yaml` `shortform.format`:

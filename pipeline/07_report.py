@@ -173,7 +173,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="주간 리포트")
     parser.add_argument("--days", type=int, default=7)
     args = parser.parse_args(argv)
-    text = message(collect(args.days), extras() + trust_check())
+    checks = trust_check()
+    if checks:  # 4주 점검 주에는 AI 인용 점검도 같이 (Gemini 검색, 질문 20개)
+        try:
+            from pipeline import citation_check
+            checks += citation_check.report_lines(citation_check.check())
+        except Exception as e:  # noqa: BLE001
+            log.warning("AI 인용 점검 실패: %s", e)
+    text = message(collect(args.days), extras() + checks)
     path = ROOT / "reports" / "weekly" / f"{iso_week()}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n", encoding="utf-8")

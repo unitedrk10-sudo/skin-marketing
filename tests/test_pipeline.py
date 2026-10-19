@@ -2678,3 +2678,32 @@ def test_social_reaction_lines_from_insights(env, monkeypatch):
     monkeypatch.setattr(social_mod, "_http", lambda *a, **k: (_ for _ in ()).throw(
         social_mod.SocialError('GET x → 403: {"error":{"code":10,"message":"Application does not have permission"}}')))
     assert "인사이트 권한 필요" in social_mod.reaction_lines(7)[1]
+
+
+def test_site_markdown_versions_and_ai_robots(site_env, monkeypatch):
+    path = _published("2026-W40-01-what-is-rejuran", live=False)
+    draft = common.load_json(path / "draft.json")
+    draft["blog"]["markdown"] = "Downtime is 1-3 days [F1].\n\n<script>x</script>"
+    common.save_json(path / "draft.json", draft)
+    site_mod.build()
+    dist = site_mod.dist_dir()
+    md = (dist / "what-is-rejuran" / "index.md").read_text(encoding="utf-8")
+    assert md.startswith("# What is Rejuran?") and f"[1]({URL})" in md and "<script>" not in md and "## Sources" in md
+    assert "Downtime is 1-3 days" in (dist / "llms-full.txt").read_text(encoding="utf-8")
+    assert "/what-is-rejuran/index.md" in (dist / "llms.txt").read_text(encoding="utf-8")
+    robots = (dist / "robots.txt").read_text(encoding="utf-8")
+    assert "User-agent: OAI-SearchBot\nAllow: /" in robots and "User-agent: Bytespider\nDisallow: /" in robots
+
+
+def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
+    cc = importlib.import_module("pipeline.citation_check")
+    monkeypatch.setattr(cc, "questions", lambda: ["q1", "q2"])
+    monkeypatch.setattr(cc, "domain", lambda: "skinboundkorea.com")
+    answers = {"q1": llm.LLMResult(text="...", model="m", stage="citation_check", grounding_urls=[
+                   {"url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/x", "title": "skinboundkorea.com"}]),
+               "q2": llm.LLMResult(text="...", model="m", stage="citation_check", grounding_urls=[
+                   {"url": "https://www.aad.org/x", "title": "AAD"}])}
+    monkeypatch.setattr(cc.llm, "generate", lambda stage, q: answers[q])
+    res = cc.check()
+    assert (res["cited"], res["total"]) == (1, 2) and res["results"][1]["sources"] == ["aad.org"]
+    assert "우리 사이트 인용 1/2" in cc.report_lines(res)[0]

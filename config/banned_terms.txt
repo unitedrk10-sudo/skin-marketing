@@ -54,3 +54,10 @@ free consultation
 book now
 할인
 이벤트가
+
+# 외모 불안·공포 유발 (의료법 §56② 소비자 현혹 취지, 2026-10-19 — agency-agents Healthcare Marketing Compliance 참고)
+re:you(?:'ll| will) regret
+re:before it'?s too late
+re:fix your flaws?
+re:don'?t let (?:your )?(?:wrinkles|lines|aging|age|spots)
+re:what nobody tells you

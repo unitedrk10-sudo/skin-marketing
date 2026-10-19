@@ -395,3 +395,31 @@ topics:
     keywords: [bruising after botox how long, filler swelling how long, rejuran bumps how long, korea treatment before photos]
     hook: "Bruise after your injection — how long until photos?"
     has_price: false
+  # ---------- 비교·판단 기준 글 (2026-10-19 — AI 답변이 즐겨 인용하는 형식, 시술 비교만·병원 비교 없음·우열 판정 없음) ----------
+  - id: rejuran-vs-juvelook
+    wave: 1
+    axis: procedure
+    title: "Rejuran vs Juvelook: how PN and PDLLA skin boosters differ"
+    angle: "Side-by-side: what each is made of, how it is thought to work, downtime and bumps, session count and spacing, side effects — sourced for each, no winner declared; what to ask a doctor when choosing."
+    why_now: "Our two most-searched boosters; 'X vs Y' is one of the formats AI assistants cite most."
+    keywords: [rejuran vs juvelook, pn vs pdlla, skin booster comparison, korea skin booster]
+    hook: "Rejuran or Juvelook — what actually differs?"
+    has_price: false
+  - id: laser-toning-vs-pico-toning
+    wave: 1
+    axis: procedure
+    title: "Laser toning vs pico toning: what is different, and what is the same"
+    angle: "Q-switched vs picosecond lasers explained plainly: how each works on pigment, sessions and spacing, sun aftercare, side effects such as mottled hypopigmentation — sourced, no winner."
+    why_now: "Common confusion among foreign visitors; comparison format AI answers quote."
+    keywords: [laser toning vs pico toning, pico laser korea, q-switched laser toning]
+    hook: "Laser toning or pico toning — is there a difference?"
+    has_price: false
+  - id: choosing-a-skin-booster-questions
+    wave: 2
+    axis: how_to
+    title: "Choosing between skin boosters: questions to take to your dermatologist"
+    angle: "A decision checklist, not a recommendation: skin goals, downtime the trip allows, number of sessions possible, ingredients and allergies, what evidence exists — framed as questions for the consultation."
+    why_now: "Answers 'how to choose' prompts without recommending a procedure or clinic."
+    keywords: [how to choose skin booster, skin booster consultation questions, korea dermatology consultation]
+    hook: "Skin booster shopping? Ask these first."
+    has_price: false

@@ -20,6 +20,11 @@ Do NOT repeat or closely overlap these recent topics:
 
 Each topic must be answerable purely with public, sourceable information and must not require naming any clinic or doctor.
 
+Formats that AI assistants and search engines quote most often — include at least one of these each week when sources allow:
+- A comparison of two procedures or ingredients ("Rejuran vs Juvelook", "laser toning vs pico toning"): how each works, downtime, sessions, side effects, side by side. Compare procedures only — never clinics, brands' prices or countries' clinics, and never declare a winner.
+- A decision guide ("How to think about choosing between skin boosters"): the questions and criteria a reader can take to a doctor, not a recommendation of any procedure.
+- A practical "how long / how many" answer built on aftercare leaflets and reviews (downtime, sun, makeup, sessions).
+
 Return ONLY a JSON object, no prose, in this exact shape:
 {
   "topics": [

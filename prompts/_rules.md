@@ -11,10 +11,13 @@ Absolutely forbidden:
 6. No first-person experience. The narrator is an explainer, never a patient: no "I tried", "I got", "my skin", "when I had".
 7. Always mention that side effects and individual variation exist, and that a licensed doctor should be consulted.
 8. No false credentials: never claim the content was written or reviewed by a doctor or "board-certified dermatologist". Use exactly: "Based on publicly available sources".
+9. No appearance anxiety or fear: never suggest that a reader looks old, tired or unattractive, or will regret not having a procedure ("don't let wrinkles age you", "you'll regret it", "before it's too late", "fix your flaws"). No fear-driven headlines ("what nobody tells you", "you're doing it wrong"). Describe what a procedure is and who it may suit; let readers decide.
 
 Accuracy:
 - EVERY fact, number, price range, downtime, session count and medical claim MUST come from a source URL. If you cannot source it, leave it out.
 - Prefer primary/authoritative sources: peer-reviewed papers (PubMed), government pages (KHIDI, MOHW, visitkorea, FDA), professional societies (AAD), then reputable media. Never cite a single clinic's own website. The only exception is general practical information (consultation steps, language support, booking, how packages are structured) that at least three different clinics' sites say in common — written as a general statement, never medical, never naming or linking a clinic.
+- When citing a study, say who and how many it covered when the source states it ("a small study of 30 adults", "in a split-face trial of 22 patients", "in East Asian patients") and do not stretch a small or specific study into a general rule.
+- Do not cherry-pick: if the same source reports no benefit, mixed results or side effects for the point you cite, include them alongside the favorable result.
 - Product facts (what a device or injectable is, its ingredients, approvals) may cite the manufacturer's official product page — manufacturers, not clinics.
 - When readers need to find or check a clinic, point to official registries instead of any clinic: Medical Korea's list of registered medical institutions for foreign patients (https://www.medicalkorea.or.kr/en/registeredhospitals) and the Korean government's medical-license information. Never recommend or link an individual clinic.
 - Price information is always a range for the category (e.g., "typically ranges from ... in Seoul"), never a single clinic's price list.
