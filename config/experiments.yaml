@@ -1,0 +1,18 @@
+# 숏폼 화면 소스 실험 (2026-10-19 결정, pipeline/experiment.py) — 같은 대본·음성·자막에 화면 소스만 바꿔 비교.
+#   A = 무료 영상 자동 (Pixabay + Pexels, Claude 가 고름) — 기준선
+#   B = Google Flow 직접 생성 (시스템이 장면 프롬프트를 보내면 사람이 Flow 에서 Veo 3.1 Lite 로 만들어 clips 폴더에 넣음)
+#   C = Google Flow + Aside 루틴 (B 와 같은 프롬프트, Flow 전용 구글 계정·별도 프로필에서 Aside 가 생성 — 사람이 직접 운영)
+# D(API)·E(디자인형)는 A~C 결과를 보고 결정. 숏폼 게시는 하지 않는다 (shortform.format: off 그대로) — 만들어 비교만.
+send_hour: 10        # 한국 시간 — 이 시각 이후 첫 워커 실행에 그날 실험 안내 (SNS 9시와 겹치지 않게)
+scenes: 5            # Flow 무료 하루 50크레딧 = Lite(10) 5개
+style: >-
+  Cinematic vertical 9:16 video, soft natural daylight, calm muted ivory and warm taupe palette, gentle film grain,
+  shallow depth of field, slow steady camera, no people's faces, no text, no logos
+schedule:
+  - {date: 2026-10-22, method: A, post: W41-10}   # 리쥬란
+  - {date: 2026-10-23, method: B, post: W41-10}
+  - {date: 2026-10-24, method: C, post: W41-10}
+  - {date: 2026-10-25, method: A, post: W43-03}   # 쥬베룩 — 주제가 바뀌어도 되는지
+  - {date: 2026-10-26, method: B, post: W43-03}
+  - {date: 2026-10-27, method: C, post: W43-03}
+  # 10/28: 결과 정리 → 다음 단계(D·E 시험 여부, 숏폼 재개 여부) 결정

@@ -111,8 +111,40 @@ def pixabay_candidates(query: str) -> list[dict]:
     return out
 
 
+_pexels_cache: dict[str, list] = {}
+
+
+def pexels_candidates(query: str) -> list[dict]:
+    """Pexels 무료 영상 (PEXELS_API_KEY, 2026-10-19 화면 소스 실험 A). 사람·얼굴 태그는 Pexels 가 주지 않아 쿼리에 people 제외어를 붙인다."""
+    key = os.environ.get("PEXELS_API_KEY")
+    if not key or not query:
+        return []
+    if query not in _pexels_cache:
+        url = "https://api.pexels.com/videos/search?" + urllib.parse.urlencode(
+            {"query": query, "orientation": "portrait", "per_page": 20})
+        try:
+            req = urllib.request.Request(url, headers={**UA, "Authorization": key})
+            _pexels_cache[query] = json.load(urllib.request.urlopen(req, timeout=30)).get("videos", [])
+        except Exception as e:  # noqa: BLE001 — 키가 헤더에 있어 오류 종류만 남긴다
+            log.warning("Pexels 검색 실패 (%s): %s", query, type(e).__name__)
+            _pexels_cache[query] = []
+    out = []
+    for v in _pexels_cache[query]:
+        words = _words(v.get("url", "").rsplit("/", 2)[-2].replace("-", " ") if v.get("url") else "")
+        if words & NO_TAGS or v.get("duration", 0) < 3:
+            continue
+        files = sorted((f for f in v.get("video_files", []) if f.get("link") and (f.get("height") or 0) >= 720),
+                       key=lambda f: f.get("height") or 0)
+        if not files:
+            continue
+        out.append({"id": f"pe:{v['id']}", "source": "pexels", "url": files[0]["link"], "tags": " ".join(sorted(words)),
+                    "thumb_url": v.get("image"), "page": v.get("url", ""), "user": (v.get("user") or {}).get("name", "")})
+    return out
+
+
 def candidates(line: dict, used: set[str]) -> list[dict]:
-    pool = library_candidates(line) + pixabay_candidates(query_for(line))
+    q = query_for(line)
+    pool = library_candidates(line) + pixabay_candidates(q) + pexels_candidates(q)
     return [c for c in pool if c["id"] not in used][:PER_LINE]
 
 

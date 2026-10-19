@@ -101,6 +101,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKIN_SPONSORS_FILE", str(tmp_path / "sponsors.yaml"))  # 기본: 스폰서 없음
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)  # 워커가 실제 Gemini TTS 로 렌더링하지 않게
     monkeypatch.delenv("PIXABAY_API_KEY", raising=False)  # 영상·표지 사진 검색도 네트워크 없이
+    monkeypatch.delenv("PEXELS_API_KEY", raising=False)
     monkeypatch.delenv("THREADS_ACCESS_TOKEN", raising=False)  # 이 PC 에 연결된 실제 Threads 토큰을 쓰지 않게
     for k in ("THREADS_APP_ID", "THREADS_APP_SECRET", "CF_API_TOKEN", "CF_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN",
               "CLOUDFLARE_ACCOUNT_ID", "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"):
@@ -2707,3 +2708,31 @@ def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
     res = cc.check()
     assert (res["cited"], res["total"]) == (1, 2) and res["results"][1]["sources"] == ["aad.org"]
     assert "우리 사이트 인용 1/2" in cc.report_lines(res)[0]
+
+
+def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_path):
+    exp = importlib.import_module("pipeline.experiment")
+    render = importlib.import_module("pipeline.04_render_video")
+    path = _published("2026-W41-10-rejuran-x", live=False)
+    draft = common.load_json(path / "draft.json")
+    draft["shortform"]["lines"] = [{"voice": "Line one."}, {"voice": "Line two."}]
+    common.save_json(path / "draft.json", draft)
+    monkeypatch.setattr(exp, "config", lambda: {"send_hour": 10, "scenes": 2, "style": "Soft light.",
+                                                "schedule": [{"date": "2026-10-23", "method": "B", "post": "W41-10"}]})
+    env.responses["scene_prompts"] = {"scenes": [{"lines": [1], "prompt": "Sunlight on a towel."},
+                                                 {"lines": [2], "prompt": "A calendar on a desk."}]}
+    day = datetime(2026, 10, 23, 10, 5, tzinfo=exp.KST)
+    assert exp.daily_message(day.replace(hour=9)) == ""                               # 10시 전
+    msg = exp.daily_message(day)
+    assert "[오늘의 실험 2026-10-23-B]" in msg and "1. Sunlight on a towel. Soft light." in msg
+    assert exp.daily_message(day.replace(hour=15)) == ""                              # 하루 한 번
+    assert exp.poll_message() == ""                                                   # 영상이 아직 없음
+    built = []
+    monkeypatch.setattr(render, "make_video", lambda d, out, fn: built.append(out) or {"seconds": 40.0})
+    clips = exp.root() / "2026-10-23-B" / "clips"
+    for n in (1, 2):
+        (clips / f"{n}.mp4").write_bytes(b"x")
+    out = exp.poll_message()
+    assert "[실험 완성 2026-10-23-B]" in out and "MEDIA:" in out and built
+    assert "✅ 2026-10-23-B 점수 기록" in exp.score("최근", 4, 3, 5, "예")
+    assert "B 12.0" in exp.summary()

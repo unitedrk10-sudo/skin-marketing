@@ -82,6 +82,13 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - ⛔ 표시 글은 규칙 검사에 걸린 것 — 올리지 않는다. 스폰서 글은 X·Threads 정책 확인 전이라 SNS 글을 만들지 않는다.
 - 종료 코드 2 (`❓`): 메시지를 그대로 보여준다. Threads API 가 실패하면 다른 방법(브라우저 등)으로 올리지 말고 오류만 알린다 (토큰 만료면 `python -m pipeline.social threads-auth` 로 다시 연결 안내).
 
+## 2-10. 숏폼 화면 소스 실험 (직전 봇 메시지가 `[오늘의 실험 …]` 또는 `[실험 완성 …]` 일 때)
+- 게시하지 않는 비교 실험이다 (숏폼은 중단 상태 그대로). 일정: `config/experiments.yaml`.
+- "실험 영상 넣었어" / "영상 다 넣었어": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.experiment build` → 출력(완성 안내 + MEDIA 첨부) 그대로.
+- "실험 점수 4 4 3 예" (자연스러움·내용 일치·일관성 1~5, 올릴 만함 예/아니오): `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.experiment score 최근 4 4 3 예` (실험 번호를 말하면 `score 2026-10-23-B 4 4 3 예`).
+- "실험 정리" / "실험 결과": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.experiment summary`.
+- Flow·Aside 를 대신 조작해 달라는 요청은 하지 않는다 — 생성은 사람이 직접 (Aside 는 사람이 자기 PC 에서 운영).
+
 ## 3-0. 게시 완료 기록
 사용자 예: `1 게시 완료 tiktok https://www.tiktok.com/@.../video/...` / "리쥬란 영상 인스타에 올렸어 <URL>"
 - `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.06_publish done <draft_id> <tiktok|instagram|youtube> <URL>` (draft_id 는 `06_publish status` 목록에서)

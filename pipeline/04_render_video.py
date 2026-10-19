@@ -240,16 +240,24 @@ def refresh(draft_id: str) -> Path:
 
 
 def render_video(path: Path) -> Path:
+    draft = load_draft(path)
+    meta = make_video(draft, path, plan_segments)
+    save_json(path / "render.json", {"rendered_at": now_iso(), **meta})
+    return move_draft(path.name, "approved", "rendered", ALLOWED)
+
+
+def make_video(draft: dict, out: Path, segments_fn) -> dict:
+    """대본 → 음성(voice.mp3)·자막(captions.ass/srt) → segments_fn 이 고른 화면과 합쳐 out/video.mp4.
+    segments_fn(lines, timeline, total, work) -> (segments, clips_meta). 숏폼 렌더링과 화면 소스 실험(pipeline.experiment)이 같이 쓴다."""
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise RenderError("ffmpeg/ffprobe 가 없습니다 (설치: winget install ffmpeg / brew install ffmpeg / apt install ffmpeg)")
-    draft = load_draft(path)
     sf = draft.get("shortform") or {}
     lines = [ln for ln in sf.get("lines", []) if (ln.get("voice") or "").strip()]
     if not lines:
-        raise RenderError(f"{path.name}: 대본 줄이 없습니다")
+        raise RenderError(f"{draft.get('id', out.name)}: 대본 줄이 없습니다")
     voice = load_yaml("voice.yaml")
-    work = path / "render"
-    work.mkdir(exist_ok=True)
+    work = out / "render"
+    work.mkdir(parents=True, exist_ok=True)
 
     timeline, clock, parts = [], 0.0, []
     for i, ln in enumerate(lines, 1):
@@ -265,25 +273,23 @@ def render_video(path: Path) -> Path:
     listing = work / "concat.txt"
     listing.write_text("".join(f"file '{p.name}'\nduration {timeline[i]['end'] - timeline[i]['start'] + GAP_SEC:.2f}\n"
                                for i, p in enumerate(parts)), encoding="utf-8")
-    voice_mp3 = path / "voice.mp3"
+    voice_mp3 = out / "voice.mp3"
     _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-af", "aresample=async=1:first_pts=0,apad",
           "-t", f"{total:.2f}", str(voice_mp3)])
 
     site = load_yaml("site.yaml")
     handle = site.get("domain") or site.get("name", "")
     # 표시 줄은 화면 아래 22% 위에 둔다 — 틱톡·릴스·쇼츠 하단 UI(설명·버튼)에 가리지 않게
-    ass = path / "captions.ass"
+    ass = out / "captions.ass"
     ass.write_text(build_ass(timeline, total, sf.get("on_screen_disclosure") or "AI-generated content", handle), encoding="utf-8")
-    (path / "captions.srt").write_text(build_srt(timeline), encoding="utf-8")
+    (out / "captions.srt").write_text(build_srt(timeline), encoding="utf-8")
 
-    segments, clips_meta = plan_segments(lines, timeline, total, work)
-    music = pick_music(path.name)
-    _run_in(path, compose_cmd(segments, music, total))
-    save_json(path / "render.json", {"rendered_at": now_iso(), "voice": voice.get("voice"), "seconds": total,
-                                     "size": f"{WIDTH}x{HEIGHT}", "timeline": timeline, "clips": clips_meta,
-                                     "music": music.name if music else None})
+    segments, clips_meta = segments_fn(lines, timeline, total, work)
+    music = pick_music(draft.get("id", out.name))
+    _run_in(out, compose_cmd(segments, music, total))
     shutil.rmtree(work, ignore_errors=True)
-    return move_draft(path.name, "approved", "rendered", ALLOWED)
+    return {"voice": voice.get("voice"), "seconds": total, "size": f"{WIDTH}x{HEIGHT}", "timeline": timeline,
+            "clips": clips_meta, "music": music.name if music else None}
 
 
 # ---------------- 화면 구성 ----------------
@@ -326,12 +332,15 @@ def pick_music(draft_id: str) -> Path | None:
 def compose_cmd(segments: list[tuple], music: Path | None, total: float) -> list[str]:
     """클립은 확대 효과 없이 9:16 으로 채운다 (움직이는 영상에 확대를 더하면 프레임마다 크기가 정수로 바뀌며 떨린다)."""
     inputs, chains = [], []
-    for i, (clip, dur) in enumerate(segments):
+    for i, seg in enumerate(segments):
+        clip, dur = seg[0], seg[1]
+        speed = seg[2] if len(seg) > 2 else 1.0  # 1 보다 작으면 느리게 (생성 영상 8초를 장면 길이에 맞출 때)
         if clip:
-            inputs += ["-stream_loop", "-1", "-ss", "0.3", "-t", f"{dur:.3f}", "-i", str(clip)]
+            inputs += ["-stream_loop", "-1", "-ss", "0.3", "-t", f"{dur * speed:.3f}", "-i", str(clip)]
         else:
             inputs += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", f"color=c={BACKGROUND}:s={WIDTH}x{HEIGHT}:r=30"]
-        chains.append(f"[{i}:v]fps=30,scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},"
+        slow = f"setpts={1 / speed:.4f}*PTS," if clip and speed != 1.0 else ""
+        chains.append(f"[{i}:v]{slow}fps=30,scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},"
                       f"setsar=1,eq=brightness=-0.05,trim=duration={dur:.3f},setpts=PTS-STARTPTS[v{i}]")
     n = len(segments)
     graph = chains + ["".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[bg]", "[bg]ass=captions.ass[v]"]
