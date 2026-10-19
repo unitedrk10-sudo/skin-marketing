@@ -57,10 +57,6 @@ def root() -> Path:
     return content_dir() / "experiments"
 
 
-def exp_id(entry: dict) -> str:
-    return f"{entry['date']}-{entry['method']}"
-
-
 def find_post(code: str) -> Path:
     """글번호(W41-10) → 글 폴더."""
     for state in PUBLIC_STATES:
@@ -170,24 +166,29 @@ def start(entry: dict) -> str:
     return "\n".join(lines)
 
 
-def today_entry(now: datetime) -> dict | None:
-    for e in config().get("schedule") or []:
-        if str(e["date"]) == now.date().isoformat():
-            return {**e, "date": str(e["date"])}
-    return None
+def exp_id(entry: dict) -> str:  # 같은 날 여러 실험 (2026-10-19 하루 몰아서) — 글번호까지 붙인다
+    return f"{entry['date']}-{entry['method']}-{entry['post']}"
+
+
+def today_entries(now: datetime) -> list[dict]:
+    return [{**e, "date": str(e["date"])} for e in config().get("schedule") or [] if str(e["date"]) == now.date().isoformat()]
 
 
 def daily_message(now: datetime | None = None) -> str:
-    """send_hour 이후 하루 한 번 — 오늘 실험 시작. 이미 시작했으면 빈 문자열."""
+    """send_hour 이후 — 오늘 일정 중 아직 시작하지 않은 실험을 모두 시작. 없으면 빈 문자열."""
     now = now or datetime.now(KST)
-    entry = today_entry(now)
-    if not entry or now.hour < int(config().get("send_hour", 10)) or state(exp_id(entry)):
+    if now.hour < int(config().get("send_hour", 10)):
         return ""
-    try:
-        return start(entry)
-    except (ExperimentError, llm.LLMError) as e:
-        _save(exp_id(entry), {"id": exp_id(entry), **entry, "status": "failed", "error": str(e)[:300]})
-        return f"⚠️ 오늘 실험({exp_id(entry)}) 시작 실패: {e}"
+    out = []
+    for entry in today_entries(now):
+        if state(exp_id(entry)):
+            continue
+        try:
+            out.append(start(entry))
+        except (ExperimentError, llm.LLMError) as e:
+            _save(exp_id(entry), {"id": exp_id(entry), **entry, "status": "failed", "error": str(e)[:300]})
+            out.append(f"⚠️ 실험({exp_id(entry)}) 시작 실패: {e}")
+    return "\n\n".join(out)
 
 
 def poll_message() -> str:

@@ -8,11 +8,9 @@ scenes: 5            # Flow 무료 하루 50크레딧 = Lite(10) 5개
 style: >-
   Cinematic vertical 9:16 video, soft natural daylight, calm muted ivory and warm taupe palette, gentle film grain,
   shallow depth of field, slow steady camera, no people's faces, no text, no logos
-schedule:
-  - {date: 2026-10-22, method: A, post: W41-10}   # 리쥬란
-  - {date: 2026-10-23, method: B, post: W41-10}
-  - {date: 2026-10-24, method: C, post: W41-10}
-  - {date: 2026-10-25, method: A, post: W43-03}   # 쥬베룩 — 주제가 바뀌어도 되는지
-  - {date: 2026-10-26, method: B, post: W43-03}
-  - {date: 2026-10-27, method: C, post: W43-03}
-  # 10/28: 결과 정리 → 다음 단계(D·E 시험 여부, 숏폼 재개 여부) 결정
+schedule:   # 2026-10-19 변경: 2주 → 오늘 하루에 몰아서 (Flow 무료 50크레딧 = Lite 5개 = 계정당 하루 B 또는 C 한 번)
+  - {date: 2026-10-19, method: A, post: W41-10}   # 리쥬란 — 무료 영상 자동, 바로 완성
+  - {date: 2026-10-19, method: A, post: W43-03}   # 쥬베룩 — 주제가 바뀌어도 되는지
+  - {date: 2026-10-19, method: B, post: W41-10}   # 리쥬란 — Flow 직접 (지금 계정 50크레딧)
+  - {date: 2026-10-19, method: C, post: W43-03}   # 쥬베룩 — Flow 전용 계정 + Aside (그 계정 50크레딧)
+  # 결과 보고 바로 결정 (D·E 시험 여부, 숏폼 재개 여부). 모자라면 내일 같은 방식으로 한 번 더

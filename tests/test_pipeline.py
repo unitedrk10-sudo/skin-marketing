@@ -110,6 +110,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(importlib.import_module("pipeline.site"), "publish_schedule", lambda: None)  # 기본: 승인 즉시 게시
     for name in ("pipeline.02b_auto_review", "pipeline.03_review", "pipeline.translate"):  # 기본: 숏폼 켠 상태로 시험
         monkeypatch.setattr(importlib.import_module(name), "shortform_on", lambda: True)
+    monkeypatch.setattr(importlib.import_module("pipeline.experiment"), "config",
+                        lambda: {"schedule": []})  # 실제 실험 일정이 워커 테스트에 끼지 않게
     fake = FakeLLM()
     fake.responses["translate"] = {}  # 검수용 번역: 기본은 실패 → 영어 원문 (번역 테스트에서 따로 넣는다)
     llm.set_backend(fake)
@@ -2724,15 +2726,15 @@ def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_pat
     day = datetime(2026, 10, 23, 10, 5, tzinfo=exp.KST)
     assert exp.daily_message(day.replace(hour=9)) == ""                               # 10시 전
     msg = exp.daily_message(day)
-    assert "[오늘의 실험 2026-10-23-B]" in msg and "1. Sunlight on a towel. Soft light." in msg
+    assert "[오늘의 실험 2026-10-23-B-W41-10]" in msg and "1. Sunlight on a towel. Soft light." in msg
     assert exp.daily_message(day.replace(hour=15)) == ""                              # 하루 한 번
     assert exp.poll_message() == ""                                                   # 영상이 아직 없음
     built = []
     monkeypatch.setattr(render, "make_video", lambda d, out, fn: built.append(out) or {"seconds": 40.0})
-    clips = exp.root() / "2026-10-23-B" / "clips"
+    clips = exp.root() / "2026-10-23-B-W41-10" / "clips"
     for n in (1, 2):
         (clips / f"{n}.mp4").write_bytes(b"x")
     out = exp.poll_message()
-    assert "[실험 완성 2026-10-23-B]" in out and "MEDIA:" in out and built
-    assert "✅ 2026-10-23-B 점수 기록" in exp.score("최근", 4, 3, 5, "예")
+    assert "[실험 완성 2026-10-23-B-W41-10]" in out and "MEDIA:" in out and built
+    assert "✅ 2026-10-23-B-W41-10 점수 기록" in exp.score("최근", 4, 3, 5, "예")
     assert "B 12.0" in exp.summary()
