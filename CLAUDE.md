@@ -2,6 +2,7 @@
 
 기획서: `docs/derm-content-automation.md` (전체 설계·법규 체크리스트의 기준 문서)
 마케팅 프레임: `docs/marketing-framework.md` (타깃·차별점·브랜드·페이지·채널·성과 지표와 결정 대기 목록 — 화면·채널 작업 전에 먼저 확인)
+사례 조사: `docs/clinic-marketing-research.md` (병원·마케팅 회사 홍보 방식 조사 누적 — 비교표·가져올 것. 새 조사는 이 틀로 추가)
 
 ## 작업 규칙
 - 개발은 Claude Code 대화 세션으로, 운영은 Hermes가 한다. 운영 중 Claude 는 워커가 부르는 초안 작성 단계(`claude -p`, `llm.py` provider `claude_cli`)로만 쓴다. 스크립트는 사람 개입 없이 CLI로 단독 실행 가능해야 한다.
