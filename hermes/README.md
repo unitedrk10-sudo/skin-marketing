@@ -72,3 +72,8 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 - 영상: 승인된 초안은 워커가 `04_render_video` 로 렌더링(Gemini TTS — `GEMINI_API_KEY` + ffmpeg, 없으면 조용히 건너뜀) → "게시 전 확인" 메시지 → "게시 OK" → 워커가 `06_publish kits` 로 채널별 게시 키트 → 직접 올린 뒤 "N 게시 완료 <채널> <URL>" → 모두 올리면 published.
 - 05_preview 는 따로 없다: `03_review list --stage rendered` 메시지 + 스킬이 영상 파일을 첨부한다.
 - 예약 게시 도구·플랫폼 API 연결은 아직 (지금은 키트로 수동 게시).
+
+## 게이트웨이 지킴이 (2026-10-19)
+- Windows 작업 스케줄러 `Hermes_Watchdog` 가 10분마다 `hermes/watchdog.py` 를 창 없이(`pythonw`) 실행 → 게이트웨이가 꺼져 있으면 `gateway start`, 크론 심장박동이 멈춰 있으면 `gateway restart`, 그리고 텔레그램 알림. 기록 `logs/watchdog.log`.
+- 계기: 2026-10-18 00:34 텔레그램 연결 오류 뒤 게이트웨이가 종료 기록 없이 사라져 하루 넘게 예약 작업이 멈춤.
+- 상태만 보기: `.venv\Scripts\python hermes\watchdog.py --check` / 작업 다시 등록은 `Register-ScheduledTask` (10분 반복, 배터리에서도 실행, 동시 실행 무시).
