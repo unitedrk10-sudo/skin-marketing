@@ -179,7 +179,7 @@ def check_item(draft: dict, kind: str, bodies: dict[str, str], channels: dict | 
     import importlib
     review = importlib.import_module("pipeline.02b_auto_review")
     problems = []
-    known_numbers = set(NUMBER.findall(" ".join(f.get("text", "") for f in draft.get("facts", []))))
+    known_numbers = known_numbers_of(draft)
     cfg = settings()
     if channels is None:
         channels = build_channels(kind, bodies, blog_url(draft), fact_domains(draft, fact_ids or []) or ["source"])
@@ -189,24 +189,71 @@ def check_item(draft: dict, kind: str, bodies: dict[str, str], channels: dict | 
         if not text:
             problems.append(f"[{kind}·{ch}] 빈 글")
             continue
-        for term, pat in review.load_banned():
-            if pat.search(text):
-                problems.append(f"[{ch}] 금지 표현: {term}")
-        for rule, label, pat in review.RULE_PATTERNS:
-            m = pat.search(text)
-            if m and not (rule == "clinic_name" and (review.INSTITUTION.search(m.group(0)) or review._generic(m.group(0)))):
-                problems.append(f"[{ch}] {label}: {m.group(0)}")
-        if URL.search(text):
-            problems.append(f"[{ch}] 본문에 링크 (블로그 링크는 코드가 붙인다)")
-        for n in NUMBER.findall(text):
-            if n not in known_numbers:
-                problems.append(f"[{ch}] 사실 목록에 없는 수치: {n}")
+        problems += [f"[{ch}] {msg}" for msg in text_problems(text, known_numbers)]
         limit = cfg[ch]["max_chars"]
         if (n := size(ch, channels[ch]["text"])) > limit:
             problems.append(f"[{ch}] 너무 김 ({n}/{limit}자)")
     if not draft.get("sponsor"):
         problems += [f.message for f in review.check_no_sponsor_names(bodies)]
     return problems
+
+
+def text_problems(text: str, known_numbers: set[str]) -> list[str]:
+    """한 문장·글의 규칙 검사 — 금지 표현·병원명·연락처 등(02b 목록)·링크·사실 목록에 없는 수치."""
+    import importlib
+    review = importlib.import_module("pipeline.02b_auto_review")
+    out = [f"금지 표현: {term}" for term, pat in review.load_banned() if pat.search(text)]
+    for rule, label, pat in review.RULE_PATTERNS:
+        m = pat.search(text)
+        if m and not (rule == "clinic_name" and (review.INSTITUTION.search(m.group(0)) or review._generic(m.group(0)))):
+            out.append(f"{label}: {m.group(0)}")
+    if URL.search(text):
+        out.append("본문에 링크 (블로그 링크는 코드가 붙인다)")
+    out += [f"사실 목록에 없는 수치: {n}" for n in NUMBER.findall(text) if n not in known_numbers]
+    return out
+
+
+def known_numbers_of(draft: dict) -> set[str]:
+    return set(NUMBER.findall(" ".join(f.get("text", "") for f in draft.get("facts", []))))
+
+
+def pick_openers(draft: dict, generated: dict[str, dict]) -> dict[str, dict]:
+    """첫 줄 고르기 (2026-10-20) — Claude 가 종류마다 첫 줄 후보 5개를 쓰고, 코드 규칙에 걸린 후보를 뺀 뒤
+    Gemini(stage pick_opener, 작성과 다른 회사)가 하나를 고른다. 고른 첫 줄로 X·Threads 본문 첫 줄을 바꾼다.
+    고르기가 실패하면 Claude 가 쓴 본문 그대로 (안전 검사는 어차피 check_item 이 본문 전체에 한다)."""
+    known = known_numbers_of(draft)
+    pool = {}
+    for kind, g in generated.items():
+        ok = [o for o in g.get("openers", []) if o and "\n" not in o and not text_problems(o, known)]
+        if len(ok) >= 2:
+            pool[kind] = ok
+    if not pool:
+        return {}
+    listing = "\n\n".join(f"[{kind}]\n" + "\n".join(f"{i}. {o}" for i, o in enumerate(ops, 1)) for kind, ops in pool.items())
+    try:
+        data, res = llm.generate_json("pick_opener", prompt("pick_opener", title=draft["blog"].get("title", ""),
+                                                            facts=facts_text(social_facts(draft)), candidates=listing))
+    except llm.LLMError as e:
+        log.warning("첫 줄 고르기 실패 — Claude 본문 그대로: %s", e)
+        return {}
+    data = data if isinstance(data, dict) else {}
+    out = {}
+    for kind, ops in pool.items():
+        choice = data.get(kind) if isinstance(data.get(kind), dict) else {}
+        try:
+            n = int(choice.get("pick"))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= len(ops):
+            out[kind] = {"candidates": ops, "picked": n, "text": ops[n - 1], "why": str(choice.get("why", ""))[:200],
+                         "model": getattr(res, "model", "")}
+    return out
+
+
+def with_opener(body: str, opener: str) -> str:
+    """본문 첫 줄을 고른 첫 줄로 바꾼다."""
+    rest = body.split("\n", 1)
+    return opener + ("\n" + rest[1] if len(rest) > 1 else "")
 
 
 def check(draft: dict, texts: dict[str, str]) -> list[str]:
@@ -240,7 +287,8 @@ def generate(draft: dict) -> dict[str, dict]:
     for kind in KINDS:
         item = data.get(kind) if isinstance(data.get(kind), dict) else {}
         out[kind] = {**{ch: str(item.get(ch) or "").strip() for ch in CHANNELS},
-                     "fact_ids": [str(i) for i in item.get("fact_ids") or []]}
+                     "fact_ids": [str(i) for i in item.get("fact_ids") or []],
+                     "openers": [str(o).strip() for o in item.get("openers") or [] if str(o).strip()][:5]}
     return out
 
 
@@ -280,12 +328,16 @@ def compose(path: Path) -> dict:
         if not todo:
             break
         generated = generate(draft)
+        picks = pick_openers(draft, {k: generated[k] for k in todo})
         for kind in todo:
             g = generated[kind]
-            bodies = {ch: g[ch] for ch in CHANNELS}
+            pick = picks.get(kind)
+            bodies = {ch: with_opener(g[ch], pick["text"]) if pick and g[ch] else g[ch] for ch in CHANNELS}
             channels = build_channels(kind, bodies, url, fact_domains(draft, g["fact_ids"]) or ["source"])
             results[kind] = {"status": "ready", "fact_ids": g["fact_ids"], "channels": channels, "scheduled_on": None,
                              "problems": check_item(draft, kind, bodies, channels, g["fact_ids"])}
+            if pick:
+                results[kind]["opener"] = pick
     for kind, item in results.items():
         item["status"] = "blocked" if item["problems"] else "ready"
         data["items"][kind] = item

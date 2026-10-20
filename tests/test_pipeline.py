@@ -165,7 +165,7 @@ def test_writing_and_review_use_different_vendors():
     """기획서 6-0: 같은 회사 모델이 쓰고 검수하지 않는다 (작성 Claude ↔ 검수 Gemini)."""
     vendor = {"claude_cli": "anthropic", "claude_code": "anthropic", "anthropic": "anthropic", "gemini": "google"}
     writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search")}
-    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review")}
+    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener")}
     assert writers.isdisjoint(reviewers)
 
 
@@ -2767,3 +2767,20 @@ def test_experiment_sends_scene_prompts_one_by_one(env, monkeypatch):
     sent = []
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: sent.append(text) or True)
     assert exp.send_prompts([{"n": 1, "prompt": "A."}, {"n": 2, "prompt": "B."}]) and sent == ["A.", "B."]
+
+
+def test_social_openers_filtered_by_rules_then_picked_by_other_vendor(env):
+    vendor = {"claude_cli": "anthropic", "gemini": "google"}
+    assert vendor[llm.stage_config("social")["provider"]] != vendor[llm.stage_config("pick_opener")["provider"]]
+    env.responses["social"] = {**SOCIAL, "link": {**SOCIAL_LINK, "openers": [
+        "The best Rejuran trick.",                       # 금지 표현 → 후보에서 빠짐
+        "Rejuran before a Seoul trip: how long do bumps last?",
+        "Salmon DNA, explained plainly."]}}
+    env.responses["pick_opener"] = {"link": {"pick": 2, "why": "specific"}}
+    _published()
+    assert social_mod.main(["compose"]) == 0
+    item = common.load_json(common.content_dir("approved") / "2026-W40-01-what-is-rejuran" / "social.json")["items"]["link"]
+    assert item["opener"]["candidates"][0].startswith("Rejuran before")   # 걸린 후보는 Gemini 에 안 보냄
+    assert item["channels"]["threads"]["text"].startswith("Salmon DNA, explained plainly.")
+    assert item["status"] == "ready"
+    assert social_mod.with_opener("old\nrest", "new") == "new\nrest"

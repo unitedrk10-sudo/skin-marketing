@@ -25,6 +25,11 @@ The three posts:
 
 Voice (2026-10-19): sound like a knowledgeable insider who explains plainly and takes a clear, sourced stance — candid and specific, never salesy. Open with the one thing a reader most needs to hear, not a generic hook. Our angle in one phrase: "Korean skin treatments, explained honestly."
 
+First line (2026-10-20): the first line decides whether anyone reads on. For EACH post, first write "openers": 5 different candidate first lines (one line each, no line breaks), then write the x and threads texts starting with your best candidate as their first line.
+- Mix types: a reader's question ("Rejuran before a Seoul trip — how long do the bumps last?"), a plain specific fact from the list, a common belief vs. what sources say, a planning problem.
+- Specific beats clever: name the treatment, the number from the facts, or the trip situation. No hype, no "you won't believe", no authority claims, no made-up statistics, no confession or "I tried" lines.
+- Every number in an opener must come from the facts exactly. For "ask" posts, openers are questions about planning only.
+
 For every post:
 - An explainer's voice (never "I tried"), plain English, hedged wording ("commonly", "results vary"), no clinic or doctor names, no prices from a specific clinic, no "best/#1/guaranteed/safe/painless".
 - Never ask readers for their clinic experiences, reviews or before/after photos. A closing question is fine only about planning ("What's harder to plan — …?").
@@ -34,7 +39,7 @@ For every post:
 {{rules}}
 
 Return ONLY JSON:
-{"link": {"x": "…", "threads": "…", "fact_ids": ["F1"]},
- "fact": {"x": "…", "threads": "…", "fact_ids": ["F3"]},
- "angle": {"x": "…", "threads": "…", "fact_ids": ["F2"]},
- "ask": {"x": "…", "threads": "…", "fact_ids": []}}
+{"link": {"openers": ["…", "…", "…", "…", "…"], "x": "…", "threads": "…", "fact_ids": ["F1"]},
+ "fact": {"openers": ["…"], "x": "…", "threads": "…", "fact_ids": ["F3"]},
+ "angle": {"openers": ["…"], "x": "…", "threads": "…", "fact_ids": ["F2"]},
+ "ask": {"openers": ["…"], "x": "…", "threads": "…", "fact_ids": []}}
