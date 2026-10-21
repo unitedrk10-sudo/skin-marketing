@@ -82,7 +82,7 @@
 
 
 ## 3. 세니아의원 / Xenia Clinic (2026-10-21 조사)
-> 조사 방법: 웹 검색 결과 요약만 사용. 이 세션 네트워크에서 병원 사이트·SNS 페이지를 직접 열지 못해 원문 대조는 안 됨 → 인용·수치는 각 출처에서 다시 확인 후 사용. 사용자가 말한 "세니아라은 의원"은 검색되지 않아, 이름이 가장 가까운 이 병원으로 조사함 (확인 필요).
+> 조사 방법: 웹 검색 결과 요약만 사용. 이 세션 네트워크에서 병원 사이트·SNS 페이지를 직접 열지 못해 원문 대조는 안 됨 → 인용·수치는 각 출처에서 다시 확인 후 사용. (사용자 확인 2026-10-21: "세니아라은"은 "세니아라는 의원"의 오타 — 이 병원이 맞음.)
 
 - **유형:** 피부과 의원. 정식 명칭 "아름다움을감각하다 세니아의원", 2022-09-14 설립, 대표자 민원준. 서울 서초구 강남대로 441 서산빌딩 4·13층 + 별관(강남대로69길 쪽 건물 주소가 공식 사이트에 함께 나온다고 함). 신논현역·강남역 사이.
 - **규모·운영 형태 (공개 정보):**
@@ -104,6 +104,15 @@
     - 일본 Threads 개인 계정·Lemon8·일본 블로그(JINI BLOG 등)·대만·홍콩 블로그(價格透明不推銷 "가격 투명, 강매 없음") 다수.
   - **보도자료:** 24-7 Press Release(2025-02-21) "Top 3 Gangnam Skin Clinic Destinations"에 두 번째로 소개, 금융 뉴스 사이트로 재배포 → 기사 형태의 유료 홍보.
   - **해외 예약·유치 사이트:** Creatrip(예약 시 "One Day Trial" 특가, 한국인·외국인 같은 가격 표방), Korea Clinic Guide, Mindtrip, flipkorea, 중국어 가격표 사이트(爱美容研社·婉宝 등, "가격표 유출" 형식의 글).
+- **의료진 홍보 (2026-10-21 추가 조사):**
+  - **의사 수가 플랫폼마다 다름:** 강남언니 "주요 의료진 16명"(unni.app 영문은 14명: 민원준·신지연·김선진·편효준 등), 모두닥 "의사 4명"(민원준·황정원·윤정수 등), 메디플은 의사 수 칸이 비어 있음. 다른 자료에 김서현·채시원·박규리·김동훈·김민성 이름도 나옴. 실제 재직 의사 수·전문의 수는 심평원 병원정보에서 확인 필요(이 세션에서는 접속 불가).
+  - **후기가 특정 의사에게 몰리지 않음:** 강남언니 평가 약 3,280개 중 의사 이름이 붙은 후기는 신지연 163건이 가장 많고, 나머지 의사는 1~2건(편효준 1·김선진 2·김동훈 1). → 대부분의 후기에 시술한 의사가 표시되지 않음. 누가 시술하는지를 앞세우는 홍보가 아님.
+  - **전문의 표시:** 신지연만 구조화 데이터에 전공 Dermatology로 나옴. 나머지는 "의사(Medical Doctor)"로만 표시. 전문의 여부는 어떤 자료에서도 확인되지 않음. 기관 이름은 "피부과의원"이 아니라 "의원"(진료과목에 피부과 표시)인데, 해외 홍보물은 "皮膚科 / 皮肤科 / Dermatology / 美容皮膚科"라고 부름 → 명칭 표시 규정(의료법 시행규칙)에 걸리는지는 확인 필요, 단정하지 않음.
+  - **대표원장을 앞세우는 글:** 일본어 공식 블로그 "セニアクリニック代表院長が暴露する '合理的値段の秘密'"(대표원장 민원준). 같은 블로그에 "ジュベルックボリューム費用、皮膚クリニックが公開します", "インモードフォーマ価格? fxとの違い" 같은 가격 공개형 글.
+  - **원장 경력이 출처마다 다름:** 중국어 홍보 글은 원장을 "金敏秀, 15년 임상 경험"이라고 소개 → 공식 사이트 대표자(민원준)나 플랫폼 의사 목록 어디에도 없는 이름. 대만 블로그는 "원장이 직접 시술(院长亲自操刀)"했다고 씀. 공식 시술 페이지(xenia.clinic/ko/products/…)는 단계만 설명하고 시술자를 밝히지 않음.
+  - **"원장 직접 시술" 표방은 찾지 못함.** 일본 후기에 "여의사가 꼼꼼히 레이저를 쐈다", "담당 선생님 상담 후 제안" 정도.
+  - **일본 지점:** "XENIA CLINIC 新宿院"(セニアメディカル株式会社, 2025-12 또는 2026-01 개원, 신주쿠3초메). 일본 구인 글에 "일본인 내원자 누적 10만 명 이상", 개원 컨설팅 TUKIYOMI. 의사 구인 글(グッピー·m3)에 "皮膚科専門医や各分野の指導医"라고 적혀 있으나 실제 재직 의사는 확인 안 됨.
+  - **기타:** 이터랩(세니아클리닉) 백엔드 개발자 채용 공고 → 예약·CRM 같은 자체 시스템을 만드는 관계 회사로 보이나 확인 안 됨. YouTube 쇼츠 제목 "Xenia Clinic The Best Skincare Clinic in Korea"(최상급 표현).
 - **대상 고객:** 외국인 관광객 중심(일본·중화권·태국·영어권) + 국내 2030.
 - **돈 버는 방식:** 진료비. 저가 입문 시술(아쿠아필·LDM 2만~3만 원대, 부가세 별도)과 체험가로 끌어들인 뒤 현장 상담에서 추가 시술을 권하는 흐름이 후기에 반복됨(아래).
 - **후기에서 보이는 실제 운영 (개인 후기라 일반화 주의):**
@@ -122,8 +131,8 @@
 - **장점 (가져올 만한 것):** 언어별 계정을 따로 운영하고 현지인 직원이 그 언어로 답하는 구조 → 우리 다국어 보류 항목 판단 때 참고 (언어별 수요가 실제로 큼).
 - **가져오지 않는 것:** 협찬 체험 글·순위형 보도자료(§56②2·10·14, 우리는 체험담·순위 금지), 가격 게시·할인 쿠폰(우리는 가격 단정 안 함), 직원 휴대폰·LINE 상담 연결(시스템의 선).
 - **글로 쓸 때 (2026-10-21 결정 대기):** 병원 이름을 쓰는 비판 글은 명예훼손(형법 §307①은 사실 적시도 처벌)·중립 원칙 문제로 하지 않는 쪽을 권함. 대신 이름 없이 "이런 홍보 신호가 보이면 조심" 체크리스트 글 — 협찬 표시 없는 체험 글, "Top N" 보도자료, 부가세 별도 초저가, 상담 실장 인센티브, 시술자·시술 시간 미표시, 요청과 다른 장비.
-- **확인 안 된 것:** "세니아라은"이 이 병원인지 / 전후 사진 사용 여부 / 의료광고 심의번호 표시 여부 / 국내 Instagram·네이버 블로그 계정 / 외국인환자 유치기관 등록 여부 / 각 SNS 원문(검색 요약만 봄) / Creatrip 체험가 금액 / 행정처분 이력(검색에서 안 나옴 = 없음이 아님).
-- **출처:** xenia.clinic, gangnamunni.com/hospitals/4370, yeoshin.co.kr/en/hospitals/4730, modoodoc.com/hospital/73243, sungyesa.com/hlist/148752, sungyesa.com/petitphoto/34844, threads.com/@xenia.clinic, threads.com/@xeniaclinic.th, threads.com/@xeniaclinic.tw, ameblo.jp/xeniaclinic-jp/entry-12827686410.html, kireireport.com/clinics/85733/reports, afangirlsheart.com/2024/10/my-first-visit-xenia-clinic-foreigner-friendly-skincare.html, tiktok.com/@hyunjong.and.somi/video/7389573675176987905, 24-7pressrelease.com/press-release/519701, creatrip.com/en/spot/15904, creatrip.com/en/news/14485, koreaclinicguide.com/clinic/xenia-clinic-gangnam, rongyanshe.com/hospital/32226.html, rebeccafoodaily.com/xeniaclinic-gangnam-seoul, misskitb.blogspot.com/2024/10/xenia-clinic.html, jobkorea.co.kr/company/48953549/recruit, jobkorea.co.kr/Recruit/GI_Read/46658995, jobplanet.co.kr/companies/423674, youtube.com/@XeniaClinic, facebook.com/xeniaclinic.th
+- **확인 안 된 것:** 심평원 기준 의사 수·전문의 수 / 전후 사진 사용 여부 / 의료광고 심의번호 표시 여부 / 국내 Instagram·네이버 블로그 계정 / 외국인환자 유치기관 등록 여부 / 각 SNS 원문(검색 요약만 봄) / Creatrip 체험가 금액 / 행정처분 이력(검색에서 안 나옴 = 없음이 아님).
+- **출처:** xenia.clinic, gangnamunni.com/hospitals/4370, yeoshin.co.kr/en/hospitals/4730, modoodoc.com/hospital/73243, sungyesa.com/hlist/148752, sungyesa.com/petitphoto/34844, threads.com/@xenia.clinic, threads.com/@xeniaclinic.th, threads.com/@xeniaclinic.tw, ameblo.jp/xeniaclinic-jp/entry-12827686410.html, kireireport.com/clinics/85733/reports, afangirlsheart.com/2024/10/my-first-visit-xenia-clinic-foreigner-friendly-skincare.html, tiktok.com/@hyunjong.and.somi/video/7389573675176987905, 24-7pressrelease.com/press-release/519701, creatrip.com/en/spot/15904, creatrip.com/en/news/14485, koreaclinicguide.com/clinic/xenia-clinic-gangnam, rongyanshe.com/hospital/32226.html, rebeccafoodaily.com/xeniaclinic-gangnam-seoul, misskitb.blogspot.com/2024/10/xenia-clinic.html, jobkorea.co.kr/company/48953549/recruit, jobkorea.co.kr/Recruit/GI_Read/46658995, jobplanet.co.kr/companies/423674, youtube.com/@XeniaClinic, facebook.com/xeniaclinic.th, gangnamunni.com/doctors/3084, unni.app/us/hospitals/4370, ameblo.jp/xeniaclinic-jp/entry-12827056281.html, m.wbigs.com/gonglve/70396.html, tukiyomi-beauty.com/project/xeniaclinic, guppy.jp/md/956129, en-gage.net/user/search/desc/13846377, zighang.com/recruitment/d9526227-5d89-40b8-890f-c3b0686a434e, youtube.com/shorts/wvkbhVsTUs0
 
 ---
 
