@@ -620,7 +620,8 @@ def record(target: Ref | Path | str, channel: str, url: str, kind: str = "link")
 THREADS_GRAPH = "https://graph.threads.com"  # Meta 문서 기준 새 주소 (예전 graph.threads.net)
 THREADS_API = f"{THREADS_GRAPH}/v1.0"
 REFRESH_AFTER_DAYS = 50
-THREADS_SCOPES = "threads_basic,threads_content_publish,threads_manage_insights"  # insights = 주간 리포트 반응 수 (2026-10-16)
+THREADS_SCOPES = ("threads_basic,threads_content_publish,threads_manage_insights,"  # insights = 주간 리포트 반응 수 (2026-10-16)
+                  "threads_read_replies,threads_keyword_search,threads_profile_discovery")  # 다른 계정 공개 글·답글 읽기 — 사례 조사용 (2026-10-21)
 # 처음 연결(threads-auth)에서 로그인 뒤 돌아올 주소 — 서버가 없으니 localhost 로 보내고 주소창의 code 를 복사한다.
 # 앱 대시보드 Threads 사용 사례 설정의 "리디렉션 콜백 URL" 에 똑같이 넣어야 한다.
 DEFAULT_REDIRECT = "https://localhost/"
