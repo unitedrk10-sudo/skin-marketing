@@ -40,4 +40,5 @@ Skincare and cosmetic products (Korean Cosmetics Act §13):
 
 AI disclosure:
 - Short-form videos must include an on-screen line: "AI-generated content".
+- AI voices, images and video must never be presented as, or look like, a doctor, pharmacist, professor or other expert — and never show such a person (real or AI) endorsing, recommending, approving or using a product or treatment (Korean Cosmetics Act §13①4, in force 2026-10-20; the same principle applies to treatments). The narrator is an unnamed explainer, never "Dr." or "as a dermatologist".
 - Blog posts must end with: "This article was produced with AI assistance and is based on publicly available sources. It is not medical advice."

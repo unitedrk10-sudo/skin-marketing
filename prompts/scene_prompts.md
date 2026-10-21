@@ -8,7 +8,7 @@ SCRIPT (numbered lines, read in order):
 Write exactly {{n}} scenes that together cover the script in order. Each scene covers a run of consecutive script lines.
 
 Visual rules (strict — these come from Korean medical advertising law and our brand):
-- No human faces, no patients, no before/after looks, no injections, needles, lasers touching skin, or any procedure being performed, no clinic interiors, treatment rooms, doctors or white coats, no logos, brand names, readable text, signs or captions in the image.
+- No doctors, pharmacists or experts of any kind (Cosmetics Act §13①4: no AI-made expert endorsing or using a product). No human faces, no patients, no before/after looks, no injections, needles, lasers touching skin, or any procedure being performed, no clinic interiors, treatment rooms, doctors or white coats, no logos, brand names, readable text, signs or captions in the image.
 - Allowed: hands (no faces), calm still life (skincare bottles without labels, towels, a calendar, a passport, a suitcase), Seoul streets, palaces, hanok alleys, cafes, parks and seasons, sky and light, abstract skin-like textures, water, gentle motion.
 - Every scene must clearly relate to its lines (if a line is about sun protection, show sunlight and shade; if about days of recovery, show a calendar or a calm hotel room), not generic beauty footage.
 - Content match test (2026-10-20 — viewers scored our first try 1/5 for match): a viewer who sees the clip with the sound off should be able to guess what its lines are about. Pick the most concrete noun or action in the lines and show THAT, literally where allowed, otherwise as a direct visual stand-in for the same idea:
