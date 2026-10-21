@@ -42,7 +42,8 @@ log = get_logger("experiment")
 KST = timezone(timedelta(hours=9))
 PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".m4v"}
-METHOD_LABEL = {"A": "무료 영상 자동", "B": "Flow 직접 생성", "C": "Flow + Aside"}
+METHOD_LABEL = {"A": "무료 영상 자동", "B": "Flow 직접 생성", "C": "Flow + Aside",
+                "E": "코드로 그리는 설명 애니메이션", "BE": "Flow 배경 + 설명 애니메이션"}  # E·BE 2026-10-21 (pipeline/explainer.py)
 MIN_SPEED = 0.6  # 생성 영상(8초)을 장면 길이에 맞춰 이 배속까지만 느리게, 더 길면 반복
 SHOT_MAX = 3.2   # 한 컷 최대 길이(초) — 넘으면 같은 영상의 다른 구간으로 나눈다
 ZOOMS = (1.0, 1.18)  # 같은 영상에서 이어지는 컷은 확대 비율을 번갈아 (점프컷 완화, 고정 확대라 떨림 없음)
@@ -178,6 +179,17 @@ def build(eid: str) -> str:
     out = root() / eid
     if data["method"] == "A":
         fn = stock_segments
+    elif data["method"] in ("E", "BE"):
+        explainer = importlib.import_module("pipeline.explainer")
+        background = None
+        if data["method"] == "BE":  # 배경 = B 실험(data["bg"])의 Flow 클립, 줄마다 쪼갠 그대로
+            bg = state(data.get("bg", ""))
+            clips = clip_files(bg.get("id", "")) if bg else []
+            if not clips:
+                raise ExperimentError(f"배경으로 쓸 B 실험 클립이 없습니다: {data.get('bg')}")
+            scenes = bg.get("scenes") or []
+            background = clip_segments(order_clips(clips, scenes), scenes)
+        fn = explainer.segments_fn(draft, eid, background)
     else:
         clips = clip_files(eid)
         if not clips:
@@ -200,10 +212,11 @@ def start(entry: dict) -> str:
     draft_path = find_post(entry["post"])
     draft = load_draft(draft_path)
     data = {"id": eid, "date": entry["date"], "method": entry["method"], "post": entry["post"],
-            "title": draft["blog"].get("title", ""), "started_at": now_iso(), "status": "started"}
+            "title": draft["blog"].get("title", ""), "started_at": now_iso(), "status": "started",
+            **({"bg": entry["bg"]} if entry.get("bg") else {})}
     (root() / eid).mkdir(parents=True, exist_ok=True)
     _save(eid, data)
-    if entry["method"] == "A":
+    if entry["method"] in ("A", "E", "BE"):  # 사람 손이 필요 없는 방식은 바로 완성
         return build(eid)
     scenes = scene_prompts(draft, int(entry.get("scenes") or cfg.get("scenes", 5)), cfg.get("style", ""))
     (root() / eid / "clips").mkdir(exist_ok=True)

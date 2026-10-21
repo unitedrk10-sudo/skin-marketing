@@ -2784,3 +2784,19 @@ def test_social_openers_filtered_by_rules_then_picked_by_other_vendor(env):
     assert item["channels"]["threads"]["text"].startswith("Salmon DNA, explained plainly.")
     assert item["status"] == "ready"
     assert social_mod.with_opener("old\nrest", "new") == "new\nrest"
+
+
+def test_explainer_screen_text_only_from_facts(env):
+    ex = importlib.import_module("pipeline.explainer")
+    draft = {"facts": [{"id": "F1", "text": "One trial used 3 sessions 2 weeks apart.", "url": "https://pubmed.ncbi.nlm.nih.gov/1/"}],
+             "shortform": {"lines": [{"voice": "How many sessions?"}, {"voice": "Redness fades."}, {"voice": "Ask a doctor."}]}}
+    beats, problems = ex.check(draft, [
+        {"line": 1, "kind": "timeline", "count": 3, "interval": "2 weeks apart", "label": "One trial", "fact_ids": ["F1"]},
+        {"line": 2, "kind": "big_number", "value": "90", "unit": "%", "label": "fade in a day"},      # 사실에 없는 수치
+        {"line": 3, "kind": "icon_scene", "icon": "rocket", "label": "The best clinic"}])           # 금지 표현·없는 아이콘
+    assert beats[0]["kind"] == "timeline" and not any(p.startswith("1번") for p in problems)
+    assert beats[1] == {"line": 2, "kind": "icon_scene", "icon": "drop", "label": "", "note": ""} and any("90" in p for p in problems)
+    assert beats[2]["label"] == "" and beats[2]["icon"] == "drop"
+    assert ex.sources(draft, beats[0]) == "Source: pubmed.ncbi.nlm.nih.gov"
+    p = ex.props(draft, beats, [{"start": 0.0}, {"start": 2.5}, {"start": 5.0}], 7.0, [])
+    assert [(b["start"], b["end"]) for b in p["beats"]] == [(0.0, 2.5), (2.5, 5.0), (5.0, 7.0)]
