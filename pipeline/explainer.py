@@ -164,7 +164,7 @@ def public_clips(eid: str, segments: list[tuple]) -> list[dict]:
 def segments_fn(draft: dict, eid: str, background_fn=None, report: dict | None = None):
     """make_video 에 넘길 화면 함수 — 도식 영상 하나를 전체 길이로."""
     def fn(lines, timeline, total, work):
-        saved = work / "explainer.json"  # 화면만 고쳐 다시 만들 때·BE 를 E 와 같은 도식으로 비교할 때 계획을 다시 쓰지 않는다
+        saved = work.parent / "explainer.json"  # render/ 는 완성 후 지워진다 — 실험 폴더에 둔다. 화면만 고쳐 다시 만들 때·BE 를 E 와 같은 도식으로 비교할 때 계획을 다시 쓰지 않는다
         if saved.exists():
             beats, problems = check(draft, json.loads(saved.read_text(encoding="utf-8"))["beats"])
         else:
@@ -174,7 +174,7 @@ def segments_fn(draft: dict, eid: str, background_fn=None, report: dict | None =
             bg_segments, _ = background_fn(lines, timeline, total, work)
             background = public_clips(eid, bg_segments)
         data = props(draft, beats, timeline, total, background)
-        (work / "explainer.json").write_text(json.dumps({"beats": beats, "problems": problems}, ensure_ascii=False, indent=2),
+        saved.write_text(json.dumps({"beats": beats, "problems": problems}, ensure_ascii=False, indent=2),
                                              encoding="utf-8")
         if report is not None:
             report.update(beats=len(beats), problems=problems)
