@@ -124,6 +124,40 @@ def order_clips(clips: list[Path], scenes: list[dict]) -> list[Path]:
     return [picked[i] for i in range(len(scenes))]
 
 
+def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path], list[dict]]:
+    """받은 클립을 장면에 맞춘다 (2026-10-22). 이름이 숫자로 시작하면 order_clips 그대로.
+    아니면 파일 이름 ↔ 프롬프트(공통 스타일 문구 제외) 단어가 2개 이상 겹치는 클립을 장면마다 하나씩 고르고
+    (같은 장면 여러 버전이면 먼저 만든 것), 클립이 없는 장면의 대본 줄은 앞 장면(첫 장면이면 다음 장면)이 이어 맡는다."""
+    if not scenes or all(re.match(r"\d+", c.stem) for c in clips):
+        return order_clips(clips, scenes), scenes
+    style = _words(config().get("style", ""))
+    pairs = sorted(((len(_words(c.stem.replace("_", " ")) & (_words(s["prompt"]) - style)), -i, c.name, c, i)
+                    for i, s in enumerate(scenes) for c in clips), key=lambda x: (-x[0], x[4], x[2]))
+    picked: dict[int, Path] = {}
+    used: set[Path] = set()
+    for score, _, _, c, i in pairs:
+        if score >= 2 and i not in picked and c not in used:
+            picked[i] = c
+            used.add(c)
+    if not picked:
+        raise ExperimentError("클립 파일 이름으로 장면을 찾지 못했습니다 — 앞에 1_, 2_… 를 붙여 주세요")
+    out_clips, out_scenes = [], []
+    pending: list[int] = []  # 앞에 클립 있는 장면이 아직 없을 때 다음 장면으로 넘길 줄
+    for i, s in enumerate(scenes):
+        lines = list(s.get("lines") or [])
+        if i in picked:
+            out_clips.append(picked[i])
+            out_scenes.append({**s, "lines": pending + lines})
+            pending = []
+        elif out_scenes:
+            out_scenes[-1] = {**out_scenes[-1], "lines": out_scenes[-1]["lines"] + lines}
+        else:
+            pending += lines
+    log.info("장면 %d개 중 클립 %d개 — 빠진 장면: %s", len(scenes), len(picked),
+             [s["n"] for i, s in enumerate(scenes) if i not in picked])
+    return out_clips, out_scenes
+
+
 def clip_segments(clips: list[Path], scenes: list[dict] | None = None):
     """B·C: 장면 영상을 그 장면이 맡은 대본 줄마다 다른 구간으로 쪼개 쓴다 (2026-10-20 — 한 화면 10초 정지 느낌 해소).
     한 줄이 SHOT_MAX 보다 길면 같은 영상의 다른 구간·확대 컷으로 한 번 더 나눈다. 장면 정보가 없으면 예전처럼 같은 길이로 나눈다."""
@@ -188,14 +222,14 @@ def build(eid: str) -> str:
             if not clips:
                 raise ExperimentError(f"배경으로 쓸 B 실험 클립이 없습니다: {data.get('bg')}")
             scenes = bg.get("scenes") or []
-            background = clip_segments(order_clips(clips, scenes), scenes)
+            background = clip_segments(*fit_clips(clips, scenes))
         fn = explainer.segments_fn(draft, eid, background)
     else:
         clips = clip_files(eid)
         if not clips:
             raise ExperimentError(f"{out / 'clips'} 에 영상이 없습니다")
         scenes = data.get("scenes") or []
-        clips = order_clips(clips, scenes)
+        clips, scenes = fit_clips(clips, scenes)
         fn = clip_segments(clips, scenes)
     render = importlib.import_module("pipeline.04_render_video")
     meta = render.make_video(draft, out, fn)

@@ -2800,3 +2800,16 @@ def test_explainer_screen_text_only_from_facts(env):
     assert ex.sources(draft, beats[0]) == "Source: pubmed.ncbi.nlm.nih.gov"
     p = ex.props(draft, beats, [{"start": 0.0}, {"start": 2.5}, {"start": 5.0}], 7.0, [])
     assert [(b["start"], b["end"]) for b in p["beats"]] == [(0.0, 2.5), (2.5, 5.0), (5.0, 7.0)]
+
+
+def test_experiment_fit_clips_fills_missing_scenes_from_previous(monkeypatch, tmp_path):
+    exp = importlib.import_module("pipeline.experiment")
+    monkeypatch.setattr(exp, "config", lambda: {"style": "Soft natural light, calm bed palette."})
+    scenes = [{"n": 1, "lines": [1], "prompt": "Macro of skin texture smoothing. Soft natural light, calm bed palette."},
+              {"n": 2, "lines": [2], "prompt": "Three glass vials placed one by one. Soft natural light, calm bed palette."},
+              {"n": 3, "lines": [3], "prompt": "Suitcase and passport resting on a bed. Soft natural light, calm bed palette."}]
+    files = [tmp_path / "Skin_texture_smoothing_1.mp4", tmp_path / "Suitcase_and_passport_on_bed_2.mp4",
+             tmp_path / "Suitcase_and_passport_on_bed_3.mp4"]
+    clips, fitted = exp.fit_clips(files, scenes)
+    assert [c.name for c in clips] == ["Skin_texture_smoothing_1.mp4", "Suitcase_and_passport_on_bed_2.mp4"]
+    assert [s["lines"] for s in fitted] == [[1, 2], [3]]   # 빠진 2번 장면은 앞 장면이 이어 맡음, 같은 장면 여러 버전은 하나만
