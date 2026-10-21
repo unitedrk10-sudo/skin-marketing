@@ -124,12 +124,12 @@ def order_clips(clips: list[Path], scenes: list[dict]) -> list[Path]:
     return [picked[i] for i in range(len(scenes))]
 
 
-def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path], list[dict]]:
+def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path], list[dict], list[Path]]:
     """받은 클립을 장면에 맞춘다 (2026-10-22). 이름이 숫자로 시작하면 order_clips 그대로.
     아니면 파일 이름 ↔ 프롬프트(공통 스타일 문구 제외) 단어가 2개 이상 겹치는 클립을 장면마다 하나씩 고르고
     (같은 장면 여러 버전이면 먼저 만든 것), 클립이 없는 장면의 대본 줄은 앞 장면(첫 장면이면 다음 장면)이 이어 맡는다."""
     if not scenes or all(re.match(r"\d+", c.stem) for c in clips):
-        return order_clips(clips, scenes), scenes
+        return order_clips(clips, scenes), scenes, []
     style = _words(config().get("style", ""))
     pairs = sorted(((len(_words(c.stem.replace("_", " ")) & (_words(s["prompt"]) - style)), -i, c.name, c, i)
                     for i, s in enumerate(scenes) for c in clips), key=lambda x: (-x[0], x[4], x[2]))
@@ -155,12 +155,15 @@ def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path], list[d
             pending += lines
     log.info("장면 %d개 중 클립 %d개 — 빠진 장면: %s", len(scenes), len(picked),
              [s["n"] for i, s in enumerate(scenes) if i not in picked])
-    return out_clips, out_scenes
+    return out_clips, out_scenes, [c for c in clips if c not in used]  # 남는 클립(같은 장면 다른 버전) = 긴 장면에 빌려 줄 화면
 
 
-def clip_segments(clips: list[Path], scenes: list[dict] | None = None):
-    """B·C: 장면 영상을 그 장면이 맡은 대본 줄마다 다른 구간으로 쪼개 쓴다 (2026-10-20 — 한 화면 10초 정지 느낌 해소).
-    한 줄이 SHOT_MAX 보다 길면 같은 영상의 다른 구간·확대 컷으로 한 번 더 나눈다. 장면 정보가 없으면 예전처럼 같은 길이로 나눈다."""
+def clip_segments(clips: list[Path], scenes: list[dict] | None = None, spare: list[Path] | tuple = ()):
+    """B·C: 장면 영상을 그 장면이 맡은 대본 줄에 이어서 쓴다 (2026-10-22 — 같은 화면 반복 제거).
+    - 한 장면 = 한 줄이면 자르지 않고 한 컷으로 (8초 클립에서 줄 길이만큼).
+    - 한 장면이 여러 줄이면 줄마다 컷을 나누되(확대 번갈아) 클립을 앞에서부터 이어서 쓴다 — 같은 구간을 두 번 쓰지 않는다.
+    - 클립이 모자라면 MIN_SPEED 까지 느리게, 그래도 모자라면 남는 클립(spare)을 빌리고, 그것도 없을 때만 처음부터 다시.
+    장면 정보가 없으면 예전처럼 같은 길이로 나눈다."""
     render = importlib.import_module("pipeline.04_render_video")
 
     def even(lines, timeline, total, work):
@@ -175,25 +178,30 @@ def clip_segments(clips: list[Path], scenes: list[dict] | None = None):
 
     def per_line(lines, timeline, total, work):
         starts = [t["start"] for t in timeline] + [total]
+        pool = list(spare)
         segments, meta = [], []
         for c, scene in zip(clips, scenes):
-            length = max(render.duration(c) - 0.3, 0.5)
             nums = [n for n in scene.get("lines", []) if 1 <= n <= len(timeline)]
-            shots = []
-            for n in nums:
-                span = starts[n] - starts[n - 1]
-                k = max(1, math.ceil(span / SHOT_MAX))
-                shots += [span / k] * k
-            if not shots:
+            spans = [starts[n] - starts[n - 1] for n in nums]
+            if not spans:
                 continue
-            step = length / len(shots)
-            for j, dur in enumerate(shots):
-                speed = max(MIN_SPEED, min(1.0, length / dur))
-                need = dur * speed
-                offset = 0.3 + max(0.0, min(j * step, length - need))
-                zoom = ZOOMS[j % len(ZOOMS)]
-                segments.append((c, dur, speed, offset, zoom))
-                meta.append({"file": c.name, "seconds": round(dur, 2), "from": round(offset, 2), "zoom": zoom})
+            length = max(render.duration(c) - 0.3, 0.5)
+            speed = max(MIN_SPEED, min(1.0, length / sum(spans)))
+            cur, used = c, 0.0  # 지금 쓰는 클립과 그 클립에서 쓴 길이(원본 초)
+            for j, span in enumerate(spans):
+                left = span
+                while left > 1e-6:
+                    room = max(render.duration(cur) - 0.3, 0.5) - used
+                    if room < 0.5:  # 이 클립을 다 썼다 → 남는 클립을 빌리고, 없으면 처음부터
+                        cur, used = (pool.pop(0), 0.0) if pool else (cur, 0.0)
+                        continue
+                    dur = min(left, room / speed)
+                    zoom = ZOOMS[j % len(ZOOMS)] if len(spans) > 1 else 1.0
+                    segments.append((cur, dur, speed, 0.3 + used, zoom))
+                    meta.append({"file": cur.name, "seconds": round(dur, 2), "from": round(0.3 + used, 2),
+                                 "speed": round(speed, 2), "zoom": zoom})
+                    used += dur * speed
+                    left -= dur
         covered = sum(s[1] for s in segments)
         if segments and covered < total:  # 장면이 모든 줄을 덮지 않으면 마지막 컷을 늘린다
             last = segments[-1]
@@ -229,8 +237,8 @@ def build(eid: str) -> str:
         if not clips:
             raise ExperimentError(f"{out / 'clips'} 에 영상이 없습니다")
         scenes = data.get("scenes") or []
-        clips, scenes = fit_clips(clips, scenes)
-        fn = clip_segments(clips, scenes)
+        clips, scenes, spare = fit_clips(clips, scenes)
+        fn = clip_segments(clips, scenes, spare)
     render = importlib.import_module("pipeline.04_render_video")
     meta = render.make_video(draft, out, fn)
     data.update(status="done", built_at=now_iso(), render=meta)

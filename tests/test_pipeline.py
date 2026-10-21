@@ -2756,10 +2756,16 @@ def test_experiment_orders_flow_files_and_cuts_shots_per_line(monkeypatch, tmp_p
     monkeypatch.setattr(render, "duration", lambda p: 8.3)
     timeline = [{"start": 0.0}, {"start": 2.0}, {"start": 9.0}]
     segs, _ = exp.clip_segments(files[::-1], scenes)(None, timeline, 12.0, tmp_path)
-    assert [round(s[1], 2) for s in segs] == [2.0, 2.33, 2.33, 2.33, 3.0]    # 줄마다 컷, 긴 줄은 3.2초 이하로 나눔
+    assert [round(s[1], 2) for s in segs] == [2.0, 7.0, 3.0]                  # 줄마다 한 컷 (2026-10-22: 짧게 쪼개지 않음)
     assert abs(sum(s[1] for s in segs) - 12.0) < 1e-6
-    assert len({s[3] for s in segs[:4]}) == 4 and {s[4] for s in segs} == set(exp.ZOOMS)  # 다른 구간·번갈아 확대
-    assert all(s[3] + s[1] * s[2] <= 8.3 + 1e-6 for s in segs)
+    a, b = segs[0], segs[1]                                                    # 같은 장면 두 줄: 이어서, 겹치지 않게
+    assert abs(b[3] - (a[3] + a[1] * a[2])) < 1e-6 and b[3] + b[1] * b[2] <= 8.3 + 1e-6
+    assert (a[4], b[4], segs[2][4]) == (1.0, exp.ZOOMS[1], 1.0)                # 여러 줄 장면만 확대 번갈아
+    # 모자라면 남는 클립을 빌린다 (같은 구간 반복 대신)
+    spare = tmp_path / "Spare.mp4"
+    long_line = [{"start": 0.0}, {"start": 20.0}]
+    segs, _ = exp.clip_segments([files[1]], [{"lines": [1]}], [spare])(None, long_line, 20.0, tmp_path)
+    assert [s[0].name for s in segs] == [files[1].name, "Spare.mp4"]   # 0.6배속 8초 = 13.3초 + 빌린 클립으로 나머지
 
 
 def test_experiment_sends_scene_prompts_one_by_one(env, monkeypatch):
@@ -2810,6 +2816,7 @@ def test_experiment_fit_clips_fills_missing_scenes_from_previous(monkeypatch, tm
               {"n": 3, "lines": [3], "prompt": "Suitcase and passport resting on a bed. Soft natural light, calm bed palette."}]
     files = [tmp_path / "Skin_texture_smoothing_1.mp4", tmp_path / "Suitcase_and_passport_on_bed_2.mp4",
              tmp_path / "Suitcase_and_passport_on_bed_3.mp4"]
-    clips, fitted = exp.fit_clips(files, scenes)
+    clips, fitted, spare = exp.fit_clips(files, scenes)
+    assert [c.name for c in spare] == ["Suitcase_and_passport_on_bed_3.mp4"]
     assert [c.name for c in clips] == ["Skin_texture_smoothing_1.mp4", "Suitcase_and_passport_on_bed_2.mp4"]
     assert [s["lines"] for s in fitted] == [[1, 2], [3]]   # 빠진 2번 장면은 앞 장면이 이어 맡음, 같은 장면 여러 버전은 하나만
