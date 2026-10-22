@@ -164,8 +164,8 @@ def test_gemini_stages_use_no_deprecated_parameters():
 def test_writing_and_review_use_different_vendors():
     """기획서 6-0: 같은 회사 모델이 쓰고 검수하지 않는다 (작성 Claude ↔ 검수 Gemini)."""
     vendor = {"claude_cli": "anthropic", "claude_code": "anthropic", "anthropic": "anthropic", "gemini": "google"}
-    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search")}
-    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener")}
+    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search", "shorts_write")}
+    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener", "shorts_review")}
     assert writers.isdisjoint(reviewers)
 
 
@@ -2848,3 +2848,31 @@ def test_mix_leaves_gaps_for_drawn_lines(monkeypatch, tmp_path):
     (tmp_path / "c.mp4").write_bytes(b"x")
     bg = ex.public_clips("e1", segs)
     assert [b["file"] for b in bg] == ["exp/e1/a.mp4", "", "exp/e1/c.mp4"]
+
+
+def test_shorts_week_plan_check_review_and_apply(env, monkeypatch):
+    sh = importlib.import_module("pipeline.shorts")
+    proc = _published("2026-W41-10-rejuran-x", live=False)
+    trav = _published("2026-W41-09-bukchon-x", live=False)
+    d = common.load_json(trav / "draft.json")
+    d["axis"] = "procedure_travel"
+    common.save_json(trav / "draft.json", d)
+    common.save_json(common.content_dir() / "site" / "schedule.json",
+                     {"2026-W41-09-bukchon-x": {"date": "2026-10-14"}, "2026-W41-10-rejuran-x": {"date": "2026-10-16"}})
+    assert sh.weeks() == [["2026-W41-09-bukchon-x", "2026-W41-10-rejuran-x"]]
+    line = {"voice": "Rejuran bumps usually settle soon after treatment for most people.", "caption": "Usually settles soon"}
+    script = {"question": "How long do bumps last?", "lines": [line] * 6, "fact_ids": ["F1"]}
+    env.responses["shorts_write"] = {"scripts": [script] * 5}
+    env.responses["shorts_review"] = {"ok": True, "issues": [], "ko": ["리쥬란 돌기는 보통 곧 가라앉습니다."] * 6}
+    assert sh.make() == ["1주차: 대본 6개"]
+    plan = sh.load_plan()
+    assert [s["id"] for s in plan["scripts"]] == ["S1-월", "S1-화", "S1-수", "S1-목", "S1-금", "S1-토"]
+    assert plan["scripts"][-1]["posts"] == ["2026-W41-09-bukchon-x"]          # 관광 글은 토요일 1편으로
+    assert sh.make() == []                                                    # 이미 만든 주는 건너뜀
+    msg = sh.list_message()
+    assert "1. ✅ S1-월" in msg and "리쥬란 돌기는" in msg
+    assert sh.apply("1,2 승인").startswith("✅ S1-월 승인")
+    assert sh.list_message().count("✅ S1-") == 4
+    bad = sh.check({"lines": [{"voice": "The best clinic gives 90% results.", "caption": "x"}], "fact_ids": []},
+                   [{"id": "F1", "text": "3 sessions"}])
+    assert any("90" in p for p in bad) and any("fact_ids" in p for p in bad)

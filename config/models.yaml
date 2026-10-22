@@ -62,10 +62,20 @@ stages:
     model: gemini-3.8-flash
     thinking: low
 
+  shorts_review:   # 숏폼 대본 검수 (쓴 회사와 다른 모델) — 사실 대조·과장·위험 안내 줄 + 한국어 번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
   translate:       # 03 검수용 한국어 번역 (텔레그램 검수 메시지·첨부 — 게시되지 않는 참고용, pipeline/translate.py)
     provider: gemini
     model: gemini-3.8-flash
     thinking: low
+
+  shorts_write:    # 숏폼 대본 — 블로그 글을 한 영상 = 한 질문으로 (pipeline/shorts.py, 사실 목록만)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 900
 
   explainer_plan:  # 숏폼 실험 E·BE — 대본 줄마다 설명 도식 종류·글자 (pipeline/explainer.py, 글자는 사실 목록만 → 코드 검사)
     provider: claude_cli

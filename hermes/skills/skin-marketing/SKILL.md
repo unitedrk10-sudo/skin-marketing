@@ -89,6 +89,11 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - "실험 정리" / "실험 결과": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.experiment summary`.
 - Flow·Aside 를 대신 조작해 달라는 요청은 하지 않는다 — 생성은 사람이 직접 (Aside 는 사람이 자기 PC 에서 운영).
 
+## 2-11. 숏폼 대본 검수 (직전 봇 메시지가 `[숏폼 대본 검수]` 일 때 — 한 영상 = 한 질문, 아직 게시 안 함)
+- "숏폼 1,3 승인" / "숏폼 2 반려" / "숏폼 4 수정: 메모": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.shorts apply "1,3 승인"` (받은 문장에서 '숏폼'을 떼고 그대로) → 출력 그대로. 번호는 검수 메시지 순서다.
+- "숏폼 대본 보여줘" / "숏폼 검수 목록": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.shorts list` → 출력 그대로.
+- 초안 검수(2번)의 "1,3 승인"과 헷갈리면 어느 쪽인지 묻는다 — 직전 봇 메시지 제목으로 판단.
+
 ## 3-0. 게시 완료 기록
 사용자 예: `1 게시 완료 tiktok https://www.tiktok.com/@.../video/...` / "리쥬란 영상 인스타에 올렸어 <URL>"
 - `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.06_publish done <draft_id> <tiktok|instagram|youtube> <URL>` (draft_id 는 `06_publish status` 목록에서)
