@@ -2877,3 +2877,9 @@ def test_shorts_week_plan_check_review_and_apply(env, monkeypatch):
     bad = sh.check({"lines": [{"voice": "The best clinic gives 90% results.", "caption": "x"}], "fact_ids": []},
                    [{"id": "F1", "text": "3 sessions"}])
     assert any("90" in p for p in bad) and any("fact_ids" in p for p in bad)
+
+
+def test_shorts_review_message_chunks():
+    sh = importlib.import_module("pipeline.shorts")
+    parts = sh.chunks("\n\n".join(["x" * 1000] * 7), limit=3000)
+    assert len(parts) == 3 and all(len(p) <= 3010 for p in parts)

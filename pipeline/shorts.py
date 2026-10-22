@@ -318,6 +318,28 @@ def list_message() -> str:
     return "\n".join(lines).rstrip()
 
 
+def chunks(text: str, limit: int = 3000) -> list[str]:
+    """텔레그램 한 메시지가 너무 길면 전송이 실패한다 (8천 자에서 실패, 2026-10-22) — 대본 단위로 나눈다."""
+    out, cur = [], ""
+    for block in text.split("
+
+"):
+        if cur and len(cur) + len(block) > limit:
+            out.append(cur)
+            cur = ""
+        cur = f"{cur}
+
+{block}" if cur else block
+    return out + ([cur] if cur else [])
+
+
+def send() -> str:
+    worker = importlib.import_module("pipeline.worker")
+    parts = chunks(list_message())
+    sent = sum(1 for c in parts if worker.hermes_send(c) or worker.hermes_send(c))
+    return f"검수 메시지 {sent}/{len(parts)}개 보냄"
+
+
 def apply(text: str) -> str:
     """'1,3 승인' / '2 반려' / '4 수정: 메모' — 번호는 list_message 순서."""
     m = re.match(r"\s*(?:숏폼\s*)?([\d,\s]+)\s*(승인|반려|수정)\s*:?\s*(.*)$", text)
@@ -359,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--weeks", type=int, default=None, help="이번에 만들 주 수 (기본: 남은 주 전부)")
     sub.add_parser("list")
     sub.add_parser("refix", help="걸린 대본 자동 수정·재검수")
+    sub.add_parser("send", help="검수 메시지를 텔레그램으로 (길면 나눠서)")
     a = sub.add_parser("apply")
     a.add_argument("text")
     args = ap.parse_args(argv)
@@ -367,6 +390,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(make(args.weeks)) or "새로 만들 주 없음")
     elif args.cmd == "list":
         print(list_message())
+    elif args.cmd == "send":
+        print(send())
     elif args.cmd == "refix":
         print("\n".join(refix()) or "고칠 대본 없음")
     else:
