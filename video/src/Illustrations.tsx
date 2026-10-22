@@ -45,7 +45,8 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
   // 콜라겐 다발 (진피를 가로지르는 물결 섬유)
   const bundles = Array.from({ length: 11 }, (_, i) => {
     const y = dermTop + 22 + i * ((fatTop - dermTop - 40) / 10);
-    return <path key={`b${i}`} d={wave(0, W, y, 6 + rand(i) * 6, 6, i * 1.7)} stroke={P.fiber} strokeWidth={5 + rand(i + 9) * 6}
+    const tight = particles === "heat" ? 1 - 0.55 * ease(0.15, 0.6) : 1;  // 열 → 기존 콜라겐이 수축(물결이 펴짐)
+    return <path key={`b${i}`} d={wave(0, W, y, (6 + rand(i) * 6) * tight, 6, i * 1.7)} stroke={P.fiber} strokeWidth={5 + rand(i + 9) * 6}
       strokeLinecap="round" fill="none" opacity={0.42 + rand(i + 3) * 0.25} />;
   });
   // 섬유아세포
@@ -86,12 +87,13 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
     const k = ease(i / 50, 0.5 + i / 50);
     const y = particles === "collagen" ? target : top - 70 + (target - top + 70) * k;
     const shrink = particles === "collagen" ? 1 - 0.35 * ease(0.2, 1) : 1;
-    return <circle key={`p${i}`} cx={x} cy={y} r={11 * shrink} fill="url(#pearl)" opacity={particles === "settle" ? 0 : 0.95} />;
+    return <circle key={`p${i}`} cx={x} cy={y} r={11 * shrink} fill="url(#pearl)"
+      opacity={particles === "diffuse" || particles === "collagen" ? 0.95 : 0} />;
   });
   // 새 콜라겐 섬유 (입자 주변에서 그려진다)
-  const newFibers = particles === "collagen" ? Array.from({ length: 16 }, (_, i) => {
+  const newFibers = particles === "collagen" || particles === "heat" ? Array.from({ length: 16 }, (_, i) => {
     const x = 60 + rand(i + 70) * (W - 120), y = dermTop + 30 + rand(i + 80) * (fatTop - dermTop - 70);
-    const len = 120, k = ease(0.15 + i / 60, 0.75 + i / 60);
+    const len = 120, k = particles === "heat" ? ease(0.55 + i / 80, 0.95 + i / 80) : ease(0.15 + i / 60, 0.75 + i / 60);
     return <path key={`n${i}`} d={`M ${x - 60} ${y + 10} C ${x - 30} ${y - 18}, ${x + 30} ${y + 22}, ${x + 60} ${y - 6}`}
       stroke={P.fiberNew} strokeWidth={4} fill="none" strokeLinecap="round" strokeDasharray={len} strokeDashoffset={len * (1 - k)} opacity={0.9} />;
   }) : null;
@@ -110,6 +112,7 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         <linearGradient id="corGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={P.corneum[0]} /><stop offset="1" stopColor={P.corneum[1]} /></linearGradient>
         <radialGradient id="fatCell" cx="0.4" cy="0.35" r="0.7"><stop offset="0" stopColor={P.fat[0]} /><stop offset="1" stopColor={P.fat[1]} /></radialGradient>
         <radialGradient id="pearl" cx="0.35" cy="0.3" r="0.75"><stop offset="0" stopColor="#FFFFFF" /><stop offset="0.35" stopColor="#CFE6DA" /><stop offset="1" stopColor={P.green} /></radialGradient>
+        <radialGradient id="heatGlow" cx="0.5" cy="0.5" r="0.75"><stop offset="0" stopColor="#FF9B6A" stopOpacity="0.85" /><stop offset="0.6" stopColor="#F27D52" stopOpacity="0.45" /><stop offset="1" stopColor="#E06A45" stopOpacity="0" /></radialGradient>
         <filter id="soft" x="-5%" y="-5%" width="110%" height="110%"><feDropShadow dx="0" dy="10" stdDeviation="14" floodColor="#7A4B3A" floodOpacity="0.22" /></filter>
         <clipPath id="block"><rect x="0" y={top - 60} width={W} height={H - top + 60} rx="28" /></clipPath>
       </defs>
@@ -118,6 +121,10 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         {fat}
         <rect x={0} y={dermTop} width={W} height={fatTop - dermTop} fill="url(#dermGrad)" />
         {vessels}
+        {particles === "heat" ? (
+          <rect x={0} y={dermTop} width={W} height={fatTop - dermTop} fill="url(#heatGlow)"
+            opacity={interpolate(t, [0, 0.35, 0.7, 1], [0, 0.85, 0.6, 0.5], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} />
+        ) : null}
         {bundles}
         {fibro}
         {newFibers}
