@@ -309,7 +309,7 @@ def start(entry: dict) -> str:
     data.update(status="waiting_clips", scenes=scenes)
     _save(eid, data)
     how = ("Google Flow(labs.google/flow) → 모델 **Veo 3.1 Lite**, 세로 9:16 → 아래 프롬프트를 하나씩 붙여 넣어 생성 → 내려받기"
-           if entry["method"] == "B" else
+           if entry["method"] in ("B", "M") else
            "Flow 전용 구글 계정·별도 프로필의 Aside 에서 루틴 실행: 아래 프롬프트를 Flow(Veo 3.1 Lite, 9:16)로 생성·내려받기")
     lines = [f"[오늘의 실험 {eid}] {METHOD_LABEL[entry['method']]} — {data['title']}", how,
              f"내려받은 영상을 이름 그대로 이 PC 폴더에 넣어 주세요 (순서는 프롬프트와 파일 이름으로 맞춤, 헷갈리면 앞에 1_, 2_…): {root() / eid / 'clips'}",
