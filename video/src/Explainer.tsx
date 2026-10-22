@@ -2,6 +2,7 @@
 // 대본 줄마다 beat 하나: 정해진 도식 종류(kind) 중 하나를 Claude 가 고르고 글자는 사실 목록에서만 (pipeline/explainer.py 가 검사).
 // 위 제목·아래 자막·음성은 파이썬(04_render_video.make_video)이 얹는다 → 여기서는 가운데 도식만 (y 480~1260).
 import React from "react";
+import { Helix, SkinSection } from "./Illustrations";
 import {
   AbsoluteFill,
   Easing,
@@ -87,73 +88,30 @@ const Caption: React.FC<{ b: Beat; y: number }> = ({ b, y }) => {
   );
 };
 
-// ---- 피부 단면: 표피·진피·피하, 강조 층 + 입자(스며듦 diffuse / 가라앉음 settle) ----
+// ---- 피부 단면 (고급 도식, Illustrations.tsx): 강조 층 + 입자 스며듦 diffuse / 돌기 가라앉음 settle / 콜라겐 섬유 생성 collagen ----
 const SkinLayers: React.FC<{ b: Beat }> = ({ b }) => {
   const f = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
   const a = useIn(0, 12);
-  const W = 840, X = 50, Y = 20;
-  const layers = [
-    { id: "epidermis", name: "Epidermis", h: 120, c: C.skin1 },
-    { id: "dermis", name: "Dermis", h: 280, c: C.skin2 },
-    { id: "subcutis", name: "Fat layer", h: 150, c: C.skin3 },
-  ];
-  let y = Y;
-  const t = Math.min(1, f / Math.max(1, durationInFrames - 10));
-  const dots = Array.from({ length: 18 }, (_, i) => i);
-  const dermisTop = Y + 120;
   return (
-    <svg width={PANEL.width} height={PANEL.height} style={{ position: "absolute", opacity: a }}>
-      {layers.map((l) => {
-        const top = y;
-        y += l.h;
-        const on = b.highlight === l.id;
-        const pulse = on ? 0.5 + 0.5 * Math.sin(f / 8) : 0;
-        return (
-          <g key={l.id}>
-            <rect x={X} y={top} width={W} height={l.h} fill={l.c} stroke={on ? C.ink : "none"} strokeWidth={on ? 4 + pulse * 3 : 0} rx={l.id === "epidermis" ? 26 : 0} />
-            <text x={X + W - 24} y={top + 44} textAnchor="end" fontFamily={FONT} fontSize={38} fontWeight={on ? 800 : 500} fill={on ? C.ink : C.inkSoft}>{l.name}</text>
-          </g>
-        );
-      })}
-      {/* 피부결 선 */}
-      <path d={`M ${X} ${Y + 8} ${Array.from({ length: 12 }, (_, i) => `Q ${X + 34 + i * 68} ${Y - 10 + (i % 2) * 18} ${X + 68 + i * 68} ${Y + 8}`).join(" ")}`} fill="none" stroke={C.accent} strokeWidth={3} opacity={0.6} />
-      {b.particles && dots.map((i) => {
-        const px = X + 60 + ((i * 97) % (W - 120));
-        const startY = b.particles === "settle" ? Y - 30 - (i % 3) * 14 : Y - 60 - (i % 4) * 20;
-        const endY = b.particles === "settle" ? Y + 4 : dermisTop + 40 + ((i * 53) % 190);
-        const k = interpolate(t, [i / 60, Math.min(1, 0.55 + i / 60)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.inOut(Easing.quad) });
-        return <circle key={i} cx={px + Math.sin((f + i * 9) / 14) * 6} cy={startY + (endY - startY) * k} r={b.particles === "settle" ? 13 * (1 - 0.4 * k) : 11} fill={C.ink} opacity={0.75} />;
-      })}
-      <foreignObject x={0} y={Y + 535} width={PANEL.width} height={170}>
-        <div style={{ fontFamily: FONT, fontSize: 56, fontWeight: 700, color: C.ink, textAlign: "center" }}>{b.label}</div>
-        {b.note ? <div style={{ fontFamily: FONT, fontSize: 38, color: C.inkSoft, textAlign: "center", marginTop: 8, padding: "0 30px" }}>{b.note}</div> : null}
-      </foreignObject>
-    </svg>
+    <AbsoluteFill>
+      <div style={{ position: "absolute", top: 10, left: 10, opacity: a }}>
+        <SkinSection width={760} height={520} highlight={b.highlight} particles={b.particles} t={Math.min(1, f / Math.max(1, durationInFrames - 8))} frame={f} />
+      </div>
+      <Caption b={b} y={560} />
+    </AbsoluteFill>
   );
 };
 
-// ---- 분자 사슬: 조각이 하나씩 이어진다 (PN·DNA 조각 같은 성분 설명) ----
+// ---- 이중 나선 (고급 도식): 회전하며 왼쪽부터 조립 (PN·DNA 조각 같은 성분 설명) ----
 const Molecule: React.FC<{ b: Beat }> = ({ b }) => {
   const f = useCurrentFrame();
-  const n = 9;
+  const { durationInFrames } = useVideoConfig();
   return (
     <AbsoluteFill>
-      <svg width={PANEL.width} height={560}>
-        {Array.from({ length: n }, (_, i) => {
-          const p = interpolate(f - i * 4, [0, 12], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-          const x = 110 + i * 90;
-          const y1 = 230 + Math.sin(i * 0.9 + f / 20) * 70;
-          const y2 = 330 - Math.sin(i * 0.9 + f / 20) * 70;
-          return (
-            <g key={i} opacity={p} transform={`translate(0 ${(1 - p) * 40})`}>
-              <line x1={x} y1={y1} x2={x} y2={y2} stroke={C.sand} strokeWidth={8} />
-              <circle cx={x} cy={y1} r={32} fill={C.ink} />
-              <circle cx={x} cy={y2} r={32} fill={C.accent} />
-            </g>
-          );
-        })}
-      </svg>
+      <div style={{ position: "absolute", top: 40, left: 30 }}>
+        <Helix width={880} height={460} t={Math.min(1, f / Math.max(1, durationInFrames - 8))} frame={f} />
+      </div>
       <Caption b={b} y={540} />
     </AbsoluteFill>
   );

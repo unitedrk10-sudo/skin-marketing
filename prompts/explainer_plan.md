@@ -12,7 +12,7 @@ FACTS (the only things that are true for this video — every word and number yo
 {{facts}}
 
 Choose ONE diagram per script line from these kinds and fill its fields:
-- "skin_layers": skin cross-section (epidermis / dermis / fat layer). Fields: highlight ("epidermis"|"dermis"|"subcutis"), particles ("diffuse" = small particles sink into the highlighted layer, "settle" = small bumps on the surface settle down, or "" for none), label, note.
+- "skin_layers": skin cross-section (epidermis / dermis / fat layer). Fields: highlight ("epidermis"|"dermis"|"subcutis"), particles ("diffuse" = small particles sink into the highlighted layer, "settle" = small bumps on the surface settle down, "collagen" = particles sit in the dermis and new collagen fibres slowly form around them — only when the approved text says the treatment stimulates collagen, or "" for none), label, note.
 - "molecule": a chain of fragments assembling (an ingredient such as PN / DNA fragments, hyaluronic acid). Fields: label, note.
 - "timeline": numbered sessions with the interval between them. Fields: count (integer), interval (e.g. "2 weeks apart"), label, note.
 - "big_number": one key number. Fields: value, unit, label, note.
