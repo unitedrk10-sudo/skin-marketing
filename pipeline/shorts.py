@@ -321,15 +321,11 @@ def list_message() -> str:
 def chunks(text: str, limit: int = 3000) -> list[str]:
     """텔레그램 한 메시지가 너무 길면 전송이 실패한다 (8천 자에서 실패, 2026-10-22) — 대본 단위로 나눈다."""
     out, cur = [], ""
-    for block in text.split("
-
-"):
+    for block in text.split("\n\n"):
         if cur and len(cur) + len(block) > limit:
             out.append(cur)
             cur = ""
-        cur = f"{cur}
-
-{block}" if cur else block
+        cur = f"{cur}\n\n{block}" if cur else block
     return out + ([cur] if cur else [])
 
 

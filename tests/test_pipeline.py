@@ -2882,4 +2882,4 @@ def test_shorts_week_plan_check_review_and_apply(env, monkeypatch):
 def test_shorts_review_message_chunks():
     sh = importlib.import_module("pipeline.shorts")
     parts = sh.chunks("\n\n".join(["x" * 1000] * 7), limit=3000)
-    assert len(parts) == 3 and all(len(p) <= 3010 for p in parts)
+    assert len(parts) == 4 and all(len(p) <= 3000 for p in parts)   # 1000자 두 개씩 (구분 줄 포함 3000자 이하)
