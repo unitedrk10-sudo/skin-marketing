@@ -5,6 +5,9 @@ Title: {{title}}
 SCRIPT (numbered lines):
 {{script}}
 
+APPROVED GUIDE TEXT (fact-checked and approved by a human editor — its "how it works" section is what the mechanism diagrams should show; draw only what it says, no stronger):
+{{guide}}
+
 FACTS (the only things that are true for this video — every word and number you put on screen must come from these or from the line itself):
 {{facts}}
 

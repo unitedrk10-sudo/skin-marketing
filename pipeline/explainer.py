@@ -45,7 +45,8 @@ def plan(draft: dict) -> list[dict]:
     facts = importlib.import_module("pipeline.social").social_facts(draft)
     from pipeline.common import facts_text
     data, _ = llm.generate_json("explainer_plan", prompt("explainer_plan", title=draft["blog"].get("title", ""),
-                                                         script=script, facts=facts_text(facts)))
+                                                         script=script, facts=facts_text(facts),
+                                                         guide=importlib.import_module("pipeline.shorts").guide_text([draft])))
     beats = {int(b.get("line", 0)): b for b in (data or {}).get("beats") or [] if isinstance(b, dict)}
     return [beats.get(i) or {"line": i, "kind": "icon_scene", "icon": "drop"} for i in range(1, len(lines) + 1)]
 
