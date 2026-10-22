@@ -201,6 +201,22 @@ def refix() -> list[str]:
     return out
 
 
+def destinations(draft: dict) -> list[str]:
+    """관광 글이 다루는 여행지 (config/attractions.yaml 키워드가 제목에 나오는 순서) — 여러 곳이면 영상도 곳마다 1편
+    (2026-10-22: '제주 1편, 부산 1편'). 못 찾으면 글 하나 = 영상 하나."""
+    title = (draft.get("topic") or {}).get("title") or draft["blog"].get("title", "")
+    low = title.lower()
+    found = []
+    for a in importlib.import_module("pipeline.attractions").load().values():
+        if a.get("heat"):  # 사우나·찜질방은 장소가 아니라 활동 — 여행지로 세지 않는다
+            continue
+        hits = [low.find(k.lower()) for k in a.get("keywords") or [] if k.lower() in low]
+        if hits:
+            found.append((min(hits), a["name"]))
+    names = [n for _, n in sorted(found)]
+    return names if len(names) > 1 else []
+
+
 def _kind(item: dict) -> str:
     return "travel" if item.get("type") == "travel" else "procedure"
 
@@ -216,7 +232,8 @@ def build_week(w: int, ids: list[str]) -> list[dict]:
     drafts = {i: load_draft(post_path(i)) for i in ids}
     proc = [i for i in ids if kind(drafts[i]) == "procedure"]
     travel = [i for i in ids if kind(drafts[i]) == "travel"]
-    n_proc = max(0, PER_WEEK - len(travel))
+    places = {i: destinations(drafts[i]) or [""] for i in travel}  # 관광 영상 = 글마다, 여러 여행지면 곳마다
+    n_proc = max(0, PER_WEEK - sum(len(v) for v in places.values()))
     cross = min(len(travel), max(0, n_proc - 3 * len(proc))) if proc else min(len(travel), n_proc)  # 시술 글은 최소 3편
     per_cross = math.ceil((n_proc if not proc else cross) / cross) if cross else 0
     per_proc = math.ceil((n_proc - cross * (per_cross if not proc else 1)) / len(proc)) if proc else 0
@@ -244,9 +261,12 @@ def build_week(w: int, ids: list[str]) -> list[dict]:
         items += got
         left -= len(got)
     for i in travel:
-        task = ("Write 1 TRAVEL script from this guide about the place itself: what it is, what to see or eat, best time and "
-                "season to go, opening hours or access, how to plan the visit. Travel content only.")
-        items += _scripts(task, [i], drafts, 1, "travel")
+        for place in places[i]:
+            where = f"about {place} only (this guide covers several places; this video is just {place})" if place else \
+                "about the place itself"
+            task = (f"Write 1 TRAVEL script from this guide {where}: what it is, what to see or eat, best time and season to "
+                    f"go, opening hours or access, how to plan the visit. Travel content only.")
+            items += _scripts(task, [i], drafts, 1, "travel")
     out = []
     for day, it in enumerate(items[:PER_WEEK]):
         it.update(id=f"S{w}-{DAYS[day]}", week=w, day=DAYS[day])
