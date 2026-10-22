@@ -262,7 +262,9 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         experiments = "\n\n".join(m for m in (exp.daily_message(), exp.poll_message()) if m)
         ahead = "\n".join(importlib.import_module("pipeline.figures").ensure_upcoming()  # 게시 예정 글: 블로그 그림 먼저
                           + importlib.import_module("pipeline.shorts").make_ready())  # 다 찬 주: 숏폼 대본
-        for part in (reminder, daily, experiments, ahead):
+        if ahead:  # 2026-10-22 사람 요청: 텔레그램 보고는 잠시 멈춤 — 만들기만 하고 로그에 남긴다
+            log.info("미리 만들기: %s", ahead.replace("\n", " | "))
+        for part in (reminder, daily, experiments):
             if part:
                 message = (message + "\n\n" if message else "") + part
     except Exception as e:  # noqa: BLE001 — SNS 글 실패가 워커 전체를 멈추지 않게
