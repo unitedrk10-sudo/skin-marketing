@@ -1,7 +1,8 @@
 """숏폼 대본 — 블로그 글을 "한 영상 = 한 질문" 대본으로 쪼갠다 (2026-10-22).
 
-주마다(블로그 게시 주 기준) 시술 글 → 월~금 질문 5개, 관광(시술 × 여행) 글 → 토요일 1편으로 합침, 일요일 쉼.
-글이 1편뿐인 주는 다음 주와 합친다. 첫 주부터 순서대로 모두 만들어 두고 사람이 검수한다 (게시는 아직 안 함 —
+주마다(블로그 게시 주 기준) 7편 (2026-10-22 변경): 관광 글 하나당 관광 영상 1편(관광 내용만), 나머지는 시술 질문 —
+시술 글은 작동 원리·연구가 말하는 결과를 반드시 포함, 관광 글의 시술 쪽 질문(예: 가을 햇빛에 나가도 되나)도 시술 질문으로.
+글이 1편뿐인 주는 다음 주와 합친다. 재료 = 사실 목록 + 검수·승인된 블로그 본문(blog.md). 첫 주부터 순서대로 모두 만들어 두고 사람이 검수한다 (게시는 아직 안 함 —
 화면 방식은 숏폼 실험 결과를 보고 정한다).
 
 쓰기 = Claude (stage shorts_write, 사실 목록만) → 코드 규칙 검사(금지 표현·병원명·사실에 없는 수치·길이) →
@@ -29,7 +30,9 @@ log = get_logger("shorts")
 
 STATES = ("approved", "rendered", "ready_to_publish", "published")
 TRAVEL = {"procedure_travel", "travel_guide"}
-DAYS = ("월", "화", "수", "목", "금", "토")
+DAYS = ("월", "화", "수", "목", "금", "토", "일")
+PER_WEEK = 7
+GUIDE_CHARS = 9000  # 블로그 본문을 대본 재료로 넣는 길이
 MIN_WORDS, MAX_WORDS = 45, 85
 
 
@@ -86,14 +89,35 @@ def _facts(draft: dict) -> list[dict]:
     return importlib.import_module("pipeline.social").social_facts(draft)
 
 
-def write(task: str, drafts: list[dict], note: str = "") -> list[dict]:
+def guide_text(drafts: list[dict]) -> str:
+    """검수·사람 승인을 거친 블로그 본문 — 대본은 이 문장을 최대한 그대로 쓴다 (사실 목록만으로는 관광 내용이 거의 없다)."""
+    out = []
+    for i, d in enumerate(drafts):
+        path = post_path(d.get("id", ""))
+        body = (path / "blog.md").read_text(encoding="utf-8") if path and (path / "blog.md").exists() else ""
+        tag = f"[P{i + 1}] " if len(drafts) > 1 else ""
+        out.append(f"{tag}{d['blog'].get('title', '')}\n{body[:GUIDE_CHARS]}")
+    return "\n\n---\n\n".join(out)
+
+
+KIND_RULES = {
+    "procedure": ("This is a TREATMENT script. It must carry one line with the main risk or limit (side effects, who should not, "
+                  "results vary) and end by pointing to a licensed doctor or the full guide."),
+    "travel": ("This is a TRAVEL script: only travel content — the place, what to see or eat, best time to go, opening hours, access, "
+               "walking, crowds, weather. Do NOT mention any skin treatment, recovery or medical advice at all. End with the full "
+               "guide line. No risk line is needed."),
+}
+
+
+def write(task: str, drafts: list[dict], note: str = "", kind_: str = "procedure") -> list[dict]:
     facts, posts = [], []
     for i, d in enumerate(drafts):
         prefix = f"P{i + 1}-" if len(drafts) > 1 else ""
         posts.append(f"- {d['blog'].get('title', '')}")
         facts += [{**f, "id": prefix + f["id"]} for f in _facts(d)]
     text = prompt("shorts_write", task=task + (f"\nEditor's note for this rewrite: {note}" if note else ""),
-                  posts="\n".join(posts), facts=facts_text(facts), min_words=str(MIN_WORDS), max_words=str(MAX_WORDS))
+                  posts="\n".join(posts), facts=facts_text(facts), guide=guide_text(drafts), kind_rules=KIND_RULES[kind_],
+                  min_words=str(MIN_WORDS), max_words=str(MAX_WORDS))
     data, _ = llm.generate_json("shorts_write", text)
     return [s for s in (data or {}).get("scripts") or [] if isinstance(s, dict) and s.get("lines")]
 
@@ -106,9 +130,9 @@ def all_facts(drafts: list[dict]) -> list[dict]:
     return out
 
 
-def check(script: dict, facts: list[dict]) -> list[str]:
+def check(script: dict, facts: list[dict], guide: str = "") -> list[str]:
     social = importlib.import_module("pipeline.social")
-    known = set(social.NUMBER.findall(" ".join(f.get("text", "") for f in facts)))
+    known = set(social.NUMBER.findall(" ".join(f.get("text", "") for f in facts) + " " + guide))
     ids = {f["id"] for f in facts}
     problems = []
     words = sum(len(str(ln.get("voice", "")).split()) for ln in script["lines"])
@@ -119,14 +143,19 @@ def check(script: dict, facts: list[dict]) -> list[str]:
             problems += [f"{n}줄 {field}: {p}" for p in social.text_problems(str(ln.get(field, "")), known)]
     if [i for i in script.get("fact_ids") or [] if i not in ids]:
         problems.append("없는 사실 번호")
-    if not script.get("fact_ids"):
+    if not script.get("fact_ids") and script.get("type") != "travel":
         problems.append("근거 사실(fact_ids) 없음")
     return problems
 
 
-def review(script: dict, facts: list[dict], titles: str = "") -> dict:
+def review(script: dict, facts: list[dict], titles: str = "", guide: str = "") -> dict:
     used = [f for f in facts if f["id"] in set(script.get("fact_ids") or [])] or facts
+    balance = ("It is a TRAVEL script: it must contain no treatment or medical content; no risk line is needed."
+               if script.get("type") == "travel" else
+               "It is a TREATMENT script: it must contain at least one risk / side effect / limit line and end by pointing to a "
+               "licensed doctor or the full guide.")
     text = prompt("shorts_review", facts=facts_text(used), question=script.get("question", ""), title=titles,
+                  guide=guide, balance=balance,
                   script="\n".join(f"{n}. voice: {ln.get('voice', '')} | caption: {ln.get('caption', '')}"
                                    for n, ln in enumerate(script["lines"], 1)))
     try:
@@ -140,8 +169,9 @@ def review(script: dict, facts: list[dict], titles: str = "") -> dict:
 
 def _finish(item: dict, facts: list[dict], drafts: list[dict] | None = None, autofix: bool = True) -> dict:
     """검사 + 검수. 걸리면 사람에게 보내기 전에 지적 내용으로 한 번 고쳐 다시 검사·검수 (2026-10-22, 02b 자동 수정과 같은 방식)."""
-    item["problems"] = check(item, facts)
-    item["review"] = review(item, facts, " / ".join(d["blog"].get("title", "") for d in drafts or []))
+    guide = guide_text(drafts) if drafts else ""
+    item["problems"] = check(item, facts, guide)
+    item["review"] = review(item, facts, " / ".join(d["blog"].get("title", "") for d in drafts or []), guide)
     item["status"] = "review" if not item["problems"] and item["review"]["ok"] else "flagged"
     item["checked_at"] = now_iso()
     if item["status"] == "flagged" and autofix and drafts and not item.get("autofixed"):
@@ -149,7 +179,7 @@ def _finish(item: dict, facts: list[dict], drafts: list[dict] | None = None, aut
                                     for i in item["review"].get("issues") or []]
         task = (f"Fix this one script (same question: {item.get('question', '')}). Change only what the notes point at; "
                 f"keep everything else. Current script: " + json.dumps(item["lines"], ensure_ascii=False))
-        new = (write(task, drafts, note="; ".join(notes)) or [None])[0]
+        new = (write(task, drafts, note="; ".join(notes), kind_=_kind(item)) or [None])[0]
         if new:
             item.setdefault("history", []).append({"lines": item["lines"], "note": "자동 수정: " + "; ".join(notes)[:500],
                                                    "at": now_iso()})
@@ -171,31 +201,57 @@ def refix() -> list[str]:
     return out
 
 
+def _kind(item: dict) -> str:
+    return "travel" if item.get("type") == "travel" else "procedure"
+
+
+def _scripts(task: str, draft_ids: list[str], drafts: dict, want: int, typ: str) -> list[dict]:
+    ds = [drafts[i] for i in draft_ids]
+    got = write(task, ds, kind_="travel" if typ == "travel" else "procedure")[:want]
+    return [{"type": typ, "posts": draft_ids, **{k: s.get(k) for k in ("question", "lines", "fact_ids")}} for s in got]
+
+
 def build_week(w: int, ids: list[str]) -> list[dict]:
+    """한 주 7편: 관광 글마다 관광 영상 1편, 나머지는 시술 질문 (시술 글 우선, 모자라면 관광 글의 시술 쪽 질문)."""
     drafts = {i: load_draft(post_path(i)) for i in ids}
     proc = [i for i in ids if kind(drafts[i]) == "procedure"]
     travel = [i for i in ids if kind(drafts[i]) == "travel"]
-    source = proc or travel  # 시술 글이 없는 주는 관광 글에서 질문을 뽑는다
-    per = math.ceil(5 / len(source)) if source else 0
-    out, day = [], 0
-    for i in source:
-        want = min(per, 5 - day)
+    n_proc = max(0, PER_WEEK - len(travel))
+    cross = min(len(travel), max(0, n_proc - 3 * len(proc))) if proc else min(len(travel), n_proc)  # 시술 글은 최소 3편
+    per_cross = math.ceil((n_proc if not proc else cross) / cross) if cross else 0
+    per_proc = math.ceil((n_proc - cross * (per_cross if not proc else 1)) / len(proc)) if proc else 0
+    items: list[dict] = []
+    left = n_proc
+    for i in proc:
+        want = min(per_proc, left)
         if want <= 0:
             break
-        task = (f"Write {want} separate scripts from this guide, each answering a different question a foreign visitor "
-                f"would ask about it (how long / how it works / how often / recovery / what to plan).")
-        for s in write(task, [drafts[i]])[:want]:
-            out.append(_finish({"id": f"S{w}-{DAYS[day]}", "week": w, "day": DAYS[day], "posts": [i], "type": "question",
-                                **{k: s.get(k) for k in ("question", "lines", "fact_ids")}}, all_facts([drafts[i]]), [drafts[i]]))
-            day += 1
-    if travel and proc:
-        ds = [drafts[i] for i in travel]
-        task = ("Write 1 script that merges these travel guides into one practical answer: how to fit a skin treatment "
-                "into a Korea trip (timing, sun, walking, recovery days), with one example from each guide.")
-        s = (write(task, ds) or [None])[0]
-        if s:
-            out.append(_finish({"id": f"S{w}-토", "week": w, "day": "토", "posts": travel, "type": "travel",
-                                **{k: s.get(k) for k in ("question", "lines", "fact_ids")}}, all_facts(ds), ds))
+        task = (f"Write {want} separate TREATMENT scripts from this guide, each answering a different question a foreign "
+                f"visitor asks. Required among them: one on HOW IT WORKS (the mechanism, in plain words) and one on WHAT RESULTS "
+                f"the studies report (hedged exactly as the sources: 'one study found…', 'may'). The rest from: how long it lasts, "
+                f"how many sessions and how far apart, recovery and side effects, how to time it on a trip.")
+        got = _scripts(task, [i], drafts, want, "procedure")
+        items += got
+        left -= len(got)
+    for i in travel[:cross]:
+        want = min(per_cross if not proc else 1, left)
+        if want <= 0:
+            break
+        task = (f"Write {want} TREATMENT script(s) about the treatment side of this travel guide — the question a visitor has "
+                f"about combining the treatment with the trip (e.g. is autumn sun or heat OK after a laser, how much walking "
+                f"after injections). Use only the treatment information in the guide.")
+        got = _scripts(task, [i], drafts, want, "procedure")
+        items += got
+        left -= len(got)
+    for i in travel:
+        task = ("Write 1 TRAVEL script from this guide about the place itself: what it is, what to see or eat, best time and "
+                "season to go, opening hours or access, how to plan the visit. Travel content only.")
+        items += _scripts(task, [i], drafts, 1, "travel")
+    out = []
+    for day, it in enumerate(items[:PER_WEEK]):
+        it.update(id=f"S{w}-{DAYS[day]}", week=w, day=DAYS[day])
+        ds = [drafts[i] for i in it["posts"]]
+        out.append(_finish(it, all_facts(ds), ds))
     return out
 
 
@@ -265,7 +321,7 @@ def apply(text: str) -> str:
             drafts = [load_draft(post_path(i)) for i in s["posts"]]
             task = f"Rewrite this one script (same question: {s.get('question', '')}). Current script: " + \
                    json.dumps(s["lines"], ensure_ascii=False)
-            new = (write(task, drafts, note=m.group(3).strip()) or [None])[0]
+            new = (write(task, drafts, note=m.group(3).strip(), kind_=_kind(s)) or [None])[0]
             if not new:
                 raise ShortsError(f"{s['id']} 다시 쓰기 실패")
             s.setdefault("history", []).append({"lines": s["lines"], "note": m.group(3).strip(), "at": now_iso()})

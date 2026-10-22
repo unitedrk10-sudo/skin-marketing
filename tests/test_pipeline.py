@@ -2864,15 +2864,16 @@ def test_shorts_week_plan_check_review_and_apply(env, monkeypatch):
     script = {"question": "How long do bumps last?", "lines": [line] * 6, "fact_ids": ["F1"]}
     env.responses["shorts_write"] = {"scripts": [script] * 5}
     env.responses["shorts_review"] = {"ok": True, "issues": [], "ko": ["리쥬란 돌기는 보통 곧 가라앉습니다."] * 6}
-    assert sh.make() == ["1주차: 대본 6개"]
+    assert sh.make() == ["1주차: 대본 7개"]
     plan = sh.load_plan()
-    assert [s["id"] for s in plan["scripts"]] == ["S1-월", "S1-화", "S1-수", "S1-목", "S1-금", "S1-토"]
-    assert plan["scripts"][-1]["posts"] == ["2026-W41-09-bukchon-x"]          # 관광 글은 토요일 1편으로
+    assert [s["id"] for s in plan["scripts"]] == ["S1-월", "S1-화", "S1-수", "S1-목", "S1-금", "S1-토", "S1-일"]
+    assert [(s["type"], s["posts"][0][:11]) for s in plan["scripts"][4:]] == [
+        ("procedure", "2026-W41-10"), ("procedure", "2026-W41-09"), ("travel", "2026-W41-09")]  # 시술 5 + 관광 글의 시술 질문 1 + 관광 1
     assert sh.make() == []                                                    # 이미 만든 주는 건너뜀
     msg = sh.list_message()
     assert "1. ✅ S1-월" in msg and "리쥬란 돌기는" in msg
     assert sh.apply("1,2 승인").startswith("✅ S1-월 승인")
-    assert sh.list_message().count("✅ S1-") == 4
+    assert sh.list_message().count("✅ S1-") == 5
     bad = sh.check({"lines": [{"voice": "The best clinic gives 90% results.", "caption": "x"}], "fact_ids": []},
                    [{"id": "F1", "text": "3 sessions"}])
     assert any("90" in p for p in bad) and any("fact_ids" in p for p in bad)

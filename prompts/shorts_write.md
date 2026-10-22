@@ -5,14 +5,20 @@ TASK: {{task}}
 SOURCE GUIDE(S):
 {{posts}}
 
-FACTS (the only things that are true — every claim, number and qualifier must come from these):
+APPROVED GUIDE TEXT (already fact-checked and approved by a human editor — reuse its sentences and wording as closely as you can; [F#] marks the fact behind a sentence):
+{{guide}}
+
+FACTS (with sources — every claim, number and qualifier must come from these or from the approved guide text above):
 {{facts}}
+
+KIND OF SCRIPT: {{kind_rules}}
 
 Each script:
 - Answers ONE question only. 4 to 7 short lines, {{min_words}}–{{max_words}} words in total (about 20–30 seconds read aloud).
 - Line 1 = the question as a hook in the viewer's words (no clickbait, no "you won't believe").
 - Line 2 = the short answer right away, hedged exactly as the facts are ("usually", "in one trial", "may").
-- Then 1–3 lines of the most useful detail, then one line with the main risk or limit (side effects, who should not, results vary) — every script must carry a risk or limit line, then a last line that sends the viewer to a licensed doctor or to the full guide ("Full guide with sources: link in bio").
+- Then the most useful detail; follow KIND OF SCRIPT for the risk line and the last line ("Full guide with sources: link in bio").
+- Shortening is fine, strengthening is not: keep "some", "usually", "may", "one study" and the exact terms the guide uses.
 - Each line has "voice" (what is read aloud, one or two short sentences) and "caption" (2–6 words shown on screen; keep the qualifier: "One trial: 3 sessions", not "3 sessions").
 - "fact_ids": every fact the script relies on.
 - Captions never say "AI-generated content" (that label is added separately); the last caption is like "Full guide: link in bio".
