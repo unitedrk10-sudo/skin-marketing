@@ -293,6 +293,25 @@ def make(limit_weeks: int | None = None) -> list[str]:
     return made
 
 
+def week_ready(ids: list[str], today: date | None = None) -> bool:
+    """그 주 블로그 글이 다 정해졌나 — 3편(월·수·금)이 찼거나, 첫 게시일이 3일 안이면."""
+    today = today or date.today()
+    sched = load_json(content_dir() / "site" / "schedule.json")
+    first = min(date.fromisoformat(sched[i]["date"]) for i in ids if i in sched)
+    return len(ids) >= 3 or (first - today).days <= 3
+
+
+def make_ready() -> list[str]:
+    """워커용 — 다 찬 주 하나만 만들고 검수 안내 (2026-10-22: 블로그 그림·숏폼을 게시 전에 먼저)."""
+    plan = load_plan()
+    done = {tuple(w["posts"]) for w in plan["weeks"]}
+    for ids in weeks():
+        if tuple(ids) not in done and week_ready(ids):
+            made = make(1)
+            return [f"🎬 숏폼 대본 {', '.join(made)} — '숏폼 검수 목록' 이라고 답하면 보내 드립니다"] if made else []
+    return []
+
+
 def pending(plan: dict) -> list[dict]:
     return [s for s in plan["scripts"] if s.get("status") in ("review", "flagged")]
 

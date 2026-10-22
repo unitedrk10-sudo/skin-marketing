@@ -77,6 +77,11 @@ stages:
     tools: []
     timeout_sec: 900
 
+  figure_plan:     # 블로그 설명 그림 — 승인된 본문에서 그림이 필요한 섹션·도식 (pipeline/figures.py)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 600
+
   explainer_plan:  # 숏폼 실험 E·BE — 대본 줄마다 설명 도식 종류·글자 (pipeline/explainer.py, 글자는 사실 목록만 → 코드 검사)
     provider: claude_cli
     tools: []

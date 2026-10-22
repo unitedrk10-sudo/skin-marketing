@@ -501,7 +501,7 @@ html:lang(ko) .page h1{font-size:44px;line-height:1.25}html:lang(ko) .page h2{fo
 .hero h1{font-size:48px}.hero-img{order:-1}.proof{grid-template-columns:1fr}.proof div{padding:20px 0!important;border-left:0!important}
 .proof div+div{border-top:1px solid var(--line)}.sec{margin-top:56px}.sec-hd h2{font-size:34px}
 .feat,.grid,.band-in,.ft-in{grid-template-columns:1fr;gap:28px}.feat h3{font-size:34px}.band-in{padding-top:56px;padding-bottom:56px}
-.band h2{font-size:36px}.art-hd h1{font-size:42px}.art-grid{grid-template-columns:1fr;gap:20px;padding-top:32px}.side{position:static}
+.art-fig{margin:28px 0}.art-fig img{width:100%;height:auto;border-radius:18px;display:block}.art-fig figcaption{font-size:14px;color:#5b6b62;margin-top:8px}.band h2{font-size:36px}.art-hd h1{font-size:42px}.art-grid{grid-template-columns:1fr;gap:20px;padding-top:32px}.side{position:static}
 .glance{padding:20px}.glance dl{grid-template-columns:1fr;gap:4px}.glance dt{margin-top:10px}.art-img img{aspect-ratio:4/3}.page h1{font-size:40px}}
 """
 
@@ -742,13 +742,48 @@ def read_minutes(md: str) -> int:
     return max(1, round(len(re.sub(r"\[F\d+\]", "", md).split()) / 230))
 
 
+def copy_figures(post: dict, out: Path) -> list[dict]:
+    f = post["path"] / "figures.json"
+    if not f.exists():
+        return []
+    figs = []
+    for n, fig in enumerate(load_json(f).get("figures") or [], 1):
+        src = post["path"] / "figures" / fig["file"]
+        if src.exists():
+            dest = out / "fig" / f"{post['slug']}-{n}.png"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            figs.append({**fig, "src": f"/fig/{dest.name}"})
+    return figs
+
+
+def insert_figures(body_html: str, figures: list[dict]) -> str:
+    """그림을 해당 섹션(h2) 첫 문단 뒤에 넣는다. 섹션을 못 찾으면 넣지 않는다."""
+    esc = html.escape
+    for fig in figures:
+        m = None
+        for h in re.finditer(r"<h2[^>]*>(.*?)</h2>", body_html, re.S):
+            if re.sub(r"<[^>]+>", "", h.group(1)).strip() == fig.get("after_heading", "").strip():
+                m = h
+                break
+        if not m:
+            continue
+        end = body_html.find("</p>", m.end())
+        at = end + 4 if end >= 0 else m.end()
+        cap = esc(fig.get("caption", "")) + (f' <span class="meta">· {esc(fig["source"])}</span>' if fig.get("source") else "")
+        block = (f'<figure class="art-fig"><img src="{esc(fig["src"])}" alt="{esc(fig.get("alt", ""))}" width="1200" height="900" '
+                 f'loading="lazy"><figcaption>{cap}</figcaption></figure>')
+        body_html = body_html[:at] + block + body_html[at:]
+    return body_html
+
+
 def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None,
                 ad_url: str | None = None, clinic_urls: dict[str, str] | None = None) -> str:
     draft = post["draft"]
     blog = draft["blog"]
     sponsor = draft.get("sponsor")
     md, sources = _numbered_sources(strip_leading_h1(blog["markdown"]), draft.get("facts", []))
-    body_html = _rewrite_links(render_markdown(md), sponsor, tracked_url)
+    body_html = insert_figures(_rewrite_links(render_markdown(md), sponsor, tracked_url), post.get("figures") or [])
     esc = html.escape
     badge = f'<span class="badge">{sponsors.label(sponsor)} · Ad by {esc(sponsor["name_en"])}</span>' if sponsor else ""
     ad_sponsor = route_ad_sponsor(post)
@@ -1160,6 +1195,8 @@ def build(out: Path | None = None) -> dict:
         shutil.copytree(static, out, dirs_exist_ok=True)
         if (static / "img" / "brand-hero.jpg").exists():
             cfg = {**cfg, "_hero_image": "/img/brand-hero.jpg"}
+    for p in posts:  # 글 안의 설명 그림 (pipeline/figures.py — 게시 전 글에만 만든다)
+        p["figures"] = copy_figures(p, out)
     for slug, image in site_images.build_images(posts, out).items():  # 글마다 대표 사진 (없으면 브랜드 색)
         next(p for p in posts if p["slug"] == slug)["image"] = image
     if og.available():  # 링크 미리보기 카드 이미지 (글마다 + 기본)

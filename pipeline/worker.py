@@ -260,7 +260,9 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         reminder = importlib.import_module("pipeline.site").publish_reminder()  # 게시일(월·수·금)에 올라갈 글이 없으면
         exp = importlib.import_module("pipeline.experiment")  # 숏폼 화면 소스 실험: 그날 안내·영상이 들어오면 편집
         experiments = "\n\n".join(m for m in (exp.daily_message(), exp.poll_message()) if m)
-        for part in (reminder, daily, experiments):
+        ahead = "\n".join(importlib.import_module("pipeline.figures").ensure_upcoming()  # 게시 예정 글: 블로그 그림 먼저
+                          + importlib.import_module("pipeline.shorts").make_ready())  # 다 찬 주: 숏폼 대본
+        for part in (reminder, daily, experiments, ahead):
             if part:
                 message = (message + "\n\n" if message else "") + part
     except Exception as e:  # noqa: BLE001 — SNS 글 실패가 워커 전체를 멈추지 않게

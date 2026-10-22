@@ -1,6 +1,6 @@
 import React from "react";
 import { Composition } from "remotion";
-import { Explainer, ExplainerProps } from "./Explainer";
+import { Explainer, ExplainerProps, Figure, FigureProps } from "./Explainer";
 
 const sample: ExplainerProps = {
   seconds: 6,
@@ -11,7 +11,10 @@ const sample: ExplainerProps = {
   ],
 };
 
+const figureSample: FigureProps = { beat: { start: 0, end: 4, kind: "molecule", label: "PN", note: "" } };
+
 export const Root: React.FC = () => (
+  <>
   <Composition
     id="Explainer"
     component={Explainer}
@@ -22,4 +25,6 @@ export const Root: React.FC = () => (
     defaultProps={sample}
     calculateMetadata={({ props }) => ({ durationInFrames: Math.max(1, Math.round(props.seconds * 30)) })}
   />
+  <Composition id="Figure" component={Figure} width={1200} height={900} fps={30} durationInFrames={120} defaultProps={figureSample} />
+  </>
 );

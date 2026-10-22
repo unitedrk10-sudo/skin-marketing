@@ -2883,3 +2883,20 @@ def test_shorts_review_message_chunks():
     sh = importlib.import_module("pipeline.shorts")
     parts = sh.chunks("\n\n".join(["x" * 1000] * 7), limit=3000)
     assert len(parts) == 4 and all(len(p) <= 3000 for p in parts)   # 1000자 두 개씩 (구분 줄 포함 3000자 이하)
+
+
+def test_blog_figures_go_after_their_section_and_only_for_unpublished(env, monkeypatch):
+    site = importlib.import_module("pipeline.site")
+    body = '<h2 id="a">What is it?</h2><p>One.</p><p>Two.</p><h2 id="b">How does it work?</h2><p>Three.</p>'
+    out = site.insert_figures(body, [{"after_heading": "How does it work?", "src": "/fig/x-1.png", "alt": "A diagram",
+                                      "caption": "Thought to stimulate collagen", "source": "Source: pmc.ncbi.nlm.nih.gov"},
+                                     {"after_heading": "Missing heading", "src": "/fig/x-2.png"}])
+    assert out.index("art-fig") > out.index("Three.</p>") and "x-2.png" not in out and 'alt="A diagram"' in out
+    fig = importlib.import_module("pipeline.figures")
+    live = _published("2026-W41-10-rejuran-x", live=True)
+    later = _published("2026-W41-11-later-x", live=False)
+    common.save_json(common.content_dir() / "site" / "schedule.json",
+                     {"2026-W41-10-rejuran-x": {"date": "2030-01-06", "at": "2030-01-06T07:00:00+09:00"},
+                      "2026-W41-11-later-x": {"date": "2030-01-08", "at": "2030-01-08T07:00:00+09:00"}})
+    assert [p.name for p in fig.upcoming()] == ["2026-W41-11-later-x"]          # 이미 배포된 글은 건드리지 않는다
+    assert fig.headings("# T\n## A\ntext\n## FAQ\n## Sources\n") == ["A"]

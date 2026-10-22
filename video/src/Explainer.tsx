@@ -401,3 +401,22 @@ export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background
     </AbsoluteFill>
   );
 };
+
+
+// ---- 블로그 그림 (정지 이미지, pipeline/figures.py): 도식 하나 + 작은 출처·브랜드 ----
+export type FigureProps = { beat: Beat };
+export const Figure: React.FC<FigureProps> = ({ beat }) => {
+  const View = KINDS[beat.kind] || IconScene;
+  return (
+    <AbsoluteFill style={{ background: C.cream }}>
+      <div style={{ position: "absolute", top: 40, left: 130, width: PANEL.width, height: PANEL.height }}>
+        <View b={beat} />
+      </div>
+      <div style={{ position: "absolute", bottom: 26, left: 40, right: 40, display: "flex", justifyContent: "space-between",
+        fontFamily: FONT, fontSize: 24, color: C.inkSoft }}>
+        <span>Skinbound Korea · illustration</span>
+        <span>{beat.source || ""}</span>
+      </div>
+    </AbsoluteFill>
+  );
+};
