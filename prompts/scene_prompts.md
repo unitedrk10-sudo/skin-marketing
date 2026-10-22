@@ -13,6 +13,9 @@ SCENE PLAN (fixed from the measured voice length — follow it exactly, one prom
 - When a line is split into parts, the parts must look like one continuous moment: same subject, setting, light and colour; part 2 is the next moment or a slightly different angle of part 1 (say so in the prompt), never a new subject.
 - Consecutive scenes should flow into each other: keep the same light direction and palette, and prefer a calm motion that ends where the next scene can begin (no sudden zooms or flashes).
 
+LOOK (how every scene should look — overrides the "Allowed" list below where they differ, never the strict rules):
+{{look}}
+
 Visual rules (strict — these come from Korean medical advertising law and our brand):
 - No doctors, pharmacists or experts of any kind (Cosmetics Act §13①4: no AI-made expert endorsing or using a product). No human faces, no patients, no before/after looks, no injections, needles, lasers touching skin, or any procedure being performed, no clinic interiors, treatment rooms, doctors or white coats, no logos, brand names, readable text, signs or captions in the image.
 - Allowed: hands (no faces), calm still life (skincare bottles without labels, towels, a calendar, a passport, a suitcase), Seoul streets, palaces, hanok alleys, cafes, parks and seasons, sky and light, abstract skin-like textures, water, gentle motion.

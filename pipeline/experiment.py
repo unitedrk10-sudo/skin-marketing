@@ -96,7 +96,7 @@ def plan_scenes(spans: list[float]) -> list[dict]:
     return plan
 
 
-def scene_prompts(draft: dict, plan: list[dict] | int, style: str) -> list[dict]:
+def scene_prompts(draft: dict, plan: list[dict] | int, style: str, guide: str = "") -> list[dict]:
     """장면 계획(plan_scenes)대로 Flow 프롬프트를 쓴다. 숫자를 넘기면 예전처럼 Claude 가 n 장면으로 나눈다."""
     lines = [ln for ln in (draft.get("shortform") or {}).get("lines", []) if (ln.get("voice") or "").strip()]
     script = "\n".join(f"{i}. {ln['voice']}" for i, ln in enumerate(lines, 1))
@@ -107,7 +107,8 @@ def scene_prompts(draft: dict, plan: list[dict] | int, style: str) -> list[dict]
                             if p["parts"] > 1 else "") + f", {p['seconds']:.1f} s on screen"
                          for i, p in enumerate(plan, 1)) if fixed else "")
     data, _ = llm.generate_json("scene_prompts", prompt("scene_prompts", title=draft["blog"].get("title", ""),
-                                                        script=script, n=str(n), plan=layout or "(none — group lines yourself)"))
+                                                        script=script, n=str(n), plan=layout or "(none — group lines yourself)",
+                                                        look=guide.strip() or "(default look — see style below)"))
     scenes = (data or {}).get("scenes") or []
     if len(scenes) != n:
         raise ExperimentError(f"장면 {n}개가 아니라 {len(scenes)}개")
@@ -245,7 +246,7 @@ def build(eid: str) -> str:
                 raise ExperimentError(f"배경으로 쓸 B 실험 클립이 없습니다: {data.get('bg')}")
             scenes = bg.get("scenes") or []
             background = clip_segments(*fit_clips(clips, scenes))
-        fn = explainer.segments_fn(draft, eid, background)
+        fn = explainer.segments_fn(draft, eid, background, overlay=data.get("overlay", "card"))
     else:
         clips = clip_files(eid)
         if not clips:
@@ -270,7 +271,7 @@ def start(entry: dict) -> str:
     draft = load_draft(draft_path)
     data = {"id": eid, "date": entry["date"], "method": entry["method"], "post": entry["post"],
             "title": draft["blog"].get("title", ""), "started_at": now_iso(), "status": "started",
-            **({"bg": entry["bg"]} if entry.get("bg") else {})}
+            **{k: entry[k] for k in ("bg", "look", "overlay", "tag") if entry.get(k)}}
     (root() / eid).mkdir(parents=True, exist_ok=True)
     _save(eid, data)
     if entry["method"] in ("A", "E", "BE"):  # 사람 손이 필요 없는 방식은 바로 완성
@@ -280,7 +281,8 @@ def start(entry: dict) -> str:
     else:  # 2026-10-22 기본 — 음성 길이를 먼저 재서 장면을 나눈다 (8초 클립을 느리게·반복하지 않게)
         render = importlib.import_module("pipeline.04_render_video")
         plan = plan_scenes(render.line_spans([s for _, s in render.voice_lines(draft, root() / eid / "voice_lines")]))
-    scenes = scene_prompts(draft, plan, cfg.get("style", ""))
+    look = (cfg.get("looks") or {}).get(entry.get("look") or "", {})
+    scenes = scene_prompts(draft, plan, look.get("style") or cfg.get("style", ""), look.get("guide", ""))
     (root() / eid / "clips").mkdir(exist_ok=True)
     (root() / eid / "prompts.txt").write_text("\n\n".join(f"{s['n']}. {s['prompt']}" for s in scenes) + "\n", encoding="utf-8")
     data.update(status="waiting_clips", scenes=scenes)
@@ -309,8 +311,8 @@ def send_prompts(scenes: list[dict]) -> bool:
     return True
 
 
-def exp_id(entry: dict) -> str:  # 같은 날 여러 실험 (2026-10-19 하루 몰아서) — 글번호까지 붙인다
-    return f"{entry['date']}-{entry['method']}-{entry['post']}"
+def exp_id(entry: dict) -> str:  # 같은 날 여러 실험 (2026-10-19 하루 몰아서) — 글번호까지, 같은 날 같은 글이면 tag 로 구분
+    return f"{entry['date']}-{entry['method']}-{entry['post']}" + (f"-{entry['tag']}" if entry.get("tag") else "")
 
 
 def today_entries(now: datetime) -> list[dict]:

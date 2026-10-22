@@ -8,6 +8,19 @@ scenes: 5            # Flow 무료 하루 50크레딧 = Lite(10) 5개
 style: >-
   Cinematic vertical 9:16 video, soft natural daylight, calm muted ivory and warm taupe palette, gentle film grain,
   shallow depth of field, slow steady camera, no people's faces, no text, no logos
+looks:   # 2026-10-22 — 장면 프롬프트 화풍. 실험 항목에 look: <이름> (없으면 위 style)
+  explainer3d:
+    style: >-
+      Clean 3D medical explainer animation, vertical 9:16, soft studio lighting, calm ivory background with deep green and warm
+      terracotta accents, smooth slow camera, semi-realistic stylized tissue (not gory, no blood), no people, no faces, no text,
+      no labels, no logos
+    guide: >-
+      Show HOW things work as a 3D explainer animation: a cross-section of skin layers (epidermis, dermis, fat) seen from the side,
+      small particles or molecules moving into a layer, fibers forming, a soft pink inflammation glow slowly calming. Abstract and
+      schematic, never a real patient's face or body, never a needle or injection, never a before/after or a "perfect skin" result.
+      Travel or planning lines may use simple stylized 3D objects (suitcase, calendar block, bed) in the same clay-like 3D style.
+      Keep the SAME 3D style, palette and lighting in every scene so the video looks like one animation.
+
 schedule:   # 2026-10-19 변경: 2주 → 오늘 하루에 몰아서 (Flow 무료 50크레딧 = Lite 5개 = 계정당 하루 B 또는 C 한 번)
   - {date: 2026-10-19, method: B, post: W41-10}   # 리쥬란 — Flow 직접 (지금 계정 50크레딧)
   - {date: 2026-10-19, method: C, post: W43-03}   # 쥬베룩 — Flow 전용 계정 + Aside (그 계정 50크레딧)
@@ -22,3 +35,5 @@ schedule:   # 2026-10-19 변경: 2주 → 오늘 하루에 몰아서 (Flow 무�
   #   (2026-10-21 은 대화 세션에서 직접 실행 — npm 설치 전 워커가 먼저 시작해 실패하지 않게 일정에는 넣지 않음)
   #   - {date: 2026-10-21, method: E, post: W41-10}
   #   - {date: 2026-10-21, method: BE, post: W41-10, bg: 2026-10-19-B-W41-10}
+  # 2026-10-22 E2 평가: 브랜드 8 · 전달 7 · 몰입 5 ("정적이다") → Flow 로 3D 원리 애니메이션을 만들고 글자는 우리가 얹는다 (BE, overlay: caption)
+  #   B 쪽은 대화 세션에서 직접 시작 (tag 로 같은 날 같은 글 실험과 구분)

@@ -51,7 +51,8 @@ export type Beat = {
 export type BgClip = { file: string; seconds: number; from: number; zoom: number; rate?: number };
 export type Line = { start: number; end: number; voice: string };
 // lines 가 있으면 자막·브랜드·AI 표시를 여기서 같은 디자인으로 그린다 (2026-10-22 — 검은 자막 상자·노란 강조 제거).
-export type ExplainerProps = { seconds: number; beats: Beat[]; background: BgClip[]; lines?: Line[]; handle?: string; disclosure?: string };
+export type ExplainerProps = { seconds: number; beats: Beat[]; background: BgClip[]; lines?: Line[]; handle?: string; disclosure?: string;
+  overlay?: string };  // overlay "caption" = 배경 영상 위에 제목·설명만 (도식 카드 없이)
 
 const useIn = (delay = 0, dur = 14) => {
   const f = useCurrentFrame();
@@ -302,6 +303,27 @@ const KINDS: Record<string, React.FC<{ b: Beat }>> = {
   icon_scene: IconScene,
 };
 
+// ---- 배경 영상이 주인공일 때: 아래쪽에 제목·설명·출처만 (영상 위 글자는 어두운 그라데이션 위에) ----
+const CaptionOverlay: React.FC<{ b: Beat }> = ({ b }) => {
+  const a = useIn(3);
+  const f = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
+  const out = interpolate(f, [durationInFrames - 6, durationInFrames], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const label = b.kind === "timeline" && b.count ? `${b.label}` : b.label;
+  const note = b.kind === "myth_fact" ? b.fact : b.note || (b.items || []).join(" · ");
+  const head = b.kind === "myth_fact" ? b.belief : label;
+  return (
+    <div style={{ position: "absolute", top: 930, left: 70, width: 940, opacity: a * out, transform: `translateY(${(1 - a) * 24}px)`,
+      fontFamily: FONT, textAlign: "center" }}>
+      {b.kind === "myth_fact" ? <div style={{ fontSize: 30, fontWeight: 700, color: "#F2B38B", letterSpacing: 2 }}>COMMON BELIEF</div> : null}
+      {head ? <div style={{ fontSize: 64, fontWeight: 800, color: "#FFF8EE", lineHeight: 1.12, textShadow: "0 2px 18px rgba(0,0,0,0.55)" }}>{head}</div> : null}
+      {note ? <div style={{ fontSize: 42, fontWeight: 600, color: "#F4EFE6", marginTop: 16, lineHeight: 1.25, textShadow: "0 2px 14px rgba(0,0,0,0.6)" }}>
+        {b.kind === "myth_fact" ? <span style={{ color: "#F2B38B" }}>What sources say: </span> : null}{note}</div> : null}
+      {b.source ? <div style={{ fontSize: 28, color: "#E8DFD2", marginTop: 14, textShadow: "0 2px 10px rgba(0,0,0,0.6)" }}>{b.source}</div> : null}
+    </div>
+  );
+};
+
 const BeatView: React.FC<{ b: Beat; card: boolean }> = ({ b, card }) => {
   const View = KINDS[b.kind] || IconScene;
   const f = useCurrentFrame();
@@ -357,7 +379,7 @@ const Subtitle: React.FC<{ lines: Line[] }> = ({ lines }) => {
   );
 };
 
-export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background, lines, handle, disclosure }) => {
+export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background, lines, handle, disclosure, overlay }) => {
   const fps = 30;
   const hasBg = background && background.length > 0;
   let at = 0;
@@ -382,9 +404,12 @@ export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background
           </svg>
         </AbsoluteFill>
       )}
+      {hasBg && overlay === "caption" ? (
+        <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.55) 62%, rgba(0,0,0,0.65) 100%)" }} />
+      ) : null}
       {beats.map((b, i) => (
         <Sequence key={i} from={Math.round(b.start * fps)} durationInFrames={Math.max(1, Math.round((b.end - b.start) * fps))}>
-          <BeatView b={b} card={!!hasBg} />
+          {hasBg && overlay === "caption" ? <CaptionOverlay b={b} /> : <BeatView b={b} card={!!hasBg} />}
         </Sequence>
       ))}
       {lines && lines.length > 0 ? (
