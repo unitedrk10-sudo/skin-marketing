@@ -2,7 +2,7 @@
 // 대본 줄마다 beat 하나: 정해진 도식 종류(kind) 중 하나를 Claude 가 고르고 글자는 사실 목록에서만 (pipeline/explainer.py 가 검사).
 // 위 제목·아래 자막·음성은 파이썬(04_render_video.make_video)이 얹는다 → 여기서는 가운데 도식만 (y 480~1260).
 import React from "react";
-import { Helix, SkinSection } from "./Illustrations";
+import { Helix, SkinSection, stageOf } from "./Illustrations";
 import {
   AbsoluteFill,
   Easing,
@@ -48,6 +48,7 @@ export type Beat = {
   from_label?: string;
   to_label?: string;
   source?: string;
+  stages?: string[];  // 3단계 이름 (피부 단면 효과) — 화면 위 단계 표시·블로그 그림 3칸
 };
 export type BgClip = { file: string; seconds: number; from: number; zoom: number; rate?: number };
 export type Line = { start: number; end: number; voice: string };
@@ -98,6 +99,21 @@ const SkinLayers: React.FC<{ b: Beat }> = ({ b }) => {
       <div style={{ position: "absolute", top: 10, left: 10, opacity: a }}>
         <SkinSection width={760} height={520} highlight={b.highlight} particles={b.particles} t={Math.min(1, f / Math.max(1, durationInFrames - 8))} frame={f} />
       </div>
+      {b.stages && b.stages.length === 3 && b.particles ? (() => {
+        const s = stageOf(Math.min(1, f / Math.max(1, durationInFrames - 8)));
+        return (
+          <div style={{ position: "absolute", top: 18, left: 26, display: "flex", gap: 10, alignItems: "center" }}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} style={{ width: 46, height: 46, borderRadius: 23, fontFamily: FONT, fontWeight: 800, fontSize: 26,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: i === s ? C.ink : "rgba(244,239,230,0.9)", color: i === s ? C.cream : C.inkSoft }}>{i + 1}</div>
+            ))}
+            <div style={{ background: C.ink, color: C.cream, borderRadius: 22, padding: "8px 20px", fontFamily: FONT, fontWeight: 700, fontSize: 30 }}>
+              {b.stages[s]}
+            </div>
+          </div>
+        );
+      })() : null}
       <Caption b={b} y={560} />
     </AbsoluteFill>
   );
@@ -407,6 +423,39 @@ export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background
 export type FigureProps = { beat: Beat };
 export const Figure: React.FC<FigureProps> = ({ beat }) => {
   const View = KINDS[beat.kind] || IconScene;
+  if (beat.kind === "skin_layers" && beat.particles && beat.stages && beat.stages.length === 3) {
+    // 3칸 그림: 단계별 상태를 나란히 + 화살표 (블로그에서 바뀐 점이 한눈에 보이게)
+    const ts = [0.2, 0.55, 0.95];
+    return (
+      <AbsoluteFill style={{ background: C.cream }}>
+        <div style={{ position: "absolute", top: 34, width: 1800, textAlign: "center", fontFamily: FONT }}>
+          <div style={{ fontSize: 52, fontWeight: 800, color: C.ink }}>{beat.label}</div>
+          {beat.note ? <div style={{ fontSize: 32, color: C.inkSoft, marginTop: 8 }}>{beat.note}</div> : null}
+        </div>
+        {ts.map((tt, i) => (
+          <div key={i} style={{ position: "absolute", top: 210, left: 60 + i * 590, width: 500 }}>
+            <SkinSection width={500} height={420} highlight={beat.highlight} particles={beat.particles} t={tt} frame={0} sideLabels={false} />
+            <div style={{ marginTop: 26, display: "flex", gap: 14, alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
+              <div style={{ width: 48, height: 48, borderRadius: 24, background: C.ink, color: C.cream, fontWeight: 800, fontSize: 28,
+                display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: C.ink }}>{beat.stages![i]}</div>
+            </div>
+          </div>
+        ))}
+        {[0, 1].map((i) => (
+          <svg key={i} width={80} height={60} style={{ position: "absolute", top: 390, left: 560 + i * 590 }}>
+            <path d="M 8 30 L 60 30" stroke={C.accent} strokeWidth={8} strokeLinecap="round" />
+            <path d="M 50 14 L 72 30 L 50 46" stroke={C.accent} strokeWidth={8} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ))}
+        <div style={{ position: "absolute", bottom: 26, left: 40, right: 40, display: "flex", justifyContent: "space-between",
+          fontFamily: FONT, fontSize: 24, color: C.inkSoft }}>
+          <span>Skinbound Korea · illustration (schematic, not to scale)</span>
+          <span>{beat.source || ""}</span>
+        </div>
+      </AbsoluteFill>
+    );
+  }
   return (
     <AbsoluteFill style={{ background: C.cream }}>
       <div style={{ position: "absolute", top: 40, left: 130, width: PANEL.width, height: PANEL.height }}>

@@ -25,6 +25,8 @@ export const Root: React.FC = () => (
     defaultProps={sample}
     calculateMetadata={({ props }) => ({ durationInFrames: Math.max(1, Math.round(props.seconds * 30)) })}
   />
-  <Composition id="Figure" component={Figure} width={1200} height={900} fps={30} durationInFrames={120} defaultProps={figureSample} />
+  <Composition id="Figure" component={Figure} width={1200} height={900} fps={30} durationInFrames={120} defaultProps={figureSample}
+    calculateMetadata={({ props }) => (props.beat.kind === "skin_layers" && props.beat.particles && props.beat.stages && props.beat.stages.length === 3
+      ? { width: 1800, height: 900 } : {})} />
   </>
 );

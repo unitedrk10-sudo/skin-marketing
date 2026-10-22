@@ -34,9 +34,14 @@ const wavePts = (x0: number, x1: number, y: number, amp: number, step: number, p
 const wave = (x0: number, x1: number, y: number, amp: number, step: number, phase = 0) =>
   wavePts(x0, x1, y, amp, step, phase).map(([x, yy], i) => `${i ? "L" : "M"} ${x} ${yy}`).join(" ");
 
-export type SkinProps = { width: number; height: number; highlight?: string; particles?: string; t: number; frame: number };
+export type SkinProps = { width: number; height: number; highlight?: string; particles?: string; t: number; frame: number;
+  sideLabels?: boolean };
 
-export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f }) => {
+// 3단계로 또렷하게 (2026-10-22 "바뀐 점이 직관적으로 보여야"): 0~0.33 1단계 · 0.33~0.66 2단계 · 0.66~1 3단계, 단계 사이만 짧게 넘어간다
+export const stageOf = (t: number) => (t < 0.33 ? 0 : t < 0.66 ? 1 : 2);
+const stepT = (t: number, a: number, b: number) => interpolate(t, [a, b], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.inOut(Easing.cubic) });
+
+export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f, sideLabels = true }) => {
   const top = 46, epiTop = 66, dermTop = 170, fatTop = H * 0.76;
   const ease = (a: number, b: number) => interpolate(t, [a, b], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.inOut(Easing.cubic) });
   const glow = 0.55 + 0.45 * Math.sin(f / 9);
@@ -45,9 +50,10 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
   // 콜라겐 다발 (진피를 가로지르는 물결 섬유)
   const bundles = Array.from({ length: 11 }, (_, i) => {
     const y = dermTop + 22 + i * ((fatTop - dermTop - 40) / 10);
-    const tight = particles === "heat" ? 1 - 0.55 * ease(0.15, 0.6) : 1;  // 열 → 기존 콜라겐이 수축(물결이 펴짐)
-    return <path key={`b${i}`} d={wave(0, W, y, (6 + rand(i) * 6) * tight, 6, i * 1.7)} stroke={P.fiber} strokeWidth={5 + rand(i + 9) * 6}
-      strokeLinecap="round" fill="none" opacity={0.42 + rand(i + 3) * 0.25} />;
+    const heat = particles === "heat";
+    const amp = heat ? 16 - 13 * stepT(t, 0.3, 0.45) : 6 + rand(i) * 6;  // 열: 느슨한 물결 → 2단계에서 팽팽하게 수축
+    return <path key={`b${i}`} d={wave(0, W, y, amp, 6, i * 1.7)} stroke={heat && t > 0.4 ? "#F6C9B3" : P.fiber}
+      strokeWidth={heat && t > 0.4 ? 9 : 5 + rand(i + 9) * 6} strokeLinecap="round" fill="none" opacity={0.42 + rand(i + 3) * 0.25} />;
   });
   // 섬유아세포
   const fibro = Array.from({ length: 7 }, (_, i) => {
@@ -69,37 +75,44 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
   // 지방세포
   const fat: React.ReactNode[] = [];
   for (let row = 0; row < 4; row++)
-    for (let col = 0; col < 16; col++) {
+    for (let col = 0; col < Math.ceil(W / 58) + 1; col++) {
       const r = 26 + rand(row * 31 + col) * 8;
       const x = col * 58 + (row % 2) * 29 + 10, y = fatTop + 22 + row * 44;
       if (y - r > H) continue;
       fat.push(<circle key={`a${row}-${col}`} cx={x} cy={y} r={r} fill="url(#fatCell)" stroke="#E2BE8C" strokeWidth={2} />);
     }
   // 기저세포 줄
-  const basal = Array.from({ length: 30 }, (_, i) => (
+  const basal = Array.from({ length: Math.ceil(W / 30) + 1 }, (_, i) => (
     <ellipse key={`c${i}`} cx={14 + i * 30} cy={dermTop - 14} rx={13} ry={10} fill="#DFA286" stroke="#CF8E73" strokeWidth={1.5} opacity={0.8} />
   ));
 
   // 입자 (윤기 있는 구슬)
-  const spheres = Array.from({ length: 16 }, (_, i) => {
+  const spheres = Array.from({ length: 18 }, (_, i) => {
     const x = 60 + rand(i + 70) * (W - 120);
     const target = dermTop + 30 + rand(i + 80) * (fatTop - dermTop - 70);
-    const k = ease(i / 50, 0.5 + i / 50);
-    const y = particles === "collagen" ? target : top - 70 + (target - top + 70) * k;
-    const shrink = particles === "collagen" ? 1 - 0.35 * ease(0.2, 1) : 1;
-    return <circle key={`p${i}`} cx={x} cy={y} r={11 * shrink} fill="url(#pearl)"
+    // 스며듦: 1단계 표면 위 → 2단계 표피 통과 → 3단계 진피에 퍼짐 / 콜라겐: 1단계 진피에 놓임 → 3단계 작아짐(분해)
+    const mid = (top + dermTop) / 2;
+    const y = particles === "collagen" ? target
+      : interpolate(t, [0, 0.28, 0.4, 0.6, 0.72, 1], [top - 60, top - 60, mid, mid, target, target], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+    const shrink = particles === "collagen" ? 1 - 0.6 * stepT(t, 0.62, 0.8) : 1;
+    return <circle key={`p${i}`} cx={x} cy={y} r={14 * shrink} fill="url(#pearl)"
       opacity={particles === "diffuse" || particles === "collagen" ? 0.95 : 0} />;
   });
   // 새 콜라겐 섬유 (입자 주변에서 그려진다)
-  const newFibers = particles === "collagen" || particles === "heat" ? Array.from({ length: 16 }, (_, i) => {
-    const x = 60 + rand(i + 70) * (W - 120), y = dermTop + 30 + rand(i + 80) * (fatTop - dermTop - 70);
-    const len = 120, k = particles === "heat" ? ease(0.55 + i / 80, 0.95 + i / 80) : ease(0.15 + i / 60, 0.75 + i / 60);
-    return <path key={`n${i}`} d={`M ${x - 60} ${y + 10} C ${x - 30} ${y - 18}, ${x + 30} ${y + 22}, ${x + 60} ${y - 6}`}
-      stroke={P.fiberNew} strokeWidth={4} fill="none" strokeLinecap="round" strokeDasharray={len} strokeDashoffset={len * (1 - k)} opacity={0.9} />;
+  const newFibers = particles === "collagen" || particles === "heat" ? Array.from({ length: 30 }, (_, i) => {
+    const x = 40 + rand(i + 170) * (W - 80), y = dermTop + 26 + rand(i + 180) * (fatTop - dermTop - 60);
+    const first = particles === "collagen" && i < 12;  // 콜라겐: 2단계에 일부, 3단계에 전부 / 열: 3단계에 전부
+    const k = particles === "heat" ? stepT(t, 0.66 + (i % 6) * 0.02, 0.8 + (i % 6) * 0.02)
+      : first ? stepT(t, 0.36 + (i % 4) * 0.02, 0.5) : stepT(t, 0.68 + (i % 6) * 0.02, 0.82 + (i % 6) * 0.02);
+    const len = 150;
+    return <path key={`n${i}`} d={`M ${x - 70} ${y + 10} C ${x - 35} ${y - 22}, ${x + 35} ${y + 26}, ${x + 70} ${y - 8}`}
+      stroke={P.fiberNew} strokeWidth={7} fill="none" strokeLinecap="round" strokeDasharray={len} strokeDashoffset={len * (1 - k)}
+      opacity={0.95} filter="url(#fiberGlow)" />;
   }) : null;
   // 표면 돌기 (가라앉는다)
   const bumps = particles === "settle" ? Array.from({ length: 7 }, (_, i) => {
-    const x = 80 + i * ((W - 160) / 6), h = 26 * (1 - ease(0.1, 0.9)) + 2;
+    const x = 80 + i * ((W - 160) / 6);
+    const h = interpolate(t, [0, 0.28, 0.42, 0.6, 0.74, 1], [34, 34, 16, 16, 1, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
     return <path key={`u${i}`} d={`M ${x - 34} ${top + 2} Q ${x} ${top - h * 2} ${x + 34} ${top + 2} Z`} fill="url(#epiGrad)" stroke="#E2A98E" strokeWidth={2} />;
   }) : null;
 
@@ -112,7 +125,9 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         <linearGradient id="corGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={P.corneum[0]} /><stop offset="1" stopColor={P.corneum[1]} /></linearGradient>
         <radialGradient id="fatCell" cx="0.4" cy="0.35" r="0.7"><stop offset="0" stopColor={P.fat[0]} /><stop offset="1" stopColor={P.fat[1]} /></radialGradient>
         <radialGradient id="pearl" cx="0.35" cy="0.3" r="0.75"><stop offset="0" stopColor="#FFFFFF" /><stop offset="0.35" stopColor="#CFE6DA" /><stop offset="1" stopColor={P.green} /></radialGradient>
-        <radialGradient id="heatGlow" cx="0.5" cy="0.5" r="0.75"><stop offset="0" stopColor="#FF9B6A" stopOpacity="0.85" /><stop offset="0.6" stopColor="#F27D52" stopOpacity="0.45" /><stop offset="1" stopColor="#E06A45" stopOpacity="0" /></radialGradient>
+        <radialGradient id="heatGlow" cx="0.5" cy="0.5" r="0.8"><stop offset="0" stopColor="#FF8A55" stopOpacity="0.95" /><stop offset="0.6" stopColor="#F27D52" stopOpacity="0.45" /><stop offset="1" stopColor="#E06A45" stopOpacity="0" /></radialGradient>
+        <filter id="fiberGlow" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="2.5" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#E8613C" /></marker>
         <filter id="soft" x="-5%" y="-5%" width="110%" height="110%"><feDropShadow dx="0" dy="10" stdDeviation="14" floodColor="#7A4B3A" floodOpacity="0.22" /></filter>
         <clipPath id="block"><rect x="0" y={top - 60} width={W} height={H - top + 60} rx="28" /></clipPath>
       </defs>
@@ -122,8 +137,14 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         <rect x={0} y={dermTop} width={W} height={fatTop - dermTop} fill="url(#dermGrad)" />
         {vessels}
         {particles === "heat" ? (
-          <rect x={0} y={dermTop} width={W} height={fatTop - dermTop} fill="url(#heatGlow)"
-            opacity={interpolate(t, [0, 0.35, 0.7, 1], [0, 0.85, 0.6, 0.5], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} />
+          <g opacity={interpolate(t, [0, 0.08, 0.6, 0.72, 1], [0, 1, 1, 0.15, 0.15], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })}>
+            <rect x={0} y={dermTop} width={W} height={fatTop - dermTop} fill="url(#heatGlow)" />
+            {Array.from({ length: 6 }, (_, i) => {
+              const x = 70 + i * ((W - 140) / 5), y0 = top - 40, y1 = dermTop + 70;
+              return <path key={`h${i}`} d={`M ${x} ${y0} q 12 ${(y1 - y0) / 4} 0 ${(y1 - y0) / 2} q -12 ${(y1 - y0) / 4} 0 ${(y1 - y0) / 2}`}
+                stroke="#E8613C" strokeWidth={5} fill="none" strokeLinecap="round" markerEnd="url(#arrow)" opacity={0.85} />;
+            })}
+          </g>
         ) : null}
         {bundles}
         {fibro}
@@ -131,12 +152,12 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         <path d={`${wave(0, W, epiTop, 3, 8)} ${wavePts(0, W, dermTop, 7, 8).reverse().map(([x, y]) => `L ${x} ${y}`).join(" ")} Z`} fill="url(#epiGrad)" />
         {basal}
         <path d={`${wave(0, W, top, 2.5, 8)} L ${W} ${epiTop} L 0 ${epiTop} Z`} fill="url(#corGrad)" />
-        {Array.from({ length: 22 }, (_, i) => <path key={`s${i}`} d={`M ${i * 42 + 6} ${top + 8} q 14 -5 28 0`} stroke="#E8C7B2" strokeWidth={2} fill="none" />)}
+        {Array.from({ length: Math.ceil(W / 42) + 1 }, (_, i) => <path key={`s${i}`} d={`M ${i * 42 + 6} ${top + 8} q 14 -5 28 0`} stroke="#E8C7B2" strokeWidth={2} fill="none" />)}
         {bumps}
         {spheres}
         {highlight ? <rect x={3} y={hy0} width={W - 6} height={hy1 - hy0} fill="none" stroke={P.ink} strokeWidth={4 + glow * 3} rx={10} opacity={0.85} /> : null}
       </g>
-      {[["Epidermis", (epiTop + dermTop) / 2, "epidermis"], ["Dermis", (dermTop + fatTop) / 2, "dermis"], ["Fat layer", (fatTop + H) / 2, "subcutis"]].map(([n, y, id]) => (
+      {sideLabels && [["Epidermis", (epiTop + dermTop) / 2, "epidermis"], ["Dermis", (dermTop + fatTop) / 2, "dermis"], ["Fat layer", (fatTop + H) / 2, "subcutis"]].map(([n, y, id]) => (
         <g key={String(n)}>
           <line x1={W - 8} y1={Number(y)} x2={W + 24} y2={Number(y)} stroke={P.inkSoft} strokeWidth={2} />
           <text x={W + 30} y={Number(y) + 11} fontFamily="'Segoe UI', Arial, sans-serif" fontSize={30} fontWeight={highlight === id ? 800 : 500}

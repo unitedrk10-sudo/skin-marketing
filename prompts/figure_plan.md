@@ -13,6 +13,7 @@ Pick the section(s) where a diagram helps most — first choice: how the treatme
 
 For each figure choose ONE kind and fill its fields:
 - "skin_layers": skin cross-section. highlight ("epidermis"|"dermis"|"subcutis"), particles ("diffuse" = particles sink into the highlighted layer, "settle" = small surface bumps settle down, "heat" = the layer warms and existing collagen tightens, then new fibres form — for energy devices (radiofrequency, laser, ultrasound); never draw particles for them, "collagen" = particles in the dermis with new collagen fibres forming around them — only when the guide says the treatment stimulates collagen, "" = none), label, note.
+  When particles is not "", also give "stages": exactly 3 short step names (at most 28 characters each) that say what changes at each step, taken from the approved text — e.g. heat: ["Heat reaches the dermis", "Collagen contracts", "New collagen forms over months"]; collagen: ["Particles placed in dermis", "Collagen starts forming", "Collagen builds gradually"]; settle: ["Small bumps right after", "Bumps begin to settle", "Usually settled"]. Keep the guide's qualifiers if a step is uncertain ("May…").
 - "molecule": a rotating double-helix / nucleotide chain (PN, PDRN, DNA-derived ingredients). label, note.
 - "timeline": numbered sessions with the interval. count, interval, label, note.
 - "fade_patch": redness or swelling that settles over time. from_label, to_label, label, note.

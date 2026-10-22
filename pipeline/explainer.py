@@ -64,7 +64,7 @@ def check(draft: dict, beats: list[dict]) -> tuple[list[dict], list[str]]:
         issues = []
         if b.get("kind") not in KINDS:
             issues.append(f"모르는 종류 {b.get('kind')}")
-        texts = [str(b.get(k) or "") for k in TEXT_FIELDS] + [str(i) for i in b.get("items") or []]
+        texts = [str(b.get(k) or "") for k in TEXT_FIELDS] + [str(i) for i in (b.get("items") or []) + (b.get("stages") or [])]
         if b.get("kind") == "timeline":
             texts.append(str(b.get("count") or ""))
         for k, limit in LIMITS.items():
@@ -79,6 +79,8 @@ def check(draft: dict, beats: list[dict]) -> tuple[list[dict], list[str]]:
         if issues:
             problems.append(f"{n}번 줄: " + "; ".join(issues))
             b = {"line": n, "kind": "icon_scene", "icon": "drop", "label": "", "note": ""}
+        if b.get("stages") and (len(b["stages"]) != 3 or any(len(str(s)) > 30 for s in b["stages"])):
+            b = {k: v for k, v in b.items() if k != "stages"}  # 3단계·30자 아니면 단계 표시 없이
         if b.get("kind") == "icon_scene" and b.get("icon") not in ICONS:
             b["icon"] = "drop"
         clean.append(b)
