@@ -319,10 +319,11 @@ const CaptionOverlay: React.FC<{ b: Beat }> = ({ b }) => {
       {head ? <div style={{ fontSize: 64, fontWeight: 800, color: "#FFF8EE", lineHeight: 1.12, textShadow: "0 2px 18px rgba(0,0,0,0.55)" }}>{head}</div> : null}
       {note ? <div style={{ fontSize: 42, fontWeight: 600, color: "#F4EFE6", marginTop: 16, lineHeight: 1.25, textShadow: "0 2px 14px rgba(0,0,0,0.6)" }}>
         {b.kind === "myth_fact" ? <span style={{ color: "#F2B38B" }}>What sources say: </span> : null}{note}</div> : null}
-      {b.source ? <div style={{ fontSize: 28, color: "#E8DFD2", marginTop: 14, textShadow: "0 2px 10px rgba(0,0,0,0.6)" }}>{b.source}</div> : null}
     </div>
   );
 };
+
+const DRAWN = new Set(["timeline", "big_number", "checklist", "myth_fact"]);  // pipeline/explainer.py DRAWN_KINDS 와 같게
 
 const BeatView: React.FC<{ b: Beat; card: boolean }> = ({ b, card }) => {
   const View = KINDS[b.kind] || IconScene;
@@ -333,23 +334,34 @@ const BeatView: React.FC<{ b: Beat; card: boolean }> = ({ b, card }) => {
     <div style={{ position: "absolute", top: PANEL.top, left: PANEL.left, width: PANEL.width, height: PANEL.height, opacity: out,
       background: card ? "rgba(244,239,230,0.93)" : "transparent", borderRadius: 44, overflow: "hidden" }}>
       <View b={b} />
-      {b.source ? (
-        <div style={{ position: "absolute", bottom: 6, width: PANEL.width, textAlign: "center", fontFamily: FONT, fontSize: 28, color: C.inkSoft }}>
-          {b.source}
-        </div>
-      ) : null}
     </div>
   );
 };
 
 // ---- 브랜드 머리줄: 로고 + 주소 (항상 같은 자리) ----
-const Header: React.FC<{ handle: string; dark: boolean }> = ({ handle, dark }) => (
-  <div style={{ position: "absolute", top: 150, left: 0, width: 1080, display: "flex", justifyContent: "center", alignItems: "center", gap: 18 }}>
-    <div style={{ width: 64, height: 64, borderRadius: 16, background: C.ink, color: C.cream, fontFamily: FONT, fontWeight: 800, fontSize: 46,
-      display: "flex", alignItems: "center", justifyContent: "center" }}>S</div>
-    <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 38, color: dark ? C.cream : C.ink, letterSpacing: 0.5 }}>{handle}</div>
+const Header: React.FC<{ handle: string; dark: boolean }> = ({ handle }) => (
+  <div style={{ position: "absolute", top: 150, left: 0, width: 1080, display: "flex", justifyContent: "center" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 16, background: "rgba(244,239,230,0.92)", borderRadius: 40, padding: "10px 26px 10px 12px" }}>
+      <div style={{ width: 60, height: 60, borderRadius: 16, background: C.ink, color: C.cream, fontFamily: FONT, fontWeight: 800, fontSize: 44,
+        display: "flex", alignItems: "center", justifyContent: "center" }}>S</div>
+      <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 36, color: C.ink, letterSpacing: 0.5 }}>{handle}</div>
+    </div>
   </div>
 );
+
+// ---- 아래 한 줄: 왼쪽 AI 표시, 오른쪽 지금 줄의 출처 (2026-10-22 — 출처는 구석 아래 줄로) ----
+const BottomLine: React.FC<{ beats: Beat[]; disclosure?: string }> = ({ beats, disclosure }) => {
+  const f = useCurrentFrame();
+  const now = f / 30;
+  const b = beats.find((x) => now >= x.start && now < x.end);
+  const pill = { background: "rgba(31,59,45,0.72)", color: "#F4EFE6", borderRadius: 18, padding: "6px 16px", fontFamily: FONT, fontSize: 24 } as const;
+  return (
+    <div style={{ position: "absolute", top: 1490, left: 60, width: 960, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20 }}>
+      {disclosure ? <div style={pill}>{disclosure}</div> : <div />}
+      {b && b.source ? <div style={{ ...pill, maxWidth: 560, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>{b.source}</div> : null}
+    </div>
+  );
+};
 
 // ---- 말하는 문장 자막: 4단어씩, 지금 읽는 단어만 브랜드 색 (단어 시간 = 글자 수 비율) ----
 const WORDS = 4;
@@ -388,6 +400,7 @@ export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background
       {hasBg && background.map((c, i) => {
         const from = Math.round(at * fps);
         at += c.seconds;
+        if (!c.file) return null;  // 섞기: 이 구간은 우리 도식 (크림 배경)
         return (
           <Sequence key={`bg${i}`} from={from} durationInFrames={Math.max(1, Math.round(c.seconds * fps))}>
             <AbsoluteFill style={{ transform: `scale(${c.zoom})` }}>
@@ -404,23 +417,26 @@ export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background
           </svg>
         </AbsoluteFill>
       )}
-      {hasBg && overlay === "caption" ? (
-        <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.55) 62%, rgba(0,0,0,0.65) 100%)" }} />
-      ) : null}
-      {beats.map((b, i) => (
-        <Sequence key={i} from={Math.round(b.start * fps)} durationInFrames={Math.max(1, Math.round((b.end - b.start) * fps))}>
-          {hasBg && overlay === "caption" ? <CaptionOverlay b={b} /> : <BeatView b={b} card={!!hasBg} />}
-        </Sequence>
-      ))}
+      {beats.map((b, i) => {
+        const onVideo = hasBg && (overlay === "caption" || (overlay === "mix" && !DRAWN.has(b.kind)));
+        return (
+          <Sequence key={i} from={Math.round(b.start * fps)} durationInFrames={Math.max(1, Math.round((b.end - b.start) * fps))}>
+            {onVideo ? (
+              <>
+                <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0) 20%, rgba(0,0,0,0) 44%, rgba(0,0,0,0.5) 62%, rgba(0,0,0,0.6) 100%)" }} />
+                <CaptionOverlay b={b} />
+              </>
+            ) : (
+              <BeatView b={b} card={!!hasBg && overlay !== "mix"} />
+            )}
+          </Sequence>
+        );
+      })}
       {lines && lines.length > 0 ? (
         <>
           {handle ? <Header handle={handle} dark={!!hasBg} /> : null}
           <Subtitle lines={lines} />
-          {disclosure ? (
-            <div style={{ position: "absolute", top: 1500, width: 1080, textAlign: "center", fontFamily: FONT, fontSize: 28, color: hasBg ? C.cream : C.inkSoft }}>
-              {disclosure}
-            </div>
-          ) : null}
+          <BottomLine beats={beats} disclosure={disclosure} />
         </>
       ) : null}
       <div style={{ display: "none" }}>{seconds}</div>

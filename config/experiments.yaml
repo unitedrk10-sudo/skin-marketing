@@ -9,6 +9,17 @@ style: >-
   Cinematic vertical 9:16 video, soft natural daylight, calm muted ivory and warm taupe palette, gentle film grain,
   shallow depth of field, slow steady camera, no people's faces, no text, no logos
 looks:   # 2026-10-22 — 장면 프롬프트 화풍. 실험 항목에 look: <이름> (없으면 위 style)
+  flatmotion:   # 섞기(M) 기본 — 우리 도식(E)과 같은 느낌의 2D 모션그래픽
+    style: >-
+      Flat 2D motion graphics animation, vertical 9:16, warm cream background (#F4EFE6), deep green (#1F3B2D), warm terracotta
+      (#C8875E) and soft skin-tone shapes, clean vector look with smooth eased motion, subtle soft shadows, no gradients overload,
+      no people, no faces, no text, no letters, no numbers, no logos
+    guide: >-
+      Every scene is a simple flat vector animation in the same palette, like an animated infographic without words: a side
+      cross-section of skin as flat horizontal bands (light top layer, deeper middle layer, pale bottom layer), small round
+      particles drifting into a band, wavy fibres drawing themselves, a soft pink blob shrinking and fading, simple flat icons for
+      travel (suitcase, bed, plane, palace roof). Shapes move continuously for the whole clip (draw-on, drift, pulse, morph), with
+      the camera still. Never write any words or numbers; never draw faces, needles or a before/after.
   explainer3d:
     style: >-
       Clean 3D medical explainer animation, vertical 9:16, soft studio lighting, calm ivory background with deep green and warm

@@ -24,6 +24,7 @@ log = get_logger("explainer")
 VIDEO_DIR = ROOT / "video"
 KINDS = {"skin_layers", "molecule", "timeline", "big_number", "fade_patch", "myth_fact", "checklist", "icon_scene"}
 ICONS = {"suitcase", "calendar", "sun", "bed", "doctor_note", "drop", "logo"}
+DRAWN_KINDS = {"timeline", "big_number", "checklist", "myth_fact"}  # 섞기(M): 숫자·목록은 정확히 — 우리 도식이 그린다
 TEXT_FIELDS = ("label", "note", "interval", "value", "unit", "belief", "fact", "from_label", "to_label")
 LIMITS = {"label": 32, "note": 48}
 MAX_TEXT = 60
@@ -156,6 +157,9 @@ def public_clips(eid: str, segments: list[tuple]) -> list[dict]:
     out = []
     for seg in segments:
         clip, dur = seg[0], seg[1]
+        if clip is None:  # 화면 없는 구간 (섞기: 우리 도식이 그림)
+            out.append({"file": "", "seconds": dur, "from": 0, "zoom": 1.0, "rate": 1.0})
+            continue
         speed = seg[2] if len(seg) > 2 else 1.0
         start = seg[3] if len(seg) > 3 else 0.3
         zoom = seg[4] if len(seg) > 4 else 1.0

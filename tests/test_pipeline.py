@@ -2782,7 +2782,7 @@ def test_experiment_sends_scene_prompts_one_by_one(env, monkeypatch):
     exp = importlib.import_module("pipeline.experiment")
     sent = []
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: sent.append(text) or True)
-    assert exp.send_prompts([{"n": 1, "prompt": "A."}, {"n": 2, "prompt": "B."}]) and sent == ["A.", "B."]
+    assert exp.send_prompts([{"n": 1, "prompt": "A."}, {"n": 2, "prompt": "B."}]) and sent == ["#1 / 2\nA.", "#2 / 2\nB."]
 
 
 def test_social_openers_filtered_by_rules_then_picked_by_other_vendor(env):
@@ -2832,3 +2832,19 @@ def test_experiment_fit_clips_fills_missing_scenes_from_previous(monkeypatch, tm
     assert [c.name for c in spare] == ["Suitcase_and_passport_on_bed_3.mp4"]   # 같은 장면 여러 버전은 하나만, 나머지는 예비
     assert [c and c.name for c in clips] == ["Skin_texture_smoothing_1.mp4", None, "Suitcase_and_passport_on_bed_2.mp4"]
     assert fitted == scenes                                                   # 빠진 장면은 None — 화면은 clip_segments 가 채움
+
+
+def test_mix_leaves_gaps_for_drawn_lines(monkeypatch, tmp_path):
+    exp = importlib.import_module("pipeline.experiment")
+    render = importlib.import_module("pipeline.04_render_video")
+    monkeypatch.setattr(render, "duration", lambda p: 8.0)
+    plan = [p for p in exp.plan_scenes([3.0, 4.0, 2.0]) if p["lines"][0] != 2]   # 2번 줄은 우리 도식(타임라인)
+    timeline = [{"start": 0.0}, {"start": 3.0}, {"start": 7.0}]
+    segs, _ = exp.clip_segments([tmp_path / "a.mp4", tmp_path / "c.mp4"], plan, fill_gaps=True)(None, timeline, 9.0, tmp_path)
+    assert [(s[0] and s[0].name, s[1]) for s in segs] == [("a.mp4", 3.0), (None, 4.0), ("c.mp4", 2.0)]
+    ex = importlib.import_module("pipeline.explainer")
+    monkeypatch.setattr(ex, "VIDEO_DIR", tmp_path)
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    (tmp_path / "c.mp4").write_bytes(b"x")
+    bg = ex.public_clips("e1", segs)
+    assert [b["file"] for b in bg] == ["exp/e1/a.mp4", "", "exp/e1/c.mp4"]

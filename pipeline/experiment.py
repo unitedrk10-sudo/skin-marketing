@@ -43,7 +43,8 @@ KST = timezone(timedelta(hours=9))
 PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".m4v"}
 METHOD_LABEL = {"A": "무료 영상 자동", "B": "Flow 직접 생성", "C": "Flow + Aside",
-                "E": "코드로 그리는 설명 애니메이션", "BE": "Flow 배경 + 설명 애니메이션"}  # E·BE 2026-10-21 (pipeline/explainer.py)
+                "E": "코드로 그리는 설명 애니메이션", "BE": "Flow 배경 + 설명 애니메이션",
+                "M": "섞기 — 원리·분위기는 Flow, 숫자·목록은 우리 도식"}  # E·BE 2026-10-21 (pipeline/explainer.py)
 MIN_SPEED = 0.6  # 생성 영상(8초)을 장면 길이에 맞춰 이 배속까지만 느리게, 더 길면 반복
 CLIP_SEC = 8.0     # Flow(Veo) 한 클립 길이
 HEAD_SEC = 0.3     # 클립 첫 부분은 건너뛴다 (생성 영상 시작 프레임이 어색할 때가 많다)
@@ -172,7 +173,8 @@ def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path | None],
     return [picked.get(i) for i in range(len(scenes))], scenes, [c for c in clips if c not in used]  # 남는 클립(같은 장면 다른 버전) = 긴 장면에 빌려 줄 화면
 
 
-def clip_segments(clips: list[Path], scenes: list[dict] | None = None, spare: list[Path] | tuple = ()):
+def clip_segments(clips: list[Path], scenes: list[dict] | None = None, spare: list[Path] | tuple = (),
+                  fill_gaps: bool = False):
     """B·C: 장면 영상을 그 장면이 맡은 대본 줄에 이어서 쓴다 (2026-10-22 — 같은 화면 반복 제거).
     - 한 장면 = 한 줄이면 자르지 않고 한 컷으로 (8초 클립에서 줄 길이만큼).
     - 한 장면이 여러 줄이면 줄마다 컷을 나누되(확대 번갈아) 클립을 앞에서부터 이어서 쓴다 — 같은 구간을 두 번 쓰지 않는다.
@@ -202,6 +204,12 @@ def clip_segments(clips: list[Path], scenes: list[dict] | None = None, spare: li
             span = starts[max(nums)] - starts[min(nums) - 1]
             if scene.get("parts", 1) > 1:
                 span /= scene["parts"]
+            if fill_gaps:  # 장면이 맡지 않은 줄(우리 도식이 그리는 줄)은 화면 없이(None) 시간만 채운다
+                begin = starts[min(nums) - 1] + (scene.get("part", 1) - 1) * span
+                here = sum(s[1] for s in segments)
+                if begin - here > 0.05:
+                    segments.append((None, begin - here))
+                    meta.append({"scene": None, "file": "", "seconds": round(begin - here, 2)})
             need = span + TRANSITION
             if c is None:  # 클립이 없는 장면 → 남는 클립 → 앞 장면 클립의 남은 부분 → (최후) 앞 장면 처음부터
                 c, offset = (pool.pop(0), HEAD_SEC) if pool else (prev, prev_used)
@@ -236,6 +244,13 @@ def build(eid: str) -> str:
     out = root() / eid
     if data["method"] == "A":
         fn = stock_segments
+    elif data["method"] == "M":
+        explainer = importlib.import_module("pipeline.explainer")
+        clips = clip_files(eid)
+        if not clips:
+            raise ExperimentError(f"{out / 'clips'} 에 영상이 없습니다")
+        fn = explainer.segments_fn(draft, eid, clip_segments(*fit_clips(clips, data.get("scenes") or []), fill_gaps=True),
+                                   overlay="mix")
     elif data["method"] in ("E", "BE"):
         explainer = importlib.import_module("pipeline.explainer")
         background = None
@@ -256,7 +271,7 @@ def build(eid: str) -> str:
         fn = clip_segments(clips, scenes, spare)
     render = importlib.import_module("pipeline.04_render_video")
     meta = render.make_video(draft, out, fn, TRANSITION if data["method"] in ("B", "C") else 0.0,
-                             captions=data["method"] not in ("E", "BE"))  # E·BE 는 자막·브랜드를 도식과 같은 디자인으로 Remotion 이 그린다
+                             captions=data["method"] not in ("E", "BE", "M"))  # E·BE 는 자막·브랜드를 도식과 같은 디자인으로 Remotion 이 그린다
     data.update(status="done", built_at=now_iso(), render=meta)
     _save(eid, data)
     return (f"[실험 완성 {eid}] {METHOD_LABEL[data['method']]} — {draft['blog'].get('title', '')} ({meta['seconds']:.0f}초)\n"
@@ -281,7 +296,13 @@ def start(entry: dict) -> str:
     else:  # 2026-10-22 기본 — 음성 길이를 먼저 재서 장면을 나눈다 (8초 클립을 느리게·반복하지 않게)
         render = importlib.import_module("pipeline.04_render_video")
         plan = plan_scenes(render.line_spans([s for _, s in render.voice_lines(draft, root() / eid / "voice_lines")]))
-    look = (cfg.get("looks") or {}).get(entry.get("look") or "", {})
+        if entry["method"] == "M":  # 도식 계획 먼저 → 숫자·목록 줄은 우리 도식이 맡고 Flow 장면은 나머지 줄만
+            explainer = importlib.import_module("pipeline.explainer")
+            beats, problems = explainer.check(draft, explainer.plan(draft))
+            save_json(root() / eid / "explainer.json", {"beats": beats, "problems": problems})
+            drawn = {b["line"] for b in beats if b.get("kind") in explainer.DRAWN_KINDS}
+            plan = [p for p in plan if p["lines"][0] not in drawn]
+    look = (cfg.get("looks") or {}).get(entry.get("look") or ("flatmotion" if entry["method"] == "M" else ""), {})
     scenes = scene_prompts(draft, plan, look.get("style") or cfg.get("style", ""), look.get("guide", ""))
     (root() / eid / "clips").mkdir(exist_ok=True)
     (root() / eid / "prompts.txt").write_text("\n\n".join(f"{s['n']}. {s['prompt']}" for s in scenes) + "\n", encoding="utf-8")
@@ -305,7 +326,8 @@ def send_prompts(scenes: list[dict]) -> bool:
     """장면 프롬프트를 텔레그램에 한 개씩 (2026-10-20 — Flow 에 하나씩 복사해 붙여 넣기 쉽게). 실패하면 한 번 더, 그래도 실패면 False."""
     worker = importlib.import_module("pipeline.worker")
     for s in scenes:
-        if not (worker.hermes_send(s["prompt"]) or worker.hermes_send(s["prompt"])):
+        text = f"#{s['n']} / {len(scenes)}\n{s['prompt']}"  # 번호는 첫 줄에만 — 둘째 줄부터 복사해 Flow 에 붙여 넣기 (2026-10-22)
+        if not (worker.hermes_send(text) or worker.hermes_send(text)):
             log.warning("장면 %s 프롬프트 개별 전송 실패 — 묶음 메시지에 넣음", s["n"])
             return False
     return True
