@@ -51,9 +51,14 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
   const bundles = Array.from({ length: 11 }, (_, i) => {
     const y = dermTop + 22 + i * ((fatTop - dermTop - 40) / 10);
     const heat = particles === "heat";
-    const amp = heat ? 16 - 13 * stepT(t, 0.3, 0.45) : 6 + rand(i) * 6;  // 열: 느슨한 물결 → 2단계에서 팽팽하게 수축
+    const amp = heat ? 18 - 15 * stepT(t, 0.3, 0.45) : 6 + rand(i) * 6;  // 열: 느슨한 물결 → 2단계에서 팽팽하게 수축
+    const fill = particles === "heat" || particles === "collagen";
+    // 1단계: 가늘고 끊긴 콜라겐(듬성듬성) — 채워지기 전 상태를 분명히
+    const broken = fill && t < 0.66 && !(heat && t > 0.4);
     return <path key={`b${i}`} d={wave(0, W, y, amp, 6, i * 1.7)} stroke={heat && t > 0.4 ? "#F6C9B3" : P.fiber}
-      strokeWidth={heat && t > 0.4 ? 9 : 5 + rand(i + 9) * 6} strokeLinecap="round" fill="none" opacity={0.42 + rand(i + 3) * 0.25} />;
+      strokeWidth={heat && t > 0.4 ? 9 : broken ? 3.5 : 5 + rand(i + 9) * 6} strokeLinecap="round" fill="none"
+      strokeDasharray={broken ? `${34 + rand(i) * 30} ${26 + rand(i + 5) * 26}` : undefined}
+      opacity={broken ? 0.5 : 0.42 + rand(i + 3) * 0.25} />;
   });
   // 섬유아세포
   const fibro = Array.from({ length: 7 }, (_, i) => {
@@ -99,14 +104,14 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
       opacity={particles === "diffuse" || particles === "collagen" ? 0.95 : 0} />;
   });
   // 새 콜라겐 섬유 (입자 주변에서 그려진다)
-  const newFibers = particles === "collagen" || particles === "heat" ? Array.from({ length: 30 }, (_, i) => {
+  const newFibers = particles === "collagen" || particles === "heat" ? Array.from({ length: 46 }, (_, i) => {
     const x = 40 + rand(i + 170) * (W - 80), y = dermTop + 26 + rand(i + 180) * (fatTop - dermTop - 60);
-    const first = particles === "collagen" && i < 12;  // 콜라겐: 2단계에 일부, 3단계에 전부 / 열: 3단계에 전부
+    const first = particles === "collagen" && i < 16;  // 콜라겐: 2단계에 일부, 3단계에 전부 / 열: 3단계에 전부
     const k = particles === "heat" ? stepT(t, 0.66 + (i % 6) * 0.02, 0.8 + (i % 6) * 0.02)
       : first ? stepT(t, 0.36 + (i % 4) * 0.02, 0.5) : stepT(t, 0.68 + (i % 6) * 0.02, 0.82 + (i % 6) * 0.02);
     const len = 150;
     return <path key={`n${i}`} d={`M ${x - 70} ${y + 10} C ${x - 35} ${y - 22}, ${x + 35} ${y + 26}, ${x + 70} ${y - 8}`}
-      stroke={P.fiberNew} strokeWidth={7} fill="none" strokeLinecap="round" strokeDasharray={len} strokeDashoffset={len * (1 - k)}
+      stroke={P.fiberNew} strokeWidth={9} fill="none" strokeLinecap="round" strokeDasharray={len} strokeDashoffset={len * (1 - k)}
       opacity={0.95} filter="url(#fiberGlow)" />;
   }) : null;
   // 표면 돌기 (가라앉는다)
@@ -118,9 +123,11 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
 
   // 잔주름(접힘): 콜라겐이 차면 얕아진다 — 1단계 깊게 → 2단계 조금 → 3단계 거의 평평 (2026-10-22 "피부가 펴지는 게 보여야")
   const filling = particles === "heat" || particles === "collagen";
-  const depth = filling ? interpolate(t, [0, 0.33, 0.45, 0.66, 0.8, 1], [38, 38, 26, 26, 7, 7], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 0;
-  const creaseXs = [W * 0.34, W * 0.7];
-  const crease = (x: number) => creaseXs.reduce((s, cx) => s + depth * Math.exp(-((x - cx) ** 2) / (2 * 22 * 22)), 0);
+  const depth = filling ? interpolate(t, [0, 0.33, 0.45, 0.66, 0.8, 1], [62, 62, 40, 40, 3, 3], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 0;
+  const creaseXs = [W * 0.2, W * 0.5, W * 0.8];
+  // 접힘 + 1단계에서 위층 전체가 내려앉았다가(진피가 얇음) 3단계에서 차올라 평평 (2026-10-22 "더 극적으로")
+  const sag = filling ? interpolate(t, [0, 0.33, 0.45, 0.66, 0.8, 1], [22, 22, 12, 12, -6, -6], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 0;
+  const crease = (x: number) => sag + creaseXs.reduce((s, cx, j) => s + depth * (j === 1 ? 1 : 0.8) * Math.exp(-((x - cx) ** 2) / (2 * 20 * 20)), 0);
   const line = (base: number, k: number, amp: number) => {
     const pts: [number, number][] = [];
     for (let x = 0; x <= W; x += 6) pts.push([x, base + crease(x) * k + Math.sin(x / 38) * amp]);
@@ -163,6 +170,10 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
             })}
           </g>
         ) : null}
+        {filling ? <rect x={0} y={dermTop - 4} width={W} height={fatTop - dermTop + 4} fill="#F3B79C"
+          opacity={interpolate(t, [0, 0.66, 0.85, 1], [0, 0, 0.35, 0.35], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} /> : null}
+        {filling ? <rect x={0} y={dermTop - 4} width={W} height={fatTop - dermTop + 4} fill="#B9A49A"
+          opacity={interpolate(t, [0, 0.33, 0.66, 0.8], [0.28, 0.28, 0.12, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} /> : null}
         {bundles}
         {fibro}
         {newFibers}
@@ -190,9 +201,9 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
           ) : null}
           {depth > 15 ? (
             <g>
-              <line x1={creaseXs[0]} y1={top + depth - 4} x2={creaseXs[0] - 70} y2={top - 34} stroke={P.ink} strokeWidth={2.5} />
-              <rect x={creaseXs[0] - 160} y={top - 72} width={sideLabels ? 160 : 128} height={sideLabels ? 40 : 34} rx={16} fill="#FFFFFF" opacity={0.93} />
-              <text x={creaseXs[0] - 146} y={top - (sideLabels ? 44 : 48)} fontSize={sideLabels ? 24 : 20} fill={P.ink}>Fine line</text>
+              <line x1={creaseXs[0]} y1={top + sag + depth * 0.8 - 4} x2={creaseXs[0] + 60} y2={top - 34} stroke={P.ink} strokeWidth={2.5} />
+              <rect x={creaseXs[0] + 40} y={top - 72} width={sideLabels ? 160 : 128} height={sideLabels ? 40 : 34} rx={16} fill="#FFFFFF" opacity={0.93} />
+              <text x={creaseXs[0] + 54} y={top - (sideLabels ? 44 : 48)} fontSize={sideLabels ? 24 : 20} fill={P.ink}>Fine line</text>
             </g>
           ) : null}
         </g>
