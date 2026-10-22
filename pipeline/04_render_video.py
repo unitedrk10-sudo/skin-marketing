@@ -246,7 +246,32 @@ def render_video(path: Path) -> Path:
     return move_draft(path.name, "approved", "rendered", ALLOWED)
 
 
-def make_video(draft: dict, out: Path, segments_fn) -> dict:
+def voice_lines(draft: dict, cache: Path) -> list[tuple[Path, float]]:
+    """줄마다 TTS mp3 + 길이. cache 폴더에 문장과 함께 저장해 두고 같은 문장이면 다시 쓴다 (2026-10-22 — 실험 B·C 는
+    장면을 기획할 때 음성 길이를 먼저 재고, 편집할 때 같은 음성을 써야 화면 길이가 맞는다)."""
+    sf = draft.get("shortform") or {}
+    lines = [ln for ln in sf.get("lines", []) if (ln.get("voice") or "").strip()]
+    if not lines:
+        raise RenderError(f"{draft.get('id', cache.parent.name)}: 대본 줄이 없습니다")
+    voice = load_yaml("voice.yaml")
+    cache.mkdir(parents=True, exist_ok=True)
+    out = []
+    for i, ln in enumerate(lines, 1):
+        mp3, txt = cache / f"line{i:02d}.mp3", cache / f"line{i:02d}.txt"
+        key = f"{voice.get('voice')}|{voice.get('speaking_rate', 1.0)}|{ln['voice']}"
+        if not (mp3.exists() and txt.exists() and txt.read_text(encoding="utf-8") == key):
+            mp3.write_bytes(_tts(ln["voice"], voice))
+            txt.write_text(key, encoding="utf-8")
+        out.append((mp3, duration(mp3)))
+    return out
+
+
+def line_spans(durations: list[float]) -> list[float]:
+    """줄마다 화면이 필요한 길이 (음성 + 줄 사이 쉼) — make_video 의 타임라인과 같은 계산."""
+    return [d + GAP_SEC for d in durations]
+
+
+def make_video(draft: dict, out: Path, segments_fn, transition: float = 0.0) -> dict:
     """대본 → 음성(voice.mp3)·자막(captions.ass/srt) → segments_fn 이 고른 화면과 합쳐 out/video.mp4.
     segments_fn(lines, timeline, total, work) -> (segments, clips_meta). 숏폼 렌더링과 화면 소스 실험(pipeline.experiment)이 같이 쓴다."""
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
@@ -260,10 +285,7 @@ def make_video(draft: dict, out: Path, segments_fn) -> dict:
     work.mkdir(parents=True, exist_ok=True)
 
     timeline, clock, parts = [], 0.0, []
-    for i, ln in enumerate(lines, 1):
-        clip = work / f"line{i:02d}.mp3"
-        clip.write_bytes(_tts(ln["voice"], voice))
-        length = duration(clip)
+    for i, (ln, (clip, length)) in enumerate(zip(lines, voice_lines(draft, out / "voice_lines")), 1):
         timeline.append({"n": i, "start": round(clock, 2), "end": round(clock + length, 2), "voice": ln["voice"],
                          "caption": ln.get("caption") or ln["voice"], "visual": ln.get("visual", "")})
         parts.append(clip)
@@ -271,7 +293,7 @@ def make_video(draft: dict, out: Path, segments_fn) -> dict:
     total = round(clock, 2)
 
     listing = work / "concat.txt"
-    listing.write_text("".join(f"file '{p.name}'\nduration {timeline[i]['end'] - timeline[i]['start'] + GAP_SEC:.2f}\n"
+    listing.write_text("".join(f"file '{p.as_posix()}'\nduration {timeline[i]['end'] - timeline[i]['start'] + GAP_SEC:.2f}\n"
                                for i, p in enumerate(parts)), encoding="utf-8")
     voice_mp3 = out / "voice.mp3"
     _run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-af", "aresample=async=1:first_pts=0,apad",
@@ -286,7 +308,7 @@ def make_video(draft: dict, out: Path, segments_fn) -> dict:
 
     segments, clips_meta = segments_fn(lines, timeline, total, work)
     music = pick_music(draft.get("id", out.name))
-    _run_in(out, compose_cmd(segments, music, total))
+    _run_in(out, compose_cmd(segments, music, total, transition))
     shutil.rmtree(work, ignore_errors=True)
     return {"voice": voice.get("voice"), "seconds": total, "size": f"{WIDTH}x{HEIGHT}", "timeline": timeline,
             "clips": clips_meta, "music": music.name if music else None}
@@ -329,11 +351,13 @@ def pick_music(draft_id: str) -> Path | None:
     return tracks[sum(draft_id.encode()) % len(tracks)] if tracks else None
 
 
-def compose_cmd(segments: list[tuple], music: Path | None, total: float) -> list[str]:
-    """클립은 확대 효과 없이 9:16 으로 채운다 (움직이는 영상에 확대를 더하면 프레임마다 크기가 정수로 바뀌며 떨린다)."""
+def compose_cmd(segments: list[tuple], music: Path | None, total: float, transition: float = 0.0) -> list[str]:
+    """클립은 확대 효과 없이 9:16 으로 채운다 (움직이는 영상에 확대를 더하면 프레임마다 크기가 정수로 바뀌며 떨린다).
+    transition > 0 이면 컷 사이를 그만큼 겹쳐 부드럽게 넘긴다(xfade) — 마지막 컷 말고는 그 길이만큼 화면을 더 쓴다."""
     inputs, chains = [], []
+    fade = transition if transition > 0 and len(segments) > 1 else 0.0
     for i, seg in enumerate(segments):
-        clip, dur = seg[0], seg[1]
+        clip, dur = seg[0], seg[1] + (fade if i < len(segments) - 1 else 0.0)
         speed = seg[2] if len(seg) > 2 else 1.0  # 1 보다 작으면 느리게 (생성 영상 8초를 장면 길이에 맞출 때)
         start = seg[3] if len(seg) > 3 else 0.3  # 같은 영상을 여러 컷으로 쪼갤 때 시작 위치
         zoom = seg[4] if len(seg) > 4 else 1.0   # 고정 확대 (움직이는 확대가 아니라 떨림 없음)
@@ -346,7 +370,16 @@ def compose_cmd(segments: list[tuple], music: Path | None, total: float) -> list
         chains.append(f"[{i}:v]{slow}fps=30,scale={w}:{h}:force_original_aspect_ratio=increase,crop={WIDTH}:{HEIGHT},"
                       f"setsar=1,eq=brightness=-0.05,trim=duration={dur:.3f},setpts=PTS-STARTPTS[v{i}]")
     n = len(segments)
-    graph = chains + ["".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[bg]", "[bg]ass=captions.ass[v]"]
+    if fade:
+        joins, prev, at = [], "v0", 0.0
+        for i in range(1, n):
+            at += segments[i - 1][1]
+            name = "bg" if i == n - 1 else f"x{i}"
+            joins.append(f"[{prev}][v{i}]xfade=transition=fade:duration={fade:.3f}:offset={at:.3f}[{name}]")
+            prev = name
+        graph = chains + joins + ["[bg]ass=captions.ass[v]"]
+    else:
+        graph = chains + ["".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[bg]", "[bg]ass=captions.ass[v]"]
     inputs += ["-i", "voice.mp3"]
     audio = f"{n}:a"
     if music:

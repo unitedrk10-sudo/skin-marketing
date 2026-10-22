@@ -2727,6 +2727,7 @@ def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_pat
                                                 "schedule": [{"date": "2026-10-23", "method": "B", "post": "W41-10"}]})
     env.responses["scene_prompts"] = {"scenes": [{"lines": [1], "prompt": "Sunlight on a towel."},
                                                  {"lines": [2], "prompt": "A calendar on a desk."}]}
+    monkeypatch.setattr(render, "voice_lines", lambda d, cache: [(cache / "1.mp3", 2.0), (cache / "2.mp3", 3.0)])  # 음성 길이로 장면 2개
     day = datetime(2026, 10, 23, 10, 5, tzinfo=exp.KST)
     assert exp.daily_message(day.replace(hour=9)) == ""                               # 10시 전
     msg = exp.daily_message(day)
@@ -2734,7 +2735,7 @@ def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_pat
     assert exp.daily_message(day.replace(hour=15)) == ""                              # 하루 한 번
     assert exp.poll_message() == ""                                                   # 영상이 아직 없음
     built = []
-    monkeypatch.setattr(render, "make_video", lambda d, out, fn: built.append(out) or {"seconds": 40.0})
+    monkeypatch.setattr(render, "make_video", lambda d, out, fn, fade=0.0: built.append((out, fade)) or {"seconds": 40.0})
     clips = exp.root() / "2026-10-23-B-W41-10" / "clips"
     for n in (1, 2):
         (clips / f"{n}.mp4").write_bytes(b"x")
@@ -2753,19 +2754,28 @@ def test_experiment_orders_flow_files_and_cuts_shots_per_line(monkeypatch, tmp_p
     assert exp.order_clips(files, scenes) == files[::-1]                       # Flow 이름 ↔ 프롬프트 단어로 짝
     numbered = [tmp_path / "2_b.mp4", tmp_path / "10_c.mp4", tmp_path / "1_a.mp4"]
     assert [c.name for c in exp.order_clips(numbered, [])] == ["1_a.mp4", "2_b.mp4", "10_c.mp4"]
-    monkeypatch.setattr(render, "duration", lambda p: 8.3)
-    timeline = [{"start": 0.0}, {"start": 2.0}, {"start": 9.0}]
-    segs, _ = exp.clip_segments(files[::-1], scenes)(None, timeline, 12.0, tmp_path)
-    assert [round(s[1], 2) for s in segs] == [2.0, 7.0, 3.0]                  # 줄마다 한 컷 (2026-10-22: 짧게 쪼개지 않음)
-    assert abs(sum(s[1] for s in segs) - 12.0) < 1e-6
-    a, b = segs[0], segs[1]                                                    # 같은 장면 두 줄: 이어서, 겹치지 않게
-    assert abs(b[3] - (a[3] + a[1] * a[2])) < 1e-6 and b[3] + b[1] * b[2] <= 8.3 + 1e-6
-    assert (a[4], b[4], segs[2][4]) == (1.0, exp.ZOOMS[1], 1.0)                # 여러 줄 장면만 확대 번갈아
-    # 모자라면 남는 클립을 빌린다 (같은 구간 반복 대신)
-    spare = tmp_path / "Spare.mp4"
-    long_line = [{"start": 0.0}, {"start": 20.0}]
-    segs, _ = exp.clip_segments([files[1]], [{"lines": [1]}], [spare])(None, long_line, 20.0, tmp_path)
-    assert [s[0].name for s in segs] == [files[1].name, "Spare.mp4"]   # 0.6배속 8초 = 13.3초 + 빌린 클립으로 나머지
+    monkeypatch.setattr(render, "duration", lambda p: 8.0)
+    # 음성 길이로 장면 계획: 7초 넘는 줄은 두 장면으로 (느리게 늘리지 않음)
+    plan = exp.plan_scenes([3.0, 10.0])
+    assert [(p["lines"], p["part"], p["parts"], p["seconds"]) for p in plan] == [([1], 1, 1, 3.0), ([2], 1, 2, 5.0), ([2], 2, 2, 5.0)]
+    timeline = [{"start": 0.0}, {"start": 3.0}]
+    clips = [tmp_path / "a.mp4", tmp_path / "b.mp4", tmp_path / "c.mp4"]
+    segs, _ = exp.clip_segments(clips, plan)(None, timeline, 13.0, tmp_path)
+    assert [(s[0].name, s[1], s[2], s[3]) for s in segs] == [("a.mp4", 3.0, 1.0, exp.HEAD_SEC), ("b.mp4", 5.0, 1.0, exp.HEAD_SEC),
+                                                          ("c.mp4", 5.0, 1.0, exp.HEAD_SEC)]   # 1배속, 각 클립 앞부분부터
+    assert all(s[3] + s[1] + exp.TRANSITION <= 8.0 for s in segs)              # 겹쳐 넘기기까지 8초 안에
+    # 빠진 장면 → 남는 클립 → (없으면) 앞 장면 클립의 남은 부분
+    segs, _ = exp.clip_segments([clips[0], None, None], plan, [tmp_path / "spare.mp4"])(None, timeline, 13.0, tmp_path)
+    assert [(s[0].name, s[3]) for s in segs] == [("a.mp4", exp.HEAD_SEC), ("spare.mp4", exp.HEAD_SEC),
+                                               ("spare.mp4", exp.HEAD_SEC)]   # 예비도 없고 앞 클립 남은 부분(2.7초)도 모자라면 최후로 처음부터 (경고 로그)
+
+
+def test_compose_crossfades_between_cuts(tmp_path):
+    render = importlib.import_module("pipeline.04_render_video")
+    cmd = " ".join(render.compose_cmd([(tmp_path / "a.mp4", 3.0, 1.0, 0.3, 1.0), (tmp_path / "b.mp4", 5.0, 1.0, 0.3, 1.0),
+                                       (tmp_path / "c.mp4", 5.0, 1.0, 0.3, 1.0)], None, 13.0, 0.4))
+    assert "xfade=transition=fade:duration=0.400:offset=3.000" in cmd and "offset=8.000[bg]" in cmd
+    assert "-t 3.400" in cmd and "-t 5.400" in cmd and "-t 5.000" in cmd       # 마지막 컷 말고는 겹칠 만큼 더
 
 
 def test_experiment_sends_scene_prompts_one_by_one(env, monkeypatch):
@@ -2817,6 +2827,6 @@ def test_experiment_fit_clips_fills_missing_scenes_from_previous(monkeypatch, tm
     files = [tmp_path / "Skin_texture_smoothing_1.mp4", tmp_path / "Suitcase_and_passport_on_bed_2.mp4",
              tmp_path / "Suitcase_and_passport_on_bed_3.mp4"]
     clips, fitted, spare = exp.fit_clips(files, scenes)
-    assert [c.name for c in spare] == ["Suitcase_and_passport_on_bed_3.mp4"]
-    assert [c.name for c in clips] == ["Skin_texture_smoothing_1.mp4", "Suitcase_and_passport_on_bed_2.mp4"]
-    assert [s["lines"] for s in fitted] == [[1, 2], [3]]   # 빠진 2번 장면은 앞 장면이 이어 맡음, 같은 장면 여러 버전은 하나만
+    assert [c.name for c in spare] == ["Suitcase_and_passport_on_bed_3.mp4"]   # 같은 장면 여러 버전은 하나만, 나머지는 예비
+    assert [c and c.name for c in clips] == ["Skin_texture_smoothing_1.mp4", None, "Suitcase_and_passport_on_bed_2.mp4"]
+    assert fitted == scenes                                                   # 빠진 장면은 None — 화면은 clip_segments 가 채움

@@ -45,6 +45,10 @@ VIDEO_EXT = {".mp4", ".mov", ".webm", ".m4v"}
 METHOD_LABEL = {"A": "무료 영상 자동", "B": "Flow 직접 생성", "C": "Flow + Aside",
                 "E": "코드로 그리는 설명 애니메이션", "BE": "Flow 배경 + 설명 애니메이션"}  # E·BE 2026-10-21 (pipeline/explainer.py)
 MIN_SPEED = 0.6  # 생성 영상(8초)을 장면 길이에 맞춰 이 배속까지만 느리게, 더 길면 반복
+CLIP_SEC = 8.0     # Flow(Veo) 한 클립 길이
+HEAD_SEC = 0.3     # 클립 첫 부분은 건너뛴다 (생성 영상 시작 프레임이 어색할 때가 많다)
+TRANSITION = 0.4   # 컷 사이 겹쳐 넘기기(초) — 2026-10-22 "연결이 자연스럽지 않다"
+MAX_SHOT = CLIP_SEC - HEAD_SEC - TRANSITION - 0.2  # 한 장면이 맡을 수 있는 최대 길이 — 넘으면 장면을 나눈다 (느리게 틀지 않음)
 SHOT_MAX = 3.2   # 한 컷 최대 길이(초) — 넘으면 같은 영상의 다른 구간으로 나눈다
 ZOOMS = (1.0, 1.18)  # 같은 영상에서 이어지는 컷은 확대 비율을 번갈아 (점프컷 완화, 고정 확대라 떨림 없음)
 
@@ -81,16 +85,37 @@ def _save(eid: str, data: dict) -> None:
 
 # ---------------- 장면 프롬프트 (B·C) ----------------
 
-def scene_prompts(draft: dict, n: int, style: str) -> list[dict]:
+def plan_scenes(spans: list[float]) -> list[dict]:
+    """음성 길이로 장면을 미리 나눈다 (2026-10-22). 한 줄 = 한 장면, 줄이 MAX_SHOT 보다 길면 같은 줄을 여러 장면으로
+    (part 1/2 …) — 생성 영상 8초를 느리게 늘리거나 반복하지 않게, 필요한 만큼 클립을 만든다."""
+    plan = []
+    for n, span in enumerate(spans, 1):
+        parts = max(1, math.ceil(span / MAX_SHOT))
+        for k in range(1, parts + 1):
+            plan.append({"lines": [n], "part": k, "parts": parts, "seconds": round(span / parts, 2)})
+    return plan
+
+
+def scene_prompts(draft: dict, plan: list[dict] | int, style: str) -> list[dict]:
+    """장면 계획(plan_scenes)대로 Flow 프롬프트를 쓴다. 숫자를 넘기면 예전처럼 Claude 가 n 장면으로 나눈다."""
     lines = [ln for ln in (draft.get("shortform") or {}).get("lines", []) if (ln.get("voice") or "").strip()]
     script = "\n".join(f"{i}. {ln['voice']}" for i, ln in enumerate(lines, 1))
+    fixed = isinstance(plan, list)
+    n = len(plan) if fixed else int(plan)
+    layout = ("\n".join(f"Scene {i}: line {p['lines'][0]}"
+                         + (f" (part {p['part']} of {p['parts']} — continue the same subject: next moment or a new angle)"
+                            if p["parts"] > 1 else "") + f", {p['seconds']:.1f} s on screen"
+                         for i, p in enumerate(plan, 1)) if fixed else "")
     data, _ = llm.generate_json("scene_prompts", prompt("scene_prompts", title=draft["blog"].get("title", ""),
-                                                        script=script, n=str(n)))
+                                                        script=script, n=str(n), plan=layout or "(none — group lines yourself)"))
     scenes = (data or {}).get("scenes") or []
     if len(scenes) != n:
         raise ExperimentError(f"장면 {n}개가 아니라 {len(scenes)}개")
-    return [{"n": i, "lines": s.get("lines", []), "prompt": f"{s['prompt'].strip()} {style.strip()}"}
-            for i, s in enumerate(scenes, 1)]
+    out = []
+    for i, s in enumerate(scenes, 1):
+        base = plan[i - 1] if fixed else {"lines": s.get("lines", [])}
+        out.append({"n": i, **base, "prompt": f"{s['prompt'].strip()} {style.strip()}"})
+    return out
 
 
 # ---------------- 화면 구성 ----------------
@@ -124,10 +149,10 @@ def order_clips(clips: list[Path], scenes: list[dict]) -> list[Path]:
     return [picked[i] for i in range(len(scenes))]
 
 
-def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path], list[dict], list[Path]]:
+def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path | None], list[dict], list[Path]]:
     """받은 클립을 장면에 맞춘다 (2026-10-22). 이름이 숫자로 시작하면 order_clips 그대로.
     아니면 파일 이름 ↔ 프롬프트(공통 스타일 문구 제외) 단어가 2개 이상 겹치는 클립을 장면마다 하나씩 고르고
-    (같은 장면 여러 버전이면 먼저 만든 것), 클립이 없는 장면의 대본 줄은 앞 장면(첫 장면이면 다음 장면)이 이어 맡는다."""
+    (같은 장면 여러 버전이면 먼저 만든 것). 클립이 없는 장면은 None — 화면은 clip_segments 가 남는 클립·앞 장면으로 채운다."""
     if not scenes or all(re.match(r"\d+", c.stem) for c in clips):
         return order_clips(clips, scenes), scenes, []
     style = _words(config().get("style", ""))
@@ -141,21 +166,9 @@ def fit_clips(clips: list[Path], scenes: list[dict]) -> tuple[list[Path], list[d
             used.add(c)
     if not picked:
         raise ExperimentError("클립 파일 이름으로 장면을 찾지 못했습니다 — 앞에 1_, 2_… 를 붙여 주세요")
-    out_clips, out_scenes = [], []
-    pending: list[int] = []  # 앞에 클립 있는 장면이 아직 없을 때 다음 장면으로 넘길 줄
-    for i, s in enumerate(scenes):
-        lines = list(s.get("lines") or [])
-        if i in picked:
-            out_clips.append(picked[i])
-            out_scenes.append({**s, "lines": pending + lines})
-            pending = []
-        elif out_scenes:
-            out_scenes[-1] = {**out_scenes[-1], "lines": out_scenes[-1]["lines"] + lines}
-        else:
-            pending += lines
     log.info("장면 %d개 중 클립 %d개 — 빠진 장면: %s", len(scenes), len(picked),
-             [s["n"] for i, s in enumerate(scenes) if i not in picked])
-    return out_clips, out_scenes, [c for c in clips if c not in used]  # 남는 클립(같은 장면 다른 버전) = 긴 장면에 빌려 줄 화면
+             [s.get("n") for i, s in enumerate(scenes) if i not in picked])
+    return [picked.get(i) for i in range(len(scenes))], scenes, [c for c in clips if c not in used]  # 남는 클립(같은 장면 다른 버전) = 긴 장면에 빌려 줄 화면
 
 
 def clip_segments(clips: list[Path], scenes: list[dict] | None = None, spare: list[Path] | tuple = ()):
@@ -180,35 +193,36 @@ def clip_segments(clips: list[Path], scenes: list[dict] | None = None, spare: li
         starts = [t["start"] for t in timeline] + [total]
         pool = list(spare)
         segments, meta = [], []
+        prev, prev_used = None, 0.0
         for c, scene in zip(clips, scenes):
             nums = [n for n in scene.get("lines", []) if 1 <= n <= len(timeline)]
-            spans = [starts[n] - starts[n - 1] for n in nums]
-            if not spans:
+            if not nums:
                 continue
-            length = max(render.duration(c) - 0.3, 0.5)
-            speed = max(MIN_SPEED, min(1.0, length / sum(spans)))
-            cur, used = c, 0.0  # 지금 쓰는 클립과 그 클립에서 쓴 길이(원본 초)
-            for j, span in enumerate(spans):
-                left = span
-                while left > 1e-6:
-                    room = max(render.duration(cur) - 0.3, 0.5) - used
-                    if room < 0.5:  # 이 클립을 다 썼다 → 남는 클립을 빌리고, 없으면 처음부터
-                        cur, used = (pool.pop(0), 0.0) if pool else (cur, 0.0)
-                        continue
-                    dur = min(left, room / speed)
-                    zoom = ZOOMS[j % len(ZOOMS)] if len(spans) > 1 else 1.0
-                    segments.append((cur, dur, speed, 0.3 + used, zoom))
-                    meta.append({"file": cur.name, "seconds": round(dur, 2), "from": round(0.3 + used, 2),
-                                 "speed": round(speed, 2), "zoom": zoom})
-                    used += dur * speed
-                    left -= dur
+            span = starts[max(nums)] - starts[min(nums) - 1]
+            if scene.get("parts", 1) > 1:
+                span /= scene["parts"]
+            need = span + TRANSITION
+            if c is None:  # 클립이 없는 장면 → 남는 클립 → 앞 장면 클립의 남은 부분 → (최후) 앞 장면 처음부터
+                c, offset = (pool.pop(0), HEAD_SEC) if pool else (prev, prev_used)
+                if c is None:
+                    continue
+                if offset + need > render.duration(c):
+                    offset = HEAD_SEC
+                    log.warning("장면 %s: 클립이 없어 앞 장면 화면을 다시 씁니다", scene.get("n"))
+            else:
+                offset = HEAD_SEC
+            if offset + need > render.duration(c) + 0.05:
+                log.warning("장면 %s: 클립(%.1f초)이 필요한 길이(%.1f초)보다 짧습니다", scene.get("n"), render.duration(c), need)
+            segments.append((c, span, 1.0, offset, 1.0))
+            meta.append({"scene": scene.get("n"), "file": c.name, "seconds": round(span, 2), "from": round(offset, 2)})
+            prev, prev_used = c, offset + span
         covered = sum(s[1] for s in segments)
-        if segments and covered < total:  # 장면이 모든 줄을 덮지 않으면 마지막 컷을 늘린다
+        if segments and covered < total:
             last = segments[-1]
             segments[-1] = (last[0], last[1] + total - covered, *last[2:])
         return segments, meta
 
-    usable = scenes and len(scenes) == len(clips) and all(s.get("lines") for s in scenes)
+    usable = scenes and len(scenes) == len(clips) and all(s.get("lines") for s in scenes)  # clips 는 장면 순서, 없는 장면은 None
     return per_line if usable else even
 
 
@@ -240,7 +254,7 @@ def build(eid: str) -> str:
         clips, scenes, spare = fit_clips(clips, scenes)
         fn = clip_segments(clips, scenes, spare)
     render = importlib.import_module("pipeline.04_render_video")
-    meta = render.make_video(draft, out, fn)
+    meta = render.make_video(draft, out, fn, TRANSITION if data["method"] in ("B", "C") else 0.0)
     data.update(status="done", built_at=now_iso(), render=meta)
     _save(eid, data)
     return (f"[실험 완성 {eid}] {METHOD_LABEL[data['method']]} — {draft['blog'].get('title', '')} ({meta['seconds']:.0f}초)\n"
@@ -260,17 +274,23 @@ def start(entry: dict) -> str:
     _save(eid, data)
     if entry["method"] in ("A", "E", "BE"):  # 사람 손이 필요 없는 방식은 바로 완성
         return build(eid)
-    scenes = scene_prompts(draft, int(entry.get("scenes") or cfg.get("scenes", 5)), cfg.get("style", ""))
+    if entry.get("scenes"):  # 예전 방식 — 장면 수를 정해 두고 Claude 가 줄을 나눔
+        plan = int(entry["scenes"])
+    else:  # 2026-10-22 기본 — 음성 길이를 먼저 재서 장면을 나눈다 (8초 클립을 느리게·반복하지 않게)
+        render = importlib.import_module("pipeline.04_render_video")
+        plan = plan_scenes(render.line_spans([s for _, s in render.voice_lines(draft, root() / eid / "voice_lines")]))
+    scenes = scene_prompts(draft, plan, cfg.get("style", ""))
     (root() / eid / "clips").mkdir(exist_ok=True)
     (root() / eid / "prompts.txt").write_text("\n\n".join(f"{s['n']}. {s['prompt']}" for s in scenes) + "\n", encoding="utf-8")
     data.update(status="waiting_clips", scenes=scenes)
     _save(eid, data)
     how = ("Google Flow(labs.google/flow) → 모델 **Veo 3.1 Lite**, 세로 9:16 → 아래 프롬프트를 하나씩 붙여 넣어 생성 → 내려받기"
            if entry["method"] == "B" else
-           "Flow 전용 구글 계정·별도 프로필의 Aside 에서 루틴 실행: 아래 프롬프트 5개를 Flow(Veo 3.1 Lite, 9:16)로 생성·내려받기")
+           "Flow 전용 구글 계정·별도 프로필의 Aside 에서 루틴 실행: 아래 프롬프트를 Flow(Veo 3.1 Lite, 9:16)로 생성·내려받기")
     lines = [f"[오늘의 실험 {eid}] {METHOD_LABEL[entry['method']]} — {data['title']}", how,
              f"내려받은 영상을 이름 그대로 이 PC 폴더에 넣어 주세요 (순서는 프롬프트와 파일 이름으로 맞춤, 헷갈리면 앞에 1_, 2_…): {root() / eid / 'clips'}",
-             "다 넣으면 자동으로 편집해 보내 드립니다 (바로 하려면 '실험 영상 넣었어')."]
+             "다 넣으면 자동으로 편집해 보내 드립니다 (바로 하려면 '실험 영상 넣었어').",
+             f"장면 {len(scenes)}개 — 음성 길이 기준 장면마다 " + ", ".join(f"{s['n']}번 {s['seconds']:.1f}초" for s in scenes if s.get("seconds"))]
     if send_prompts(scenes):
         lines.append(f"프롬프트 {len(scenes)}개는 복사하기 쉽게 한 개씩 따로 보냈습니다 (1번부터 순서대로).")
     else:
