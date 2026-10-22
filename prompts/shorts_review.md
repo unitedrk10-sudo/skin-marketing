@@ -1,5 +1,7 @@
 You are an independent medical-content reviewer. Another AI wrote this short-video script for an English-language guide to Korean skin treatments for foreign visitors. Check it ONLY against the facts below (no outside knowledge).
 
+GUIDE TITLE (the treatment name in it may be used even if the facts use the generic name): {{title}}
+
 FACTS:
 {{facts}}
 

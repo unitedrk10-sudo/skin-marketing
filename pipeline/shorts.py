@@ -124,9 +124,9 @@ def check(script: dict, facts: list[dict]) -> list[str]:
     return problems
 
 
-def review(script: dict, facts: list[dict]) -> dict:
+def review(script: dict, facts: list[dict], titles: str = "") -> dict:
     used = [f for f in facts if f["id"] in set(script.get("fact_ids") or [])] or facts
-    text = prompt("shorts_review", facts=facts_text(used), question=script.get("question", ""),
+    text = prompt("shorts_review", facts=facts_text(used), question=script.get("question", ""), title=titles,
                   script="\n".join(f"{n}. voice: {ln.get('voice', '')} | caption: {ln.get('caption', '')}"
                                    for n, ln in enumerate(script["lines"], 1)))
     try:
@@ -138,12 +138,37 @@ def review(script: dict, facts: list[dict]) -> dict:
             "model": getattr(res, "model", "")}
 
 
-def _finish(item: dict, facts: list[dict]) -> dict:
+def _finish(item: dict, facts: list[dict], drafts: list[dict] | None = None, autofix: bool = True) -> dict:
+    """검사 + 검수. 걸리면 사람에게 보내기 전에 지적 내용으로 한 번 고쳐 다시 검사·검수 (2026-10-22, 02b 자동 수정과 같은 방식)."""
     item["problems"] = check(item, facts)
-    item["review"] = review(item, facts)
+    item["review"] = review(item, facts, " / ".join(d["blog"].get("title", "") for d in drafts or []))
     item["status"] = "review" if not item["problems"] and item["review"]["ok"] else "flagged"
     item["checked_at"] = now_iso()
+    if item["status"] == "flagged" and autofix and drafts and not item.get("autofixed"):
+        notes = item["problems"] + [f"line {i.get('line')}: {i.get('problem')} -> {i.get('suggest', '')}"
+                                    for i in item["review"].get("issues") or []]
+        task = (f"Fix this one script (same question: {item.get('question', '')}). Change only what the notes point at; "
+                f"keep everything else. Current script: " + json.dumps(item["lines"], ensure_ascii=False))
+        new = (write(task, drafts, note="; ".join(notes)) or [None])[0]
+        if new:
+            item.setdefault("history", []).append({"lines": item["lines"], "note": "자동 수정: " + "; ".join(notes)[:500],
+                                                   "at": now_iso()})
+            item.update(**{k: new.get(k) for k in ("question", "lines", "fact_ids")}, autofixed=True)
+            return _finish(item, facts, drafts, autofix=False)
     return item
+
+
+def refix() -> list[str]:
+    """이미 만든 대본 중 걸린 것(아직 자동 수정 안 한 것)을 자동 수정·재검수."""
+    plan = load_plan()
+    out = []
+    for s in plan["scripts"]:
+        if s.get("status") == "flagged" and not s.get("autofixed"):
+            drafts = [load_draft(post_path(i)) for i in s["posts"]]
+            _finish(s, all_facts(drafts), drafts)
+            save_plan(plan)
+            out.append(f"{s['id']}: {'✅ 통과' if s['status'] == 'review' else '⚠️ 여전히 확인 필요'}")
+    return out
 
 
 def build_week(w: int, ids: list[str]) -> list[dict]:
@@ -161,7 +186,7 @@ def build_week(w: int, ids: list[str]) -> list[dict]:
                 f"would ask about it (how long / how it works / how often / recovery / what to plan).")
         for s in write(task, [drafts[i]])[:want]:
             out.append(_finish({"id": f"S{w}-{DAYS[day]}", "week": w, "day": DAYS[day], "posts": [i], "type": "question",
-                                **{k: s.get(k) for k in ("question", "lines", "fact_ids")}}, all_facts([drafts[i]])))
+                                **{k: s.get(k) for k in ("question", "lines", "fact_ids")}}, all_facts([drafts[i]]), [drafts[i]]))
             day += 1
     if travel and proc:
         ds = [drafts[i] for i in travel]
@@ -170,7 +195,7 @@ def build_week(w: int, ids: list[str]) -> list[dict]:
         s = (write(task, ds) or [None])[0]
         if s:
             out.append(_finish({"id": f"S{w}-토", "week": w, "day": "토", "posts": travel, "type": "travel",
-                                **{k: s.get(k) for k in ("question", "lines", "fact_ids")}}, all_facts(ds)))
+                                **{k: s.get(k) for k in ("question", "lines", "fact_ids")}}, all_facts(ds), ds))
     return out
 
 
@@ -245,7 +270,7 @@ def apply(text: str) -> str:
                 raise ShortsError(f"{s['id']} 다시 쓰기 실패")
             s.setdefault("history", []).append({"lines": s["lines"], "note": m.group(3).strip(), "at": now_iso()})
             s.update(**{k: new.get(k) for k in ("question", "lines", "fact_ids")})
-            _finish(s, all_facts(drafts))
+            _finish(s, all_facts(drafts), drafts)
             out.append(f"✏️ {s['id']} 다시 씀 → {'검수 통과' if s['status'] == 'review' else '⚠️ 다시 확인 필요'}")
     save_plan(plan)
     return "\n".join(out)
@@ -257,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("plan")
     p.add_argument("--weeks", type=int, default=None, help="이번에 만들 주 수 (기본: 남은 주 전부)")
     sub.add_parser("list")
+    sub.add_parser("refix", help="걸린 대본 자동 수정·재검수")
     a = sub.add_parser("apply")
     a.add_argument("text")
     args = ap.parse_args(argv)
@@ -265,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(make(args.weeks)) or "새로 만들 주 없음")
     elif args.cmd == "list":
         print(list_message())
+    elif args.cmd == "refix":
+        print("\n".join(refix()) or "고칠 대본 없음")
     else:
         print(apply(args.text))
     return 0

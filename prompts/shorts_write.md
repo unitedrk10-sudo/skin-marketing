@@ -15,6 +15,8 @@ Each script:
 - Then 1–3 lines of the most useful detail, then one line with the main risk or limit (side effects, who should not, results vary) — every script must carry a risk or limit line, then a last line that sends the viewer to a licensed doctor or to the full guide ("Full guide with sources: link in bio").
 - Each line has "voice" (what is read aloud, one or two short sentences) and "caption" (2–6 words shown on screen; keep the qualifier: "One trial: 3 sessions", not "3 sessions").
 - "fact_ids": every fact the script relies on.
+- Captions never say "AI-generated content" (that label is added separately); the last caption is like "Full guide: link in bio".
+- Use only words the facts use for the treatment and ingredients (if the facts say "polynucleotide injections", do not swap in a brand name or a related ingredient the facts do not name).
 - No clinic, doctor or brand names other than the treatment name in the guide, no prices of a specific clinic, no before/after, no promises of results, no "best/safe/painless/guaranteed", no calls to book or contact a clinic.
 - Different scripts must not repeat the same question or the same main fact.
 
