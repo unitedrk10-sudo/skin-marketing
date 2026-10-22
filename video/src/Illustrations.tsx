@@ -11,7 +11,7 @@ const P = {
   dermis: ["#E6AC92", "#D48F75"],
   fat: ["#FBEBD2", "#F0D3A6"],
   fiber: "#F8DCCB",
-  fiberNew: "#FFF4EA",
+  fiberNew: "#FFFBF3",
   fibroblast: "#B9644F",
   vessel: "#C4544D",
   ink: "#1F3B2D",
@@ -82,8 +82,8 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
       fat.push(<circle key={`a${row}-${col}`} cx={x} cy={y} r={r} fill="url(#fatCell)" stroke="#E2BE8C" strokeWidth={2} />);
     }
   // 기저세포 줄
-  const basal = Array.from({ length: Math.ceil(W / 30) + 1 }, (_, i) => (
-    <ellipse key={`c${i}`} cx={14 + i * 30} cy={dermTop - 14} rx={13} ry={10} fill="#DFA286" stroke="#CF8E73" strokeWidth={1.5} opacity={0.8} />
+  const basalCells = () => Array.from({ length: Math.ceil(W / 30) + 1 }, (_, i) => (
+    <ellipse key={`c${i}`} cx={14 + i * 30} cy={dermTop - 14 + crease(14 + i * 30) * 0.6} rx={13} ry={10} fill="#DFA286" stroke="#CF8E73" strokeWidth={1.5} opacity={0.8} />
   ));
 
   // 입자 (윤기 있는 구슬)
@@ -116,6 +116,23 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
     return <path key={`u${i}`} d={`M ${x - 34} ${top + 2} Q ${x} ${top - h * 2} ${x + 34} ${top + 2} Z`} fill="url(#epiGrad)" stroke="#E2A98E" strokeWidth={2} />;
   }) : null;
 
+  // 잔주름(접힘): 콜라겐이 차면 얕아진다 — 1단계 깊게 → 2단계 조금 → 3단계 거의 평평 (2026-10-22 "피부가 펴지는 게 보여야")
+  const filling = particles === "heat" || particles === "collagen";
+  const depth = filling ? interpolate(t, [0, 0.33, 0.45, 0.66, 0.8, 1], [38, 38, 26, 26, 7, 7], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 0;
+  const creaseXs = [W * 0.34, W * 0.7];
+  const crease = (x: number) => creaseXs.reduce((s, cx) => s + depth * Math.exp(-((x - cx) ** 2) / (2 * 22 * 22)), 0);
+  const line = (base: number, k: number, amp: number) => {
+    const pts: [number, number][] = [];
+    for (let x = 0; x <= W; x += 6) pts.push([x, base + crease(x) * k + Math.sin(x / 38) * amp]);
+    return pts;
+  };
+  const toPath = (pts: [number, number][]) => pts.map(([x, y], i) => `${i ? "L" : "M"} ${x} ${y}`).join(" ");
+  const back = (pts: [number, number][]) => pts.slice().reverse().map(([x, y]) => `L ${x} ${y}`).join(" ");
+  const surfTop = line(top, 1, 2), surfEpi = line(epiTop, 0.95, 2.5), surfDerm = line(dermTop, 0.6, 6);
+  // 콜라겐 표시 위치 (가장 위 다발 하나 · 새 섬유 하나)
+  const tagY = dermTop + 22 + 3 * ((fatTop - dermTop - 40) / 10);
+  const newShown = particles === "heat" ? t > 0.72 : particles === "collagen" ? t > 0.42 : false;
+
   const [hy0, hy1] = highlight ? band(highlight) : [0, 0];
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ overflow: "visible" }}>
@@ -134,7 +151,7 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
       <g filter="url(#soft)" clipPath="url(#block)">
         <rect x={0} y={fatTop} width={W} height={H - fatTop} fill="#F5DDB6" />
         {fat}
-        <rect x={0} y={dermTop} width={W} height={fatTop - dermTop} fill="url(#dermGrad)" />
+        <rect x={0} y={dermTop - 4} width={W} height={fatTop - dermTop + 4} fill="url(#dermGrad)" />
         {vessels}
         {particles === "heat" ? (
           <g opacity={interpolate(t, [0, 0.08, 0.6, 0.72, 1], [0, 1, 1, 0.15, 0.15], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })}>
@@ -149,14 +166,37 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         {bundles}
         {fibro}
         {newFibers}
-        <path d={`${wave(0, W, epiTop, 3, 8)} ${wavePts(0, W, dermTop, 7, 8).reverse().map(([x, y]) => `L ${x} ${y}`).join(" ")} Z`} fill="url(#epiGrad)" />
-        {basal}
-        <path d={`${wave(0, W, top, 2.5, 8)} L ${W} ${epiTop} L 0 ${epiTop} Z`} fill="url(#corGrad)" />
-        {Array.from({ length: Math.ceil(W / 42) + 1 }, (_, i) => <path key={`s${i}`} d={`M ${i * 42 + 6} ${top + 8} q 14 -5 28 0`} stroke="#E8C7B2" strokeWidth={2} fill="none" />)}
+        <path d={`${toPath(surfEpi)} ${back(surfDerm)} Z`} fill="url(#epiGrad)" />
+        {basalCells()}
+        <path d={`${toPath(surfTop)} ${back(surfEpi)} Z`} fill="url(#corGrad)" />
+        <path d={toPath(surfTop)} stroke="#D9A88E" strokeWidth={3} fill="none" />
         {bumps}
         {spheres}
         {highlight ? <rect x={3} y={hy0} width={W - 6} height={hy1 - hy0} fill="none" stroke={P.ink} strokeWidth={4 + glow * 3} rx={10} opacity={0.85} /> : null}
       </g>
+      {filling ? (
+        <g fontFamily="'Segoe UI', Arial, sans-serif" fontWeight={700}>
+          <line x1={W * 0.12} y1={tagY} x2={W * 0.12} y2={tagY + 64} stroke={P.ink} strokeWidth={2.5} />
+          <circle cx={W * 0.12} cy={tagY} r={6} fill={P.ink} />
+          <rect x={W * 0.12 - 8} y={tagY + 62} width={sideLabels ? 220 : 170} height={sideLabels ? 44 : 36} rx={18} fill="#FFFFFF" opacity={0.93} />
+          <text x={W * 0.12 + 6} y={tagY + (sideLabels ? 92 : 87)} fontSize={sideLabels ? 26 : 21} fill={P.ink}>Collagen fibres</text>
+          {newShown ? (
+            <g>
+              <line x1={W * 0.62} y1={tagY + 10} x2={W * 0.62} y2={tagY + 74} stroke={P.ink} strokeWidth={2.5} />
+              <circle cx={W * 0.62} cy={tagY + 10} r={6} fill={P.ink} />
+              <rect x={W * 0.62 - 8} y={tagY + 72} width={sideLabels ? 200 : 158} height={sideLabels ? 44 : 36} rx={18} fill={P.ink} />
+              <text x={W * 0.62 + 6} y={tagY + (sideLabels ? 102 : 97)} fontSize={sideLabels ? 26 : 21} fill="#FFFBF3">New collagen</text>
+            </g>
+          ) : null}
+          {depth > 15 ? (
+            <g>
+              <line x1={creaseXs[0]} y1={top + depth - 4} x2={creaseXs[0] - 70} y2={top - 34} stroke={P.ink} strokeWidth={2.5} />
+              <rect x={creaseXs[0] - 160} y={top - 72} width={sideLabels ? 160 : 128} height={sideLabels ? 40 : 34} rx={16} fill="#FFFFFF" opacity={0.93} />
+              <text x={creaseXs[0] - 146} y={top - (sideLabels ? 44 : 48)} fontSize={sideLabels ? 24 : 20} fill={P.ink}>Fine line</text>
+            </g>
+          ) : null}
+        </g>
+      ) : null}
       {sideLabels && [["Epidermis", (epiTop + dermTop) / 2, "epidermis"], ["Dermis", (dermTop + fatTop) / 2, "dermis"], ["Fat layer", (fatTop + H) / 2, "subcutis"]].map(([n, y, id]) => (
         <g key={String(n)}>
           <line x1={W - 8} y1={Number(y)} x2={W + 24} y2={Number(y)} stroke={P.inkSoft} strokeWidth={2} />

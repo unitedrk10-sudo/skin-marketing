@@ -450,7 +450,13 @@ export const Figure: React.FC<FigureProps> = ({ beat }) => {
         ))}
         <div style={{ position: "absolute", bottom: 26, left: 40, right: 40, display: "flex", justifyContent: "space-between",
           fontFamily: FONT, fontSize: 24, color: C.inkSoft }}>
-          <span>Skinbound Korea · illustration (schematic, not to scale)</span>
+          <span>Skinbound Korea · illustration (schematic, not to scale · results vary)</span>
+          {beat.particles === "heat" || beat.particles === "collagen" ? (
+            <span style={{ display: "flex", gap: 22, alignItems: "center" }}>
+              <span style={{ display: "flex", gap: 8, alignItems: "center" }}><i style={{ width: 34, height: 10, borderRadius: 5, background: "#F8DCCB", display: "inline-block", border: "1px solid #E3B9A3" }} />Collagen</span>
+              <span style={{ display: "flex", gap: 8, alignItems: "center" }}><i style={{ width: 34, height: 10, borderRadius: 5, background: "#FFFBF3", display: "inline-block", boxShadow: "0 0 6px #fff", border: "1px solid #E9D7C5" }} />New collagen</span>
+            </span>
+          ) : null}
           <span>{beat.source || ""}</span>
         </div>
       </AbsoluteFill>
