@@ -88,7 +88,7 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
     }
   // 기저세포 줄
   const basalCells = () => Array.from({ length: Math.ceil(W / 30) + 1 }, (_, i) => (
-    <ellipse key={`c${i}`} cx={14 + i * 30} cy={dermTop - 14 + crease(14 + i * 30) * 0.6} rx={13} ry={10} fill="#DFA286" stroke="#CF8E73" strokeWidth={1.5} opacity={0.8} />
+    <ellipse key={`c${i}`} cx={14 + i * 30} cy={dermTop - 14 + folds(14 + i * 30) * 0.35} rx={13} ry={10} fill="#DFA286" stroke="#CF8E73" strokeWidth={1.5} opacity={0.8} />
   ));
 
   // 입자 (윤기 있는 구슬)
@@ -127,15 +127,16 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
   const creaseXs = [W * 0.2, W * 0.5, W * 0.8];
   // 접힘 + 1단계에서 위층 전체가 내려앉았다가(진피가 얇음) 3단계에서 차올라 평평 (2026-10-22 "더 극적으로")
   const sag = filling ? interpolate(t, [0, 0.33, 0.45, 0.66, 0.8, 1], [22, 22, 12, 12, -6, -6], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 0;
-  const crease = (x: number) => sag + creaseXs.reduce((s, cx, j) => s + depth * (j === 1 ? 1 : 0.8) * Math.exp(-((x - cx) ** 2) / (2 * 20 * 20)), 0);
-  const line = (base: number, k: number, amp: number) => {
+  const folds = (x: number) => creaseXs.reduce((s, cx, j) => s + depth * (j === 1 ? 1 : 0.8) * Math.exp(-((x - cx) ** 2) / (2 * 20 * 20)), 0);
+  const crease = (x: number) => sag + folds(x);  // 표면용 (내려앉음 포함) — 진피 경계·기저세포는 folds 만
+  const line = (base: number, k: number, amp: number, withSag = true) => {
     const pts: [number, number][] = [];
-    for (let x = 0; x <= W; x += 6) pts.push([x, base + crease(x) * k + Math.sin(x / 38) * amp]);
+    for (let x = 0; x <= W; x += 6) pts.push([x, base + (withSag ? crease(x) : folds(x)) * k + Math.sin(x / 38) * amp]);
     return pts;
   };
   const toPath = (pts: [number, number][]) => pts.map(([x, y], i) => `${i ? "L" : "M"} ${x} ${y}`).join(" ");
   const back = (pts: [number, number][]) => pts.slice().reverse().map(([x, y]) => `L ${x} ${y}`).join(" ");
-  const surfTop = line(top, 1, 2), surfEpi = line(epiTop, 0.95, 2.5), surfDerm = line(dermTop, 0.6, 6);
+  const surfTop = line(top, 1, 2), surfEpi = line(epiTop, 0.95, 2.5), surfDerm = line(dermTop, 0.35, 6, false);
   // 콜라겐 표시 위치 (가장 위 다발 하나 · 새 섬유 하나)
   const tagY = dermTop + 22 + 3 * ((fatTop - dermTop - 40) / 10);
   const newShown = particles === "heat" ? t > 0.72 : particles === "collagen" ? t > 0.42 : false;
