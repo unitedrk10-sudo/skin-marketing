@@ -17,13 +17,13 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from pipeline import llm
-from pipeline.common import ROOT, get_logger, prompt
+from pipeline.common import ROOT, get_logger, load_yaml, prompt
 
 log = get_logger("explainer")
 
 VIDEO_DIR = ROOT / "video"
 KINDS = {"skin_layers", "molecule", "timeline", "big_number", "fade_patch", "myth_fact", "checklist", "icon_scene"}
-ICONS = {"suitcase", "calendar", "sun", "bed", "doctor_note", "drop"}
+ICONS = {"suitcase", "calendar", "sun", "bed", "doctor_note", "drop", "logo"}
 TEXT_FIELDS = ("label", "note", "interval", "value", "unit", "belief", "fact", "from_label", "to_label")
 LIMITS = {"label": 32, "note": 48}
 MAX_TEXT = 60
@@ -103,7 +103,12 @@ def props(draft: dict, beats: list[dict], timeline: list[dict], total: float, ba
             continue
         out.append({**{k: v for k, v in b.items() if k not in ("line", "fact_ids")},
                     "start": starts[n - 1], "end": starts[n], "source": sources(draft, b)})
-    return {"seconds": total, "beats": out, "background": background}
+    site = load_yaml("site.yaml")
+    sf = draft.get("shortform") or {}
+    return {"seconds": total, "beats": out, "background": background,
+            "lines": [{"start": t["start"], "end": t["end"], "voice": t["voice"]} for t in timeline],
+            "handle": site.get("domain") or site.get("name", ""),
+            "disclosure": sf.get("on_screen_disclosure") or "AI-generated content"}
 
 
 def npx() -> str:

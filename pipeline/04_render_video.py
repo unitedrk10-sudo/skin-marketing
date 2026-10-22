@@ -183,12 +183,14 @@ def word_events(t: dict) -> list[str]:
     return events
 
 
-def build_ass(timeline: list[dict], total: float, disclosure: str, handle: str) -> str:
-    events = [f"Dialogue: 0,{_ts_ass(t['start'])},{_ts_ass(t['end'])},Caption,,0,0,0,,{_ass_text(t['caption'])}"
+def build_ass(timeline: list[dict], total: float, disclosure: str, handle: str, overlay: bool = True) -> str:
+    """overlay=False: 화면 글자는 영상 쪽(실험 E 의 Remotion)이 그린다 — 빈 자막 파일."""
+    events = [] if not overlay else [f"Dialogue: 0,{_ts_ass(t['start'])},{_ts_ass(t['end'])},Caption,,0,0,0,,{_ass_text(t['caption'])}"
               for t in timeline]
-    events += [e for t in timeline for e in word_events(t)]
-    events.append(f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(total)},Disclosure,,0,0,0,,{_ass_text(disclosure)}")
-    if handle:
+    events += [e for t in timeline for e in word_events(t)] if overlay else []
+    if overlay:
+        events.append(f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(total)},Disclosure,,0,0,0,,{_ass_text(disclosure)}")
+    if handle and overlay:
         events.append(f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(total)},Handle,,0,0,0,,{_ass_text(handle)}")
     return f"""[Script Info]
 ScriptType: v4.00+
@@ -271,7 +273,7 @@ def line_spans(durations: list[float]) -> list[float]:
     return [d + GAP_SEC for d in durations]
 
 
-def make_video(draft: dict, out: Path, segments_fn, transition: float = 0.0) -> dict:
+def make_video(draft: dict, out: Path, segments_fn, transition: float = 0.0, captions: bool = True) -> dict:
     """대본 → 음성(voice.mp3)·자막(captions.ass/srt) → segments_fn 이 고른 화면과 합쳐 out/video.mp4.
     segments_fn(lines, timeline, total, work) -> (segments, clips_meta). 숏폼 렌더링과 화면 소스 실험(pipeline.experiment)이 같이 쓴다."""
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
@@ -303,7 +305,8 @@ def make_video(draft: dict, out: Path, segments_fn, transition: float = 0.0) -> 
     handle = site.get("domain") or site.get("name", "")
     # 표시 줄은 화면 아래 22% 위에 둔다 — 틱톡·릴스·쇼츠 하단 UI(설명·버튼)에 가리지 않게
     ass = out / "captions.ass"
-    ass.write_text(build_ass(timeline, total, sf.get("on_screen_disclosure") or "AI-generated content", handle), encoding="utf-8")
+    ass.write_text(build_ass(timeline, total, sf.get("on_screen_disclosure") or "AI-generated content", handle, captions),
+                   encoding="utf-8")
     (out / "captions.srt").write_text(build_srt(timeline), encoding="utf-8")
 
     segments, clips_meta = segments_fn(lines, timeline, total, work)

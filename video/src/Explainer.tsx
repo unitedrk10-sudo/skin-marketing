@@ -49,7 +49,9 @@ export type Beat = {
   source?: string;
 };
 export type BgClip = { file: string; seconds: number; from: number; zoom: number; rate?: number };
-export type ExplainerProps = { seconds: number; beats: Beat[]; background: BgClip[] };
+export type Line = { start: number; end: number; voice: string };
+// lines 가 있으면 자막·브랜드·AI 표시를 여기서 같은 디자인으로 그린다 (2026-10-22 — 검은 자막 상자·노란 강조 제거).
+export type ExplainerProps = { seconds: number; beats: Beat[]; background: BgClip[]; lines?: Line[]; handle?: string; disclosure?: string };
 
 const useIn = (delay = 0, dur = 14) => {
   const f = useCurrentFrame();
@@ -68,6 +70,18 @@ const Label: React.FC<{ text?: string; y: number; size?: number; color?: string;
     <div style={{ position: "absolute", top: y, left: 0, width: PANEL.width, textAlign: "center", fontFamily: FONT, fontWeight: 700,
       fontSize: size, color, opacity: a, transform: `translateY(${(1 - a) * 18}px)`, padding: "0 30px", boxSizing: "border-box" }}>
       {text}
+    </div>
+  );
+};
+
+// ---- 제목 + 설명: 한 덩어리로 쌓는다 (제목이 두 줄이 돼도 설명과 겹치지 않게) ----
+const Caption: React.FC<{ b: Beat; y: number }> = ({ b, y }) => {
+  const a = useIn(4);
+  return (
+    <div style={{ position: "absolute", top: y, left: 0, width: PANEL.width, padding: "0 30px", boxSizing: "border-box", textAlign: "center",
+      fontFamily: FONT, opacity: a, transform: `translateY(${(1 - a) * 18}px)` }}>
+      {b.label ? <div style={{ fontSize: 58, fontWeight: 700, color: C.ink, lineHeight: 1.15 }}>{b.label}</div> : null}
+      {b.note ? <div style={{ fontSize: 40, color: C.inkSoft, marginTop: 14, lineHeight: 1.25 }}>{b.note}</div> : null}
     </div>
   );
 };
@@ -139,8 +153,7 @@ const Molecule: React.FC<{ b: Beat }> = ({ b }) => {
           );
         })}
       </svg>
-      <Label text={b.label} y={540} />
-      <Label text={b.note} y={620} size={40} color={C.inkSoft} delay={10} />
+      <Caption b={b} y={540} />
     </AbsoluteFill>
   );
 };
@@ -170,8 +183,7 @@ const Timeline: React.FC<{ b: Beat }> = ({ b }) => {
           return <text key={i} x={90 + i * gap + gap / 2} y={390} textAnchor="middle" fontFamily={FONT} fontSize={40} fontWeight={600} fill={C.inkSoft} opacity={o}>{b.interval}</text>;
         })}
       </svg>
-      <Label text={b.label} y={520} />
-      <Label text={b.note} y={600} size={40} color={C.inkSoft} delay={12} />
+      <Caption b={b} y={520} />
     </AbsoluteFill>
   );
 };
@@ -185,8 +197,7 @@ const BigNumber: React.FC<{ b: Beat }> = ({ b }) => {
         <span style={{ fontSize: 230, fontWeight: 800 }}>{b.value}</span>
         <span style={{ fontSize: 70, fontWeight: 700, marginLeft: 16 }}>{b.unit}</span>
       </div>
-      <Label text={b.label} y={470} />
-      <Label text={b.note} y={550} size={40} color={C.inkSoft} delay={10} />
+      <Caption b={b} y={470} />
     </AbsoluteFill>
   );
 };
@@ -213,8 +224,7 @@ const FadePatch: React.FC<{ b: Beat }> = ({ b }) => {
         <span>{b.from_label}</span>
         <span>{b.to_label}</span>
       </div>
-      <Label text={b.label} y={540} />
-      <Label text={b.note} y={620} size={40} color={C.inkSoft} delay={10} />
+      <Caption b={b} y={540} />
     </AbsoluteFill>
   );
 };
@@ -264,6 +274,7 @@ const ICONS: Record<string, (s: number) => React.ReactNode> = {
   sun: (s) => (<g transform={`rotate(${s * 30})`}><circle r={90} fill={C.accent} />{Array.from({ length: 10 }, (_, i) => <rect key={i} x={-8} y={-170} width={16} height={50} rx={8} fill={C.accent} transform={`rotate(${i * 36})`} />)}</g>),
   bed: () => (<g><rect x={-180} y={0} width={360} height={90} rx={20} fill={C.ink} /><rect x={-180} y={-70} width={110} height={70} rx={24} fill={C.sand} /><rect x={-60} y={-40} width={240} height={40} rx={18} fill={C.sand} /><rect x={-180} y={90} width={24} height={50} fill={C.ink} /><rect x={156} y={90} width={24} height={50} fill={C.ink} /></g>),
   doctor_note: () => (<g><rect x={-130} y={-160} width={260} height={320} rx={22} fill={C.cream} stroke={C.ink} strokeWidth={14} />{[0, 1, 2, 3].map((i) => <rect key={i} x={-90} y={-100 + i * 60} width={i === 3 ? 110 : 180} height={16} rx={8} fill={C.sand} />)}<circle cx={80} cy={110} r={44} fill={C.ink} /><path d="M 60 110 L 76 126 L 102 96" stroke={C.cream} strokeWidth={10} fill="none" /></g>),
+  logo: () => (<g><rect x={-140} y={-140} width={280} height={280} rx={56} fill={C.ink} /><text y={70} textAnchor="middle" fontFamily={FONT} fontSize={210} fontWeight={800} fill={C.cream}>S</text></g>),
   drop: () => (<path d="M 0 -150 C 70 -50 110 10 110 60 A 110 110 0 0 1 -110 60 C -110 10 -70 -50 0 -150 Z" fill={C.ink} />),
 };
 const IconScene: React.FC<{ b: Beat }> = ({ b }) => {
@@ -275,8 +286,7 @@ const IconScene: React.FC<{ b: Beat }> = ({ b }) => {
       <svg width={PANEL.width} height={480}>
         <g transform={`translate(470 240) scale(${s * 1.25})`}>{draw(f / 30)}</g>
       </svg>
-      <Label text={b.label} y={500} />
-      <Label text={b.note} y={580} size={40} color={C.inkSoft} delay={10} />
+      <Caption b={b} y={500} />
     </AbsoluteFill>
   );
 };
@@ -310,7 +320,44 @@ const BeatView: React.FC<{ b: Beat; card: boolean }> = ({ b, card }) => {
   );
 };
 
-export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background }) => {
+// ---- 브랜드 머리줄: 로고 + 주소 (항상 같은 자리) ----
+const Header: React.FC<{ handle: string; dark: boolean }> = ({ handle, dark }) => (
+  <div style={{ position: "absolute", top: 150, left: 0, width: 1080, display: "flex", justifyContent: "center", alignItems: "center", gap: 18 }}>
+    <div style={{ width: 64, height: 64, borderRadius: 16, background: C.ink, color: C.cream, fontFamily: FONT, fontWeight: 800, fontSize: 46,
+      display: "flex", alignItems: "center", justifyContent: "center" }}>S</div>
+    <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 38, color: dark ? C.cream : C.ink, letterSpacing: 0.5 }}>{handle}</div>
+  </div>
+);
+
+// ---- 말하는 문장 자막: 4단어씩, 지금 읽는 단어만 브랜드 색 (단어 시간 = 글자 수 비율) ----
+const WORDS = 4;
+const Subtitle: React.FC<{ lines: Line[] }> = ({ lines }) => {
+  const f = useCurrentFrame();
+  const now = f / 30;
+  const line = lines.find((l) => now >= l.start && now < l.end);
+  if (!line) return null;
+  const words = line.voice.split(/\s+/).filter(Boolean);
+  const total = words.reduce((a, w) => a + w.length + 1, 0);
+  let clock = line.start, idx = words.length - 1;
+  for (let i = 0; i < words.length; i++) {
+    const d = ((line.end - line.start) * (words[i].length + 1)) / total;
+    if (now < clock + d) { idx = i; break; }
+    clock += d;
+  }
+  const chunk = Math.floor(idx / WORDS) * WORDS;
+  return (
+    <div style={{ position: "absolute", top: 1285, left: 90, width: 900, display: "flex", justifyContent: "center" }}>
+      <div style={{ background: "rgba(31,59,45,0.92)", borderRadius: 28, padding: "18px 34px", fontFamily: FONT, fontWeight: 700, fontSize: 52,
+        lineHeight: 1.25, color: C.cream, textAlign: "center" }}>
+        {words.slice(chunk, chunk + WORDS).map((w, i) => (
+          <span key={i} style={{ color: chunk + i === idx ? "#F2B38B" : C.cream }}>{w}{" "}</span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background, lines, handle, disclosure }) => {
   const fps = 30;
   const hasBg = background && background.length > 0;
   let at = 0;
@@ -340,6 +387,17 @@ export const Explainer: React.FC<ExplainerProps> = ({ seconds, beats, background
           <BeatView b={b} card={!!hasBg} />
         </Sequence>
       ))}
+      {lines && lines.length > 0 ? (
+        <>
+          {handle ? <Header handle={handle} dark={!!hasBg} /> : null}
+          <Subtitle lines={lines} />
+          {disclosure ? (
+            <div style={{ position: "absolute", top: 1500, width: 1080, textAlign: "center", fontFamily: FONT, fontSize: 28, color: hasBg ? C.cream : C.inkSoft }}>
+              {disclosure}
+            </div>
+          ) : null}
+        </>
+      ) : null}
       <div style={{ display: "none" }}>{seconds}</div>
     </AbsoluteFill>
   );

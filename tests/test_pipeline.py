@@ -2735,7 +2735,7 @@ def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_pat
     assert exp.daily_message(day.replace(hour=15)) == ""                              # 하루 한 번
     assert exp.poll_message() == ""                                                   # 영상이 아직 없음
     built = []
-    monkeypatch.setattr(render, "make_video", lambda d, out, fn, fade=0.0: built.append((out, fade)) or {"seconds": 40.0})
+    monkeypatch.setattr(render, "make_video", lambda d, out, fn, fade=0.0, captions=True: built.append((out, fade)) or {"seconds": 40.0})
     clips = exp.root() / "2026-10-23-B-W41-10" / "clips"
     for n in (1, 2):
         (clips / f"{n}.mp4").write_bytes(b"x")
@@ -2814,7 +2814,9 @@ def test_explainer_screen_text_only_from_facts(env):
     assert beats[1] == {"line": 2, "kind": "icon_scene", "icon": "drop", "label": "", "note": ""} and any("90" in p for p in problems)
     assert beats[2]["label"] == "" and beats[2]["icon"] == "drop"
     assert ex.sources(draft, beats[0]) == "Source: pubmed.ncbi.nlm.nih.gov"
-    p = ex.props(draft, beats, [{"start": 0.0}, {"start": 2.5}, {"start": 5.0}], 7.0, [])
+    p = ex.props(draft, beats, [{"start": 0.0, "end": 2.2, "voice": "a"}, {"start": 2.5, "end": 4.7, "voice": "b"},
+                                {"start": 5.0, "end": 6.8, "voice": "c"}], 7.0, [])
+    assert p["lines"][1] == {"start": 2.5, "end": 4.7, "voice": "b"} and p["disclosure"] == "AI-generated content"
     assert [(b["start"], b["end"]) for b in p["beats"]] == [(0.0, 2.5), (2.5, 5.0), (5.0, 7.0)]
 
 

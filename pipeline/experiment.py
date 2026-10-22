@@ -254,7 +254,8 @@ def build(eid: str) -> str:
         clips, scenes, spare = fit_clips(clips, scenes)
         fn = clip_segments(clips, scenes, spare)
     render = importlib.import_module("pipeline.04_render_video")
-    meta = render.make_video(draft, out, fn, TRANSITION if data["method"] in ("B", "C") else 0.0)
+    meta = render.make_video(draft, out, fn, TRANSITION if data["method"] in ("B", "C") else 0.0,
+                             captions=data["method"] not in ("E", "BE"))  # E·BE 는 자막·브랜드를 도식과 같은 디자인으로 Remotion 이 그린다
     data.update(status="done", built_at=now_iso(), render=meta)
     _save(eid, data)
     return (f"[실험 완성 {eid}] {METHOD_LABEL[data['method']]} — {draft['blog'].get('title', '')} ({meta['seconds']:.0f}초)\n"

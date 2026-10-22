@@ -16,9 +16,13 @@ Choose ONE diagram per script line from these kinds and fill its fields:
 - "fade_patch": a skin patch whose redness slowly fades (redness/swelling that settles). Fields: from_label, to_label, label, note.
 - "myth_fact": two cards. Fields: belief (a general belief, never attributed to a person or clinic), fact.
 - "checklist": up to 3 short items. Fields: label, items.
-- "icon_scene": one icon. Fields: icon ("suitcase"|"calendar"|"sun"|"bed"|"doctor_note"|"drop"), label, note.
+- "icon_scene": one icon. Fields: icon ("suitcase"|"calendar"|"sun"|"bed"|"doctor_note"|"drop"|"logo"), label, note.
 
 Rules:
+- The label of each diagram is the on-screen headline for that line (there is no other title on screen), so it must say the point of the line in plain words.
+- Line 1 (the hook): if it asks a question, answer it right away — label = the question in a few words, note = a short preview of the answer taken from the facts, hedged as the facts are (e.g. "Usually settles soon — varies by person"). Viewers must know in the first 3 seconds what they will learn.
+- Keep every qualifier the fact has ("in one trial", "usually", "may", "for most people") in the label or note — never turn a single study or general guidance into a universal fact (write "One trial: 3 sessions, 2 weeks apart", not "3 sessions, 2 weeks apart").
+- The last line (follow / more guides) uses icon_scene with icon "logo".
 - Show the mechanism or the practical point of the line, as a schematic diagram. Prefer skin_layers / molecule / timeline / fade_patch when the line is about how something works, how long, or how often.
 - On-screen text must be no stronger than the facts: keep hedges ("may", "usually", "in one trial"), never promise results, never show before/after, never say safe, painless, best, guaranteed. If a fact comes from one study, say so ("one trial").
 - Every number on screen must appear in the facts exactly. Do not invent numbers, percentages or durations.
