@@ -2900,3 +2900,23 @@ def test_blog_figures_go_after_their_section_and_only_for_unpublished(env, monke
                       "2026-W41-11-later-x": {"date": "2030-01-08", "at": "2030-01-08T07:00:00+09:00"}})
     assert [p.name for p in fig.upcoming()] == ["2026-W41-11-later-x"]          # 이미 배포된 글은 건드리지 않는다
     assert fig.headings("# T\n## A\ntext\n## FAQ\n## Sources\n") == ["A"]
+
+
+def test_single_study_followups_collected_and_closed(env):
+    fu = importlib.import_module("pipeline.followups")
+    assert fu.single_study({"kind": "sessions", "text": "In a Korean randomized controlled trial, the protocol was 3 treatments."})
+    assert not fu.single_study({"kind": "mechanism", "text": "A systematic review found promising outcomes."})
+    assert not fu.single_study({"kind": "travel", "text": "One study of tourists found crowds peak at noon."})
+    path = _published("2026-W41-10-rejuran-x", live=False)
+    d = common.load_json(path / "draft.json")
+    d["facts"] = [{"id": "F9", "kind": "sessions", "text": "In a Korean randomized controlled trial, 3 sessions were used.", "url": "u"}]
+    common.save_json(path / "draft.json", d)
+    fu.scan()
+    key = next(iter(fu.load()["items"]))
+    assert f"[{key}]" in fu.prompt_block()
+    later = _published("2026-W42-01-followup-x", live=False)
+    d2 = common.load_json(later / "draft.json")
+    d2["topic"] = {**d2.get("topic", {}), "followup_of": key}
+    common.save_json(later / "draft.json", d2)
+    fu.scan()
+    assert fu.load()["items"][key]["status"] == "done" and fu.prompt_block() == "(none)"
