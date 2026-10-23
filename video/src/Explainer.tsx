@@ -435,7 +435,7 @@ export const Figure: React.FC<FigureProps> = ({ beat }) => {
         {ts.map((tt, i) => (
           <div key={i} style={{ position: "absolute", top: 210, left: 60 + i * 590, width: 500 }}>
             <SkinSection width={500} height={420} highlight={beat.highlight} particles={beat.particles} t={tt} frame={0} sideLabels={false} />
-            <div style={{ marginTop: 26, display: "flex", gap: 14, alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
+            <div style={{ marginTop: 58, display: "flex", gap: 14, alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
               <div style={{ width: 48, height: 48, borderRadius: 24, background: C.ink, color: C.cream, fontWeight: 800, fontSize: 28,
                 display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>
               <div style={{ fontSize: 32, fontWeight: 700, color: C.ink }}>{beat.stages![i]}</div>
