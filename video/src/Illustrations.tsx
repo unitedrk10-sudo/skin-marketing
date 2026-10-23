@@ -81,41 +81,46 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
       cells.push(<ellipse key={`e${row}-${x}`} cx={x} cy={y} rx={13} ry={row === 2 ? 9 : 10} fill={row === 2 ? "#E9B49C" : "#F6D3C0"}
         stroke={row === 2 ? "#DFA187" : "#EEC2AC"} strokeWidth={1.2} opacity={0.9} />);
     }
-  // 콜라겐 리본: 평행·고른 간격. 채우기 전엔 적고 옅게, 다 차면 촘촘·밝게(새 콜라겐은 따뜻한 흰색 + 은은한 빛)
+  // 콜라겐 (2026-10-23 "새 콜라겐이 지저분하다" → 1안 + 3안 약하게): 모두 같은 방향·같은 굵기·같은 물결의 평행선.
+  // 12칸 중 홀수 칸 6줄 = 원래 콜라겐, 짝수 칸 6줄 = 새 콜라겐(기존 줄 사이에 끼워짐, 밝은 크림색, 왼쪽에서 오른쪽으로 그려짐).
+  // 6줄 → (PDLLA 2단계 9줄) → 12줄. 진피는 3단계에 아래로 조금 두꺼워진다(피하지방 쪽으로, 표면은 그대로).
+  const plump = fill ? k([0, 0.66, 0.82, 1], [0, 0, 14, 14]) : 0;
+  const fatY = fatTop + plump;
+  const dH = fatY - dermTop;
+  const SLOTS = 12;
+  const slotY = (j: number) => dermTop + 20 + j * ((dH - 40) / (SLOTS - 1));
+  const amp = particles === "heat" ? k([0, 0.33, 0.45, 1], [9, 9, 2.5, 2.5]) : 4;  // 열: 느슨한 물결 → 수축해 펴짐
+  const lineD = (y: number) => wave(0, W, y, amp, 8, 0.6);  // 같은 위상 → 서로 엇갈리지 않는다
   const ribbons: React.ReactNode[] = [];
-  const dH = fatTop - dermTop;
-  const oldN = 7;
-  for (let i = 0; i < oldN; i++) {
-    const y = dermTop + 18 + i * ((dH - 36) / (oldN - 1));
-    const thin = fill ? k([0, 0.33, 0.45, 1], [0.45, 0.45, 1, 1]) : 1;  // 1단계: 가늘고 옅음
-    const amp = particles === "heat" ? k([0, 0.33, 0.45, 1], [11, 11, 3, 3]) : 7;  // 열: 수축해 펴짐
-    ribbons.push(<path key={`r${i}`} d={wave(0, W, y, amp, 8, i * 1.3)} stroke="#F7D6C6" strokeWidth={8 * thin}
-      strokeLinecap="round" fill="none" opacity={0.35 + 0.35 * thin} />);
-  }
   const fresh: React.ReactNode[] = [];
-  if (fill) {
-    const n = 9;
-    for (let i = 0; i < n; i++) {
-      const y = dermTop + 30 + i * ((dH - 54) / (n - 1));
-      const start = particles === "heat" ? 0.66 : i % 2 === 0 ? 0.36 : 0.66;  // PDLLA: 2단계에 절반, 3단계에 전부
-      const grow = stepT(t, start + (i % 3) * 0.02, start + 0.14 + (i % 3) * 0.02);
-      const len = W * 1.2;
-      fresh.push(<path key={`n${i}`} d={wave(0, W, y, 5, 8, i * 2.1 + 0.8)} stroke="url(#newCol)" strokeWidth={9}
-        strokeLinecap="round" fill="none" strokeDasharray={len} strokeDashoffset={len * (1 - grow)} filter="url(#softGlow)" />);
+  for (let j = 0; j < SLOTS; j++) {
+    const y = slotY(j);
+    if (j % 2 === 1 || !fill) {  // 원래 콜라겐 (채우기 전엔 조금 옅게, 다 차면 같이 또렷해짐)
+      if (!fill && j % 2 === 0) continue;
+      const op = fill ? k([0, 0.66, 0.82, 1], [0.38, 0.38, 0.75, 0.75]) : 0.65;
+      ribbons.push(<path key={`r${j}`} d={lineD(y)} stroke="#F6D2C0" strokeWidth={6} strokeLinecap="round" fill="none" opacity={op} />);
+    } else {  // 새 콜라겐
+      const order = j / 2;  // 0..5
+      const early = particles === "collagen" && order % 2 === 0;  // PDLLA: 3줄은 2단계, 나머지 3줄은 3단계
+      const start = particles === "heat" ? 0.66 : early ? 0.36 : 0.66;
+      const grow = stepT(t, start + order * 0.012, start + 0.13 + order * 0.012);
+      const len = W * 1.15;
+      fresh.push(<path key={`n${j}`} d={lineD(y)} stroke="#FFFCF7" strokeWidth={7} strokeLinecap="round" fill="none"
+        strokeDasharray={len} strokeDashoffset={len * (1 - grow)} opacity={0.97} />);
     }
   }
   // 지방층: 부드러운 원
   const fat: React.ReactNode[] = [];
   for (let row = 0; row < 3; row++)
     for (let x = (row % 2) * 34 + 30; x < W + 30; x += 68) {
-      const y = fatTop + 34 + row * 54;
+      const y = fatY + 34 + row * 54;
       if (y - 30 > H) continue;
       fat.push(<circle key={`a${row}-${x}`} cx={x} cy={y} r={31} fill="url(#fatCell)" stroke="#EED3A6" strokeWidth={1.5} />);
     }
   // 입자 (주사형): 작고 정돈된 진주 — 스며듦은 표면 위 → 표피 → 진피, PDLLA 는 진피에 놓였다가 3단계에 작아짐
   const pearls = particles === "diffuse" || particles === "collagen" ? Array.from({ length: 12 }, (_, i) => {
     const x = W * (0.08 + (i % 6) * 0.168) + (i >= 6 ? W * 0.08 : 0);
-    const target = dermTop + dH * (i >= 6 ? 0.62 : 0.32);
+    const target = slotY(i >= 6 ? 8 : 4);  // 새 콜라겐 줄 자리 — 그 주변에서 콜라겐이 생긴다
     const y = particles === "collagen" ? target : k([0, 0.28, 0.4, 0.6, 0.72, 1], [top - 40, top - 40, (epiTop + dermTop) / 2, (epiTop + dermTop) / 2, target, target]);
     const r = particles === "collagen" ? 10 * (1 - 0.55 * stepT(t, 0.62, 0.8)) : 10;
     return <circle key={`p${i}`} cx={x} cy={y} r={r} fill="url(#pearl)" />;
@@ -135,8 +140,8 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         fill={dark ? "#1F3B2D" : "#3C5A4B"} stroke="#FFFFFF" strokeWidth={5} paintOrder="stroke">{text.toUpperCase()}</text>
     </g>
   );
-  const ribbonY = dermTop + 18 + 2 * ((dH - 36) / (oldN - 1));
-  const freshY = dermTop + 30 + 4 * ((dH - 54) / 8);
+  const ribbonY = slotY(3);
+  const freshY = slotY(6);
   const newShown = particles === "heat" ? t > 0.72 : particles === "collagen" ? t > 0.42 : false;
 
   return (
@@ -154,9 +159,9 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
         <clipPath id="blk"><rect x="0" y={top - 70} width={W} height={H - top + 70} rx="26" /></clipPath>
       </defs>
       <g filter="url(#lift)" clipPath="url(#blk)">
-        <rect x={0} y={fatTop} width={W} height={H - fatTop} fill="#FBEACB" />
+        <rect x={0} y={fatY} width={W} height={H - fatY} fill="#FBEACB" />
         {fat}
-        <rect x={0} y={dermTop - 6} width={W} height={fatTop - dermTop + 6} fill="url(#dermG)" />
+        <rect x={0} y={dermTop - 6} width={W} height={fatY - dermTop + 6} fill="url(#dermG)" />
         {heatOn > 0 ? <rect x={0} y={dermTop - 6} width={W} height={dH + 6} fill="url(#warm)" opacity={heatOn} /> : null}
         {ribbons}
         {fresh}
@@ -180,7 +185,7 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
           {depth > 12 ? tag(creaseXs[0], surf(creaseXs[0], top, 1), creaseXs[0] + 34, top - 38, "Fine line") : null}
         </g>
       ) : null}
-      {sideLabels && [["Epidermis", (epiTop + dermTop) / 2, "epidermis"], ["Dermis", (dermTop + fatTop) / 2, "dermis"], ["Fat layer", (fatTop + H) / 2, "subcutis"]].map(([n, y, id]) => (
+      {sideLabels && [["Epidermis", (epiTop + dermTop) / 2, "epidermis"], ["Dermis", (dermTop + fatY) / 2, "dermis"], ["Fat layer", (fatY + H) / 2, "subcutis"]].map(([n, y, id]) => (
         <g key={String(n)}>
           <line x1={W + 6} y1={Number(y)} x2={W + 26} y2={Number(y)} stroke="#3C5A4B" strokeWidth={1.6} />
           <text x={W + 32} y={Number(y) + 8} fontFamily={serif} fontSize={24} letterSpacing={1.2} fontWeight={hl(String(id)) ? 800 : 500}
