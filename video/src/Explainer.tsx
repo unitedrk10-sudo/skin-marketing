@@ -48,6 +48,7 @@ export type Beat = {
   from_label?: string;
   to_label?: string;
   source?: string;
+  collagen_style?: string;  // lines | mesh | bundles | springs
   stages?: string[];  // 3단계 이름 (피부 단면 효과) — 화면 위 단계 표시·블로그 그림 3칸
 };
 export type BgClip = { file: string; seconds: number; from: number; zoom: number; rate?: number };
@@ -97,7 +98,7 @@ const SkinLayers: React.FC<{ b: Beat }> = ({ b }) => {
   return (
     <AbsoluteFill>
       <div style={{ position: "absolute", top: 10, left: 10, opacity: a }}>
-        <SkinSection width={760} height={520} highlight={b.highlight} particles={b.particles} t={Math.min(1, f / Math.max(1, durationInFrames - 8))} frame={f} />
+        <SkinSection width={760} height={520} highlight={b.highlight} particles={b.particles} collagenStyle={b.collagen_style} t={Math.min(1, f / Math.max(1, durationInFrames - 8))} frame={f} />
       </div>
       {b.stages && b.stages.length === 3 && b.particles ? (() => {
         const s = stageOf(Math.min(1, f / Math.max(1, durationInFrames - 8)));
@@ -434,7 +435,8 @@ export const Figure: React.FC<FigureProps> = ({ beat }) => {
         </div>
         {ts.map((tt, i) => (
           <div key={i} style={{ position: "absolute", top: 210, left: 60 + i * 590, width: 500 }}>
-            <SkinSection width={500} height={420} highlight={beat.highlight} particles={beat.particles} t={tt} frame={0} sideLabels={false} />
+            <SkinSection width={500} height={420} highlight={beat.highlight} particles={beat.particles} t={tt} frame={0} sideLabels={false}
+              collagenStyle={beat.collagen_style} />
             <div style={{ marginTop: 58, display: "flex", gap: 14, alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
               <div style={{ width: 48, height: 48, borderRadius: 24, background: C.ink, color: C.cream, fontWeight: 800, fontSize: 28,
                 display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</div>

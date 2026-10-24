@@ -35,13 +35,13 @@ const wave = (x0: number, x1: number, y: number, amp: number, step: number, phas
   wavePts(x0, x1, y, amp, step, phase).map(([x, yy], i) => `${i ? "L" : "M"} ${x} ${yy}`).join(" ");
 
 export type SkinProps = { width: number; height: number; highlight?: string; particles?: string; t: number; frame: number;
-  sideLabels?: boolean };
+  sideLabels?: boolean; collagenStyle?: string };  // lines | mesh | bundles | springs (2026-10-24 비교안)
 
 // 3단계로 또렷하게 (2026-10-22 "바뀐 점이 직관적으로 보여야"): 0~0.33 1단계 · 0.33~0.66 2단계 · 0.66~1 3단계, 단계 사이만 짧게 넘어간다
 export const stageOf = (t: number) => (t < 0.33 ? 0 : t < 0.66 ? 1 : 2);
 const stepT = (t: number, a: number, b: number) => interpolate(t, [a, b], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.inOut(Easing.cubic) });
 
-export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f, sideLabels = true }) => {
+export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f, sideLabels = true, collagenStyle = "lines" }) => {
   // 2026-10-23 다시 그림 — "너무 지저분하다, 고급스럽게": 화장품 광고 피부 단면처럼 요소를 줄이고(섬유아세포·혈관·낙서 섬유 제거),
   // 고른 리듬(벽돌 각질층·세포 줄·평행 콜라겐 리본), 부드러운 파스텔, 얇은 지시선. 효과는 3단계(stageOf) 그대로.
   const top = 58, epiTop = 80, dermTop = H * 0.36, fatTop = H * 0.78;
@@ -107,6 +107,76 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
       const len = W * 1.15;
       fresh.push(<path key={`n${j}`} d={lineD(y)} stroke="#FFFCF7" strokeWidth={7} strokeLinecap="round" fill="none"
         strokeDasharray={len} strokeDashoffset={len * (1 - grow)} opacity={0.97} />);
+    }
+  }
+  // ---- 콜라겐 다른 표현 (비교안) — 늘어나는 양 g: 0 → (PDLLA 2단계 0.5) → 1 ----
+  const g = particles === "heat" ? k([0, 0.66, 0.8, 1], [0, 0, 1, 1]) : particles === "collagen" ? k([0, 0.33, 0.45, 0.66, 0.8, 1], [0, 0, 0.5, 0.5, 1, 1]) : 0;
+  const oldOp = fill ? k([0, 0.66, 0.82, 1], [0.4, 0.4, 0.75, 0.75]) : 0.65;
+  const top0 = dermTop + 8, bot0 = fatY - 8;
+  if (collagenStyle !== "lines") {
+    ribbons.length = 0;
+    fresh.length = 0;
+  }
+  if (collagenStyle === "mesh") {
+    // ① 엮인 그물: 두 방향(±기울기) 물결 다발. 원래 4개(옅게) + 새 8개(밝게, 왼→오 그려짐)
+    const bundle = (i: number, dir: number, y0: number, isNew: boolean, show: number) => {
+      const slope = dir * 0.16;
+      let d = "";
+      for (let x = -60; x <= W + 60; x += 8) d += `${x === -60 ? "M" : " L"} ${x} ${y0 + slope * (x - W / 2) + Math.sin(x / 46 + i) * 5}`;
+      const len = W * 1.4;
+      return <path key={`m${isNew ? "n" : "o"}${i}`} d={d} stroke={isNew ? "#FFFCF7" : "#F6D2C0"} strokeWidth={isNew ? 7 : 6} strokeLinecap="round"
+        fill="none" opacity={isNew ? 0.97 : oldOp} strokeDasharray={isNew ? len : undefined} strokeDashoffset={isNew ? len * (1 - show) : undefined} />;
+    };
+    const span = bot0 - top0;
+    [0.25, 0.75].forEach((p, i) => { ribbons.push(bundle(i, 1, top0 + span * p, false, 1)); ribbons.push(bundle(i + 2, -1, top0 + span * p, false, 1)); });
+    [0.12, 0.42, 0.58, 0.88].forEach((p, i) => {
+      [1, -1].forEach((dir, j) => {
+        const n = i * 2 + j;  // 0..7
+        const show = stepT(g * 8 - n, 0, 1);
+        if (fill) fresh.push(bundle(10 + n, dir, top0 + span * p, true, show));
+      });
+    });
+  } else if (collagenStyle === "bundles") {
+    // ② 잘린 다발 단면: 작은 원 묶음. 원래 6묶음(작고 옅게) + 새 10묶음(밝게, 커짐)
+    const cluster = (cx: number, cy: number, scale: number, isNew: boolean, key: string) => {
+      const pts = [[0, 0], [-9, -6], [9, -6], [-10, 6], [10, 6], [0, -11], [0, 11]];
+      return (
+        <g key={key} transform={`translate(${cx} ${cy}) scale(${scale})`} opacity={isNew ? 0.98 : Math.max(0.75, oldOp)}>
+          <ellipse rx={20} ry={18} fill={isNew ? "#FFF4EA" : "#E9A68C"} stroke={isNew ? "#FFFFFF" : "#DC9478"} strokeWidth={1.5} />
+          {pts.map(([x, y], i) => <circle key={i} cx={x} cy={y} r={4.2} fill={isNew ? "#FFFFFF" : "#F4CBB8"} />)}
+        </g>
+      );
+    };
+    const rows = 3, cols = Math.max(4, Math.round(W / 120));
+    let n = 0;
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        const cx = (c + 0.5 + (r % 2) * 0.5) * (W / (cols + 0.5)), cy = top0 + 18 + r * ((bot0 - top0 - 36) / (rows - 1));
+        if ((r + c) % 2 === 0) ribbons.push(cluster(cx, cy, 0.85, false, `bo${r}-${c}`));
+        else if (fill) {
+          const show = stepT(g * 10 - n, 0, 1);
+          n++;
+          if (show > 0) fresh.push(cluster(cx, cy, 0.4 + 0.75 * show, true, `bn${r}-${c}`));
+        }
+      }
+  } else if (collagenStyle === "springs") {
+    // ③ 스프링 받침(비유): 원래 5개는 눌려 촘촘·옅게 → 탄탄해짐, 새 스프링이 사이에 생김
+    const spring = (x: number, isNew: boolean, firm: number, key: string, show = 1) => {
+      const coils = 9 - 3 * firm, y0 = bot0, y1 = top0 + 6;
+      let d = `M ${x} ${y0}`;
+      const steps = 80;
+      for (let s = 1; s <= steps; s++) {
+        const yy = y0 + (y1 - y0) * (s / steps) * show;
+        d += ` L ${x + Math.sin((s / steps) * coils * Math.PI * 2) * 11} ${yy}`;
+      }
+      return <path key={key} d={d} stroke={isNew ? "#FFFCF7" : "#F2C2AC"} strokeWidth={isNew ? 5 : 4 + firm} fill="none"
+        strokeLinecap="round" strokeLinejoin="round" opacity={isNew ? 0.97 : Math.max(0.8, oldOp)} />;
+    };
+    const N = 5, firm = fill ? g : 1;
+    for (let i = 0; i < N; i++) ribbons.push(spring(W * (0.1 + i * 0.2), false, firm, `so${i}`));
+    if (fill) for (let i = 0; i < N - 1; i++) {
+      const show = stepT(g * 4 - i, 0, 1);
+      if (show > 0) fresh.push(spring(W * (0.2 + i * 0.2), true, 1, `sn${i}`, show));
     }
   }
   // 지방층: 부드러운 원
