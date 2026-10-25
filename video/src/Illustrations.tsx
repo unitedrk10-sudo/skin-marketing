@@ -35,13 +35,13 @@ const wave = (x0: number, x1: number, y: number, amp: number, step: number, phas
   wavePts(x0, x1, y, amp, step, phase).map(([x, yy], i) => `${i ? "L" : "M"} ${x} ${yy}`).join(" ");
 
 export type SkinProps = { width: number; height: number; highlight?: string; particles?: string; t: number; frame: number;
-  sideLabels?: boolean; collagenStyle?: string };  // mesh_springs(기본, 2026-10-25) | lines | mesh | bundles | springs
+  sideLabels?: boolean; collagenStyle?: string };  // grid_springs(기본, 2026-10-25) | mesh_springs | lines | mesh | bundles | springs
 
 // 3단계로 또렷하게 (2026-10-22 "바뀐 점이 직관적으로 보여야"): 0~0.33 1단계 · 0.33~0.66 2단계 · 0.66~1 3단계, 단계 사이만 짧게 넘어간다
 export const stageOf = (t: number) => (t < 0.33 ? 0 : t < 0.66 ? 1 : 2);
 const stepT = (t: number, a: number, b: number) => interpolate(t, [a, b], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.inOut(Easing.cubic) });
 
-export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f, sideLabels = true, collagenStyle = "mesh_springs" }) => {
+export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f, sideLabels = true, collagenStyle = "grid_springs" }) => {
   // 2026-10-23 다시 그림 — "너무 지저분하다, 고급스럽게": 화장품 광고 피부 단면처럼 요소를 줄이고(섬유아세포·혈관·낙서 섬유 제거),
   // 고른 리듬(벽돌 각질층·세포 줄·평행 콜라겐 리본), 부드러운 파스텔, 얇은 지시선. 효과는 3단계(stageOf) 그대로.
   const top = 58, epiTop = 80, dermTop = H * 0.36, fatTop = H * 0.78;
@@ -159,6 +159,45 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
           if (show > 0) fresh.push(cluster(cx, cy, 0.4 + 0.75 * show, true, `bn${r}-${c}`));
         }
       }
+  } else if (collagenStyle === "grid_springs") {
+    // 2026-10-25 사람 설명: 격자 그물 — 가로 = 콜라겐 실, 세로 = 작은 스프링. 처음엔 세로 스프링이 몇 개뿐(눌리고 옅게),
+    // 새 콜라겐이 칸마다 스프링으로 채워지며 팽팽해진다(탄력). 열(고주파)은 2단계에 가로 실이 펴진다.
+    const rows = 4, cols = Math.max(6, Math.round(W / 70));
+    const rowY = (r: number) => top0 + 10 + r * ((bot0 - top0 - 20) / (rows - 1));
+    const colX = (c: number) => (c + 0.5) * (W / cols);
+    const hAmp = particles === "heat" ? k([0, 0.33, 0.45, 1], [6, 6, 1, 1]) : fill ? k([0, 0.66, 0.82, 1], [3.5, 3.5, 1, 1]) : 2;
+    for (let r = 0; r < rows; r++) {
+      let d = "";
+      for (let x = 0; x <= W; x += 8) d += `${x ? " L" : "M"} ${x} ${rowY(r) + Math.sin(x / 40 + r) * hAmp}`;
+      ribbons.push(<path key={`gh${r}`} d={d} stroke="#F8DACB" strokeWidth={5} strokeLinecap="round" fill="none"
+        opacity={fill ? k([0, 0.66, 0.82, 1], [0.8, 0.8, 1, 1]) : 0.9} />);
+    }
+    const spring = (x: number, y1: number, y2: number, coils: number, amp: number, color: string, width: number, key: string, op = 1) => {
+      const lead = 5;  // 양 끝 곧은 부분
+      let d = `M ${x} ${y1} L ${x} ${y1 + lead}`;
+      const n = coils * 2;
+      for (let s = 1; s <= n; s++) d += ` L ${x + (s % 2 ? amp : -amp)} ${y1 + lead + ((y2 - y1 - lead * 2) * (s - 0.5)) / n}`;
+      d += ` L ${x} ${y2 - lead} L ${x} ${y2}`;
+      return <path key={key} d={d} stroke={color} strokeWidth={width} fill="none" strokeLinejoin="round" strokeLinecap="round" opacity={op} />;
+    };
+    let order = 0;
+    for (let r = 0; r < rows - 1; r++)
+      for (let c = 0; c < cols; c++) {
+        const x = colX(c), y1 = rowY(r), y2 = rowY(r + 1);
+        const original = (c + r * 2) % 3 === 0;  // 처음부터 있는 스프링: 세 칸에 하나
+        if (original) {
+          // 처음엔 눌려 촘촘하고 옅게 → 다 차면 같이 탄탄해짐
+          const firm = fill ? g : 1;
+          ribbons.push(spring(x, y1, y2, Math.round(5 - 2 * firm), 5 + 2 * firm, firm > 0.5 ? "#FFFCF7" : "#F8DACB", 2.8 + 0.6 * firm, `go${r}-${c}`, 1));
+        } else if (fill) {
+          const show = stepT(g * 12 - order, 0, 1.5);
+          order = (order + 1) % 12;
+          if (show > 0) fresh.push(spring(x, y1 + (y2 - y1) * (1 - show) / 2, y2 - (y2 - y1) * (1 - show) / 2, 3, 7, "#FFFCF7", 3.4, `gn${r}-${c}`, Math.min(1, show)));
+        }
+      }
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++)
+        ribbons.push(<circle key={`gd${r}-${c}`} cx={colX(c)} cy={rowY(r)} r={3.4} fill="#FBE6DA" />);
   } else if (collagenStyle === "mesh_springs") {
     // 2026-10-25 사람 제안: 원래 콜라겐 = 성긴 그물(얇은 다발 4개), 새 콜라겐 = 그물을 받쳐 보강하는 입체 코일 스프링
     const span = bot0 - top0;
