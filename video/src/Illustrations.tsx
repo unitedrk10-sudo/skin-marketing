@@ -35,13 +35,13 @@ const wave = (x0: number, x1: number, y: number, amp: number, step: number, phas
   wavePts(x0, x1, y, amp, step, phase).map(([x, yy], i) => `${i ? "L" : "M"} ${x} ${yy}`).join(" ");
 
 export type SkinProps = { width: number; height: number; highlight?: string; particles?: string; t: number; frame: number;
-  sideLabels?: boolean; collagenStyle?: string };  // lines | mesh | bundles | springs (2026-10-24 비교안)
+  sideLabels?: boolean; collagenStyle?: string };  // mesh_springs(기본, 2026-10-25) | lines | mesh | bundles | springs
 
 // 3단계로 또렷하게 (2026-10-22 "바뀐 점이 직관적으로 보여야"): 0~0.33 1단계 · 0.33~0.66 2단계 · 0.66~1 3단계, 단계 사이만 짧게 넘어간다
 export const stageOf = (t: number) => (t < 0.33 ? 0 : t < 0.66 ? 1 : 2);
 const stepT = (t: number, a: number, b: number) => interpolate(t, [a, b], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.inOut(Easing.cubic) });
 
-export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f, sideLabels = true, collagenStyle = "lines" }) => {
+export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highlight, particles, t, frame: f, sideLabels = true, collagenStyle = "mesh_springs" }) => {
   // 2026-10-23 다시 그림 — "너무 지저분하다, 고급스럽게": 화장품 광고 피부 단면처럼 요소를 줄이고(섬유아세포·혈관·낙서 섬유 제거),
   // 고른 리듬(벽돌 각질층·세포 줄·평행 콜라겐 리본), 부드러운 파스텔, 얇은 지시선. 효과는 3단계(stageOf) 그대로.
   const top = 58, epiTop = 80, dermTop = H * 0.36, fatTop = H * 0.78;
@@ -159,6 +159,43 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
           if (show > 0) fresh.push(cluster(cx, cy, 0.4 + 0.75 * show, true, `bn${r}-${c}`));
         }
       }
+  } else if (collagenStyle === "mesh_springs") {
+    // 2026-10-25 사람 제안: 원래 콜라겐 = 성긴 그물(얇은 다발 4개), 새 콜라겐 = 그물을 받쳐 보강하는 입체 코일 스프링
+    const span = bot0 - top0;
+    const strand = (i: number, dir: number, y0: number) => {
+      let d = "";
+      for (let x = -60; x <= W + 60; x += 8) d += `${x === -60 ? "M" : " L"} ${x} ${y0 + dir * 0.14 * (x - W / 2) + Math.sin(x / 50 + i) * 4}`;
+      return <path key={`ms${i}`} d={d} stroke="#F4CCB9" strokeWidth={5} strokeLinecap="round" fill="none" opacity={Math.max(0.7, oldOp)} />;
+    };
+    [[0.3, 1], [0.3, -1], [0.72, 1], [0.72, -1]].forEach(([p, dir], i) => ribbons.push(strand(i, dir, top0 + span * p)));
+    if (fill) {
+      const coil = (cx: number, show: number, key: string) => {
+        // 입체 코일: 고리마다 뒤쪽 반원(가늘고 진하게) + 앞쪽 반원(굵고 밝게), 아래에서 위로 자란다
+        const loops = 6, rx = 16, ry = 5;
+        const yBot = bot0 - 2, yTop = top0 + 4, h = (yBot - yTop) * show;
+        const parts: React.ReactNode[] = [];
+        for (let l = 0; l < loops; l++) {
+          const cy = yBot - (h * (l + 0.5)) / loops;
+          if (show <= 0) break;
+          parts.push(<path key={`b${l}`} d={`M ${cx - rx} ${cy} A ${rx} ${ry} 0 0 1 ${cx + rx} ${cy}`} stroke="#E8B7A1" strokeWidth={3} fill="none" />);
+          parts.push(<path key={`f${l}`} d={`M ${cx - rx} ${cy} A ${rx} ${ry} 0 0 0 ${cx + rx} ${cy - h / loops}`} stroke="#FFFCF7" strokeWidth={5.5}
+            fill="none" strokeLinecap="round" />);
+        }
+        return (
+          <g key={key} opacity={show > 0 ? 1 : 0}>
+            <ellipse cx={cx} cy={yBot + 3} rx={rx + 4} ry={4} fill="#C98A72" opacity={0.18 * show} />
+            {parts}
+            <circle cx={cx} cy={yBot - h} r={4} fill="#FFFCF7" opacity={show} />
+          </g>
+        );
+      };
+      const xs = [0.16, 0.38, 0.6, 0.82].map((p) => W * p);
+      const order = [1, 3, 0, 2];  // PDLLA 2단계: 먼저 두 개
+      xs.forEach((x, i) => {
+        const show = stepT(g * 4 - order.indexOf(i), 0, 1);
+        fresh.push(coil(x, show, `co${i}`));
+      });
+    }
   } else if (collagenStyle === "springs") {
     // ③ 스프링 받침(비유): 원래 5개는 눌려 촘촘·옅게 → 탄탄해짐, 새 스프링이 사이에 생김
     const spring = (x: number, isNew: boolean, firm: number, key: string, show = 1) => {
