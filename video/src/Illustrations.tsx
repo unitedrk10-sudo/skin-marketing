@@ -162,42 +162,56 @@ export const SkinSection: React.FC<SkinProps> = ({ width: W, height: H, highligh
   } else if (collagenStyle === "grid_springs") {
     // 2026-10-25 사람 설명: 격자 그물 — 가로 = 콜라겐 실, 세로 = 작은 스프링. 처음엔 세로 스프링이 몇 개뿐(눌리고 옅게),
     // 새 콜라겐이 칸마다 스프링으로 채워지며 팽팽해진다(탄력). 열(고주파)은 2단계에 가로 실이 펴진다.
+    // 같은 날 "너무 규칙적 → 불규칙하게, 특히 세로": 스프링 위치·기울기·코일 수·폭·길이를 칸마다 고정 난수로 흔든다.
     const rows = 4, cols = Math.max(6, Math.round(W / 70));
-    const rowY = (r: number) => top0 + 10 + r * ((bot0 - top0 - 20) / (rows - 1));
-    const colX = (c: number) => (c + 0.5) * (W / cols);
-    const hAmp = particles === "heat" ? k([0, 0.33, 0.45, 1], [6, 6, 1, 1]) : fill ? k([0, 0.66, 0.82, 1], [3.5, 3.5, 1, 1]) : 2;
+    const rowBase = (r: number) => top0 + 10 + r * ((bot0 - top0 - 20) / (rows - 1)) + (rand(r * 7 + 3) - 0.5) * 10;
+    const cellW = W / cols;
+    const hAmp = particles === "heat" ? k([0, 0.33, 0.45, 1], [6, 6, 1.5, 1.5]) : fill ? k([0, 0.66, 0.82, 1], [4, 4, 1.8, 1.8]) : 2.5;
+    const rowAt = (r: number, x: number) => rowBase(r) + Math.sin(x / (36 + rand(r) * 18) + r * 1.9) * hAmp + Math.sin(x / 17 + r) * hAmp * 0.25;
     for (let r = 0; r < rows; r++) {
       let d = "";
-      for (let x = 0; x <= W; x += 8) d += `${x ? " L" : "M"} ${x} ${rowY(r) + Math.sin(x / 40 + r) * hAmp}`;
-      ribbons.push(<path key={`gh${r}`} d={d} stroke="#F8DACB" strokeWidth={5} strokeLinecap="round" fill="none"
+      for (let x = 0; x <= W; x += 8) d += `${x ? " L" : "M"} ${x} ${rowAt(r, x)}`;
+      ribbons.push(<path key={`gh${r}`} d={d} stroke="#F8DACB" strokeWidth={4 + rand(r + 20) * 2} strokeLinecap="round" fill="none"
         opacity={fill ? k([0, 0.66, 0.82, 1], [0.8, 0.8, 1, 1]) : 0.9} />);
     }
-    const spring = (x: number, y1: number, y2: number, coils: number, amp: number, color: string, width: number, key: string, op = 1) => {
-      const lead = 5;  // 양 끝 곧은 부분
-      let d = `M ${x} ${y1} L ${x} ${y1 + lead}`;
+    // 기울어진 스프링: 아래 끝(xb) → 위 끝(xt), 코일이 그 축을 따라 좌우로
+    const spring = (xb: number, yb: number, xt: number, yt: number, coils: number, amp: number, color: string, width: number, key: string, op = 1) => {
+      const lead = 4;
+      const len = Math.hypot(xt - xb, yt - yb), ux = (xt - xb) / len, uy = (yt - yb) / len, nx = -uy, ny = ux;
+      const at = (s: number, off: number) => `${xb + ux * s + nx * off} ${yb + uy * s + ny * off}`;
+      let d = `M ${at(0, 0)} L ${at(lead, 0)}`;
       const n = coils * 2;
-      for (let s = 1; s <= n; s++) d += ` L ${x + (s % 2 ? amp : -amp)} ${y1 + lead + ((y2 - y1 - lead * 2) * (s - 0.5)) / n}`;
-      d += ` L ${x} ${y2 - lead} L ${x} ${y2}`;
+      for (let s = 1; s <= n; s++) d += ` L ${at(lead + ((len - lead * 2) * (s - 0.5)) / n, s % 2 ? amp : -amp)}`;
+      d += ` L ${at(len - lead, 0)} L ${at(len, 0)}`;
       return <path key={key} d={d} stroke={color} strokeWidth={width} fill="none" strokeLinejoin="round" strokeLinecap="round" opacity={op} />;
     };
+    const nodes: React.ReactNode[] = [];
     let order = 0;
     for (let r = 0; r < rows - 1; r++)
       for (let c = 0; c < cols; c++) {
-        const x = colX(c), y1 = rowY(r), y2 = rowY(r + 1);
-        const original = (c + r * 2) % 3 === 0;  // 처음부터 있는 스프링: 세 칸에 하나
+        const seed = r * 31 + c * 7;
+        if (rand(seed + 90) < 0.14) continue;  // 몇 칸은 비워 둔다 (자연스럽게)
+        const xb = (c + 0.2 + rand(seed) * 0.6) * cellW, xt = xb + (rand(seed + 1) - 0.5) * cellW * 0.45;
+        const yb = rowAt(r + 1, xb), yt = rowAt(r, xt);
+        const coils = 3 + Math.floor(rand(seed + 2) * 3), amp = 5 + rand(seed + 3) * 3;
+        const original = rand(seed + 4) < 0.3;  // 처음부터 있는 스프링: 약 3할, 자리는 불규칙
         if (original) {
-          // 처음엔 눌려 촘촘하고 옅게 → 다 차면 같이 탄탄해짐
-          const firm = fill ? g : 1;
-          ribbons.push(spring(x, y1, y2, Math.round(5 - 2 * firm), 5 + 2 * firm, firm > 0.5 ? "#FFFCF7" : "#F8DACB", 2.8 + 0.6 * firm, `go${r}-${c}`, 1));
+          const firm = fill ? g : 1;  // 처음엔 눌려 촘촘·옅게 → 다 차면 탄탄
+          ribbons.push(spring(xb, yb, xt, yt, Math.round(coils + 2 - 2 * firm), amp - 1 + 2 * firm, firm > 0.5 ? "#FFFCF7" : "#F8DACB",
+            2.6 + 0.6 * firm, `go${r}-${c}`, 1));
+          nodes.push(<circle key={`nb${seed}`} cx={xb} cy={yb} r={3} fill="#FBE6DA" />, <circle key={`nt${seed}`} cx={xt} cy={yt} r={3} fill="#FBE6DA" />);
         } else if (fill) {
-          const show = stepT(g * 12 - order, 0, 1.5);
-          order = (order + 1) % 12;
-          if (show > 0) fresh.push(spring(x, y1 + (y2 - y1) * (1 - show) / 2, y2 - (y2 - y1) * (1 - show) / 2, 3, 7, "#FFFCF7", 3.4, `gn${r}-${c}`, Math.min(1, show)));
+          const show = stepT(g * 12 - (order % 12) - rand(seed + 5) * 0.8, 0, 1.4);
+          order++;
+          if (show > 0) {
+            const mx = (xb + xt) / 2, my = (yb + yt) / 2, s = Math.min(1, show);
+            fresh.push(spring(mx + (xb - mx) * s, my + (yb - my) * s, mx + (xt - mx) * s, my + (yt - my) * s, coils, amp, "#FFFCF7",
+              3 + rand(seed + 6) * 0.8, `gn${r}-${c}`, s));
+            if (show >= 1) nodes.push(<circle key={`nb${seed}`} cx={xb} cy={yb} r={3} fill="#FFF6EE" />, <circle key={`nt${seed}`} cx={xt} cy={yt} r={3} fill="#FFF6EE" />);
+          }
         }
       }
-    for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++)
-        ribbons.push(<circle key={`gd${r}-${c}`} cx={colX(c)} cy={rowY(r)} r={3.4} fill="#FBE6DA" />);
+    fresh.push(...nodes);
   } else if (collagenStyle === "mesh_springs") {
     // 2026-10-25 사람 제안: 원래 콜라겐 = 성긴 그물(얇은 다발 4개), 새 콜라겐 = 그물을 받쳐 보강하는 입체 코일 스프링
     const span = bot0 - top0;
