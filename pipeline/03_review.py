@@ -317,6 +317,10 @@ def list_message(stage: str, compact: bool = False) -> str:
             line += f" 👤{', '.join(review['always_human'])}"
         elif not review:
             line += " 자동검수 전"
+        figs = __import__("importlib").import_module("pipeline.figures").attachments(path) if stage == "drafts" else []
+        if figs:
+            line += f" 🖼 그림 {len(figs)}개 첨부"
+        attachments += figs  # 블로그에 들어갈 설명 그림 (2026-10-26 — 시술 글 검수 때 같이 본다)
         if stage == "drafts" and not compact:
             lines += ["", line] + _draft_summary(path, draft, review)
             attachments.append(review_doc(path))

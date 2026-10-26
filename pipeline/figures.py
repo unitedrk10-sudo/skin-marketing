@@ -86,8 +86,49 @@ def make(path: Path) -> list[dict]:
         saved.append({"file": png.name, "after_heading": f["after_heading"], "alt": f.get("alt", ""),
                       "caption": " — ".join(x for x in (f.get("label"), f.get("note")) if x), "source": f.get("source", ""),
                       "fact_ids": f.get("fact_ids") or []})
-    save_json(path / "figures.json", {"made_at": now_iso(), "figures": saved})
+    save_json(path / "figures.json", {"made_at": now_iso(), "figures": saved, "blog_hash": blog_hash(path)})
     return saved
+
+
+def blog_hash(path: Path) -> str:
+    import hashlib
+    return hashlib.sha1(load_draft(path)["blog"].get("markdown", "").encode()).hexdigest()[:12]
+
+
+def stale(path: Path) -> bool:
+    """그림이 없거나, 본문이 바뀌어(수정 요청 등) 다시 만들어야 하나."""
+    f = path / "figures.json"
+    return not f.exists() or load_json(f).get("blog_hash") not in (None, blog_hash(path))
+
+
+def wants_figures(draft: dict) -> bool:
+    """시술 정보 글만 (관광 글·스폰서 글은 그림 없이)."""
+    return not draft.get("sponsor") and (draft.get("content_type") or (draft.get("topic") or {}).get("axis")) in ("procedure", "skincare")
+
+
+def in_review() -> list[Path]:
+    """검수 대기 초안 중 그림이 필요한 것 (2026-10-26: 다음 시술 글부터 검수 메시지에 그림을 같이 보낸다)."""
+    from pipeline.common import draft_dirs
+    return [p for p in draft_dirs("drafts") if (p / "draft.json").exists() and wants_figures(load_draft(p)) and stale(p)]
+
+
+def ensure_drafts(limit: int = 2) -> list[str]:
+    done = []
+    for path in in_review()[:limit]:
+        try:
+            figs = make(path)
+            done.append(f"🖼 검수용 그림 {len(figs)}개: {path.name}")
+        except (FigureError, llm.LLMError) as e:
+            save_json(path / "figures.json", {"made_at": now_iso(), "figures": [], "error": str(e)[:300], "blog_hash": blog_hash(path)})
+            done.append(f"⚠️ 검수용 그림 실패 ({path.name}): {e}")
+    return done
+
+
+def attachments(path: Path) -> list[Path]:
+    f = path / "figures.json"
+    if not f.exists():
+        return []
+    return [path / "figures" / x["file"] for x in load_json(f).get("figures") or [] if (path / "figures" / x["file"]).exists()]
 
 
 def upcoming(now: datetime | None = None) -> list[Path]:
@@ -101,7 +142,7 @@ def upcoming(now: datetime | None = None) -> list[Path]:
     for draft_id, slot in sorted(sched.items(), key=lambda x: x[1]["date"]):
         at = datetime.fromisoformat(slot.get("at") or slot["date"] + "T07:00:00+09:00")
         path = shorts.post_path(draft_id)
-        if not path or at <= now or (path / "figures.json").exists():
+        if not path or at <= now or not stale(path):
             continue
         if draft_id in live:
             continue

@@ -2920,3 +2920,22 @@ def test_single_study_followups_collected_and_closed(env):
     common.save_json(later / "draft.json", d2)
     fu.scan()
     assert fu.load()["items"][key]["status"] == "done" and fu.prompt_block() == "(none)"
+
+
+def test_review_message_attaches_blog_figures(env):
+    review = importlib.import_module("pipeline.03_review")
+    fig = importlib.import_module("pipeline.figures")
+    path = _published("2026-W45-01-thermage-x", state="drafts", live=False)
+    d = common.load_json(path / "draft.json")
+    d["content_type"] = "procedure"
+    common.save_json(path / "draft.json", d)
+    assert [p.name for p in fig.in_review()] == ["2026-W45-01-thermage-x"]      # 시술 글 → 검수 전에 그림
+    (path / "figures").mkdir()
+    (path / "figures" / "fig1.png").write_bytes(b"png")
+    common.save_json(path / "figures.json", {"figures": [{"file": "fig1.png"}], "blog_hash": fig.blog_hash(path)})
+    assert fig.in_review() == []
+    msg = review.list_message("drafts", compact=True)
+    assert "🖼 그림 1개 첨부" in msg and "fig1.png" in msg and "MEDIA:" in msg
+    d["blog"]["markdown"] += " changed"                                      # 수정 요청으로 본문이 바뀌면 다시 만든다
+    common.save_json(path / "draft.json", d)
+    assert fig.stale(path)

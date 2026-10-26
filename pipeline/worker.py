@@ -217,6 +217,12 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             log.exception("Claude Code 검수 실패")
             changed = True  # ⏳ 상태라도 알려준다
 
+    try:  # 시술 글 검수 메시지에 블로그 그림을 같이 보낸다 (2026-10-26) — 검수 전에 먼저 만든다
+        if importlib.import_module("pipeline.figures").ensure_drafts():
+            changed = True
+    except Exception as e:  # noqa: BLE001 — 그림 실패가 검수를 막지 않게
+        log.warning("검수용 그림 실패: %s", e)
+
     message = ""
     if changed:
         # 초안마다 메시지를 따로 보내고, 크론 출력(마지막에 도착)은 번호·답장 예시만 담은 요약으로.
