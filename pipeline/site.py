@@ -594,7 +594,7 @@ def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> 
 def registry_box(registry_url: str | None) -> str:
     href = html.escape(registry_url or REGISTRY_URL)
     return (f'<aside class="box"><strong>Looking for a clinic?</strong> Check whether a clinic is registered for '
-            f'international patients on the government-run <a href="{href}" rel="noopener" target="_blank">Medical Korea '
+            f'international patients on the government-run <a href="{href}" rel="nofollow noopener" target="_blank">Medical Korea '
             f'registry</a>. We don\'t recommend or rank individual clinics.</aside>')
 
 
