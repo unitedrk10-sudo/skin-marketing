@@ -365,6 +365,8 @@ def compose_pending(limit: int = 5) -> tuple[list[str], list[str]]:
         try:
             compose(path)
             done.append(path.name)
+        except llm.ClaudeAuthExpired:
+            raise  # 로그인 만료는 워커가 한 번만 알리고 기다린다 (글마다 실패로 쌓지 않음)
         except llm.LLMError as e:
             failed.append(f"{path.name}: {e}")
     return done, failed

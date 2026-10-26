@@ -2939,3 +2939,17 @@ def test_review_message_attaches_blog_figures(env):
     d["blog"]["markdown"] += " changed"                                      # 수정 요청으로 본문이 바뀌면 다시 만든다
     common.save_json(path / "draft.json", d)
     assert fig.stale(path)
+
+
+def test_claude_login_expiry_notifies_once_and_pauses_claude_steps(env, monkeypatch):
+    worker = importlib.import_module("pipeline.worker")
+    err = llm.ClaudeAuthExpired("Claude 로그인 만료: OAuth session expired")
+    first = worker.mark_auth_down(err)
+    assert first and "claude setup-token" in first
+    assert worker.mark_auth_down(err) is None                                   # 두 번째부터는 조용히
+    assert worker.claude_auth_down()                                            # 30분 안에는 확인 호출도 안 함
+    st = common.load_json(worker.auth_file())
+    st["checked_at"] = "2000-01-01T00:00:00+00:00"
+    common.save_json(worker.auth_file(), st)
+    assert worker.claude_auth_down() is False and not worker.auth_file().exists()  # 가짜 LLM 이 답하면 복구
+    assert llm.AUTH_WORDS.search("Failed to authenticate: OAuth session expired and could not be refreshed")

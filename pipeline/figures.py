@@ -118,6 +118,8 @@ def ensure_drafts(limit: int = 2) -> list[str]:
         try:
             figs = make(path)
             done.append(f"🖼 검수용 그림 {len(figs)}개: {path.name}")
+        except llm.ClaudeAuthExpired:
+            raise
         except (FigureError, llm.LLMError) as e:
             save_json(path / "figures.json", {"made_at": now_iso(), "figures": [], "error": str(e)[:300], "blog_hash": blog_hash(path)})
             done.append(f"⚠️ 검수용 그림 실패 ({path.name}): {e}")
@@ -156,6 +158,8 @@ def ensure_upcoming(limit: int = 1) -> list[str]:
         try:
             figs = make(path)
             done.append(f"🖼 블로그 그림 {len(figs)}개: {load_draft(path)['blog'].get('title', '')}")
+        except llm.ClaudeAuthExpired:
+            raise
         except (FigureError, llm.LLMError) as e:
             save_json(path / "figures.json", {"made_at": now_iso(), "figures": [], "error": str(e)[:300]})
             done.append(f"⚠️ 블로그 그림 실패 ({path.name}): {e}")

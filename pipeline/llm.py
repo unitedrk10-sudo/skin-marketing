@@ -44,6 +44,10 @@ class LLMError(RuntimeError):
     pass
 
 
+class ClaudeAuthExpired(LLMError):
+    """claude CLI 로그인 만료 (2026-10-26 — OAuth 세션 만료로 하루 운영이 멈춤). 워커가 한 번만 알리고 Claude 단계를 쉬다가 복구되면 다시 한다."""
+
+
 class RateLimited(LLMError):
     """사용량 한도 — 같은 요청을 나중에 다시 하면 된다 (워커는 요청을 버리지 않는다)."""
 
@@ -194,6 +198,10 @@ LIMIT_WORDS = re.compile(r"usage limit|session limit|weekly limit|rate limit|lim
                          r"hit your .{0,20}limit|overloaded|too many requests", re.I)
 
 
+AUTH_WORDS = re.compile(r"failed to authenticate|oauth .{0,20}expired|not logged in|please run /login|invalid (api key|token)|"
+                        r"authentication (failed|error)|unauthorized", re.I)
+
+
 def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult:
     """프롬프트는 stdin 으로. 도구는 cfg.tools (기본: 없음). 저장소 밖 빈 폴더에서 실행해 CLAUDE.md·MCP 를 읽지 않는다."""
     cmd = [os.environ.get("CLAUDE_BIN", "claude"), "-p", "--output-format", "json", "--strict-mcp-config",
@@ -224,6 +232,8 @@ def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRe
         detail = text or (proc.stderr or "").strip()[-500:] or f"exit {proc.returncode}"
         if LIMIT_WORDS.search(detail):
             raise RateLimited(f"Claude 사용량 한도: {detail[:200]}")
+        if AUTH_WORDS.search(detail):
+            raise ClaudeAuthExpired(f"Claude 로그인 만료: {detail[:200]}")
         raise LLMError(f"claude -p 실패 (stage={stage}): {detail[:300]}")
     # Claude Code 는 보조 작업에 다른 모델(Haiku)도 쓴다 — 출력을 가장 많이 만든 모델이 실제 작성 모델
     usage = out.get("modelUsage") or {}

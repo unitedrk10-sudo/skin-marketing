@@ -26,7 +26,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO
 
@@ -164,6 +164,49 @@ def set_hold(error: str, now: datetime | None = None) -> datetime:
     return until
 
 
+def auth_file() -> Path:
+    return content_dir() / "worker" / "claude_auth.json"
+
+
+AUTH_RETRY_MIN = 30  # 로그인 만료 중에는 30분마다 한 번만 짧게 확인
+
+
+def claude_auth_down() -> bool:
+    """Claude 로그인 만료 상태인가. 30분마다 짧은 호출로 확인해 복구되면 풀고 True/False 를 돌려준다."""
+    f = auth_file()
+    if not f.exists():
+        return False
+    st = load_json(f)
+    last = datetime.fromisoformat(st.get("checked_at") or st["since"])
+    if datetime.now(timezone.utc) - last < timedelta(minutes=AUTH_RETRY_MIN):
+        return True
+    try:
+        llm.generate("social", "Reply with the single word OK.")
+    except llm.ClaudeAuthExpired:
+        st["checked_at"] = datetime.now(timezone.utc).isoformat()
+        save_json(f, st)
+        return True
+    except llm.LLMError:
+        pass  # 다른 오류(한도 등)는 로그인 문제가 아니다
+    f.unlink(missing_ok=True)
+    st["recovered"] = True
+    save_json(f.with_name("claude_auth_recovered.json"), st)
+    return False
+
+
+def mark_auth_down(err: Exception) -> str | None:
+    """처음 만료됐을 때만 알림 문구를 돌려준다 (이후 실행은 조용히)."""
+    f = auth_file()
+    if f.exists():
+        return None
+    f.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    save_json(f, {"since": now, "checked_at": now, "error": str(err)[:200]})
+    return ("🔑 Claude 로그인이 만료돼 글쓰기(초안·SNS 글·숏폼 대본)를 멈췄습니다. 블로그 게시·오늘의 SNS 글 보내기는 계속됩니다.\n"
+            "PC 에서 다시 로그인하면 30분 안에 자동으로 이어서 합니다 (방법: 터미널에서 `claude setup-token` → 받은 토큰을 Hermes .env 의 "
+            "CLAUDE_CODE_OAUTH_TOKEN 에, 또는 `claude` 실행 후 /login).")
+
+
 def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     """반환: (텔레그램으로 보낼 메시지 — 없으면 "", 실패 목록)"""
     review_mod = importlib.import_module("pipeline.02b_auto_review")
@@ -177,11 +220,21 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     hold_file().unlink(missing_ok=True)
     notices: list[str] = []
 
-    for path in sorted(requests_dir().glob("*.json")):
+    auth_down = claude_auth_down()
+    recovered = auth_file().with_name("claude_auth_recovered.json")
+    if recovered.exists():
+        recovered.unlink()
+        notices.append("✅ Claude 로그인 복구 — 멈췄던 글쓰기를 이어서 합니다.")
+    for path in [] if auth_down else sorted(requests_dir().glob("*.json")):
         req = load_json(path)
         try:
             _process(req)
             path.unlink()
+        except llm.ClaudeAuthExpired as e:  # 로그인 만료 — 요청은 그대로 두고 복구 후 다시
+            if msg := mark_auth_down(e):
+                notices.append(msg)
+            auth_down = True
+            break
         except llm.RateLimited as e:  # 사용량 한도·시간 초과 — 요청을 그대로 두고 초기화 시각 이후 다시
             until = set_hold(str(e))
             log.warning("요청 보류: %s — %s", path.name, e)
@@ -195,10 +248,15 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             path.replace(failed / path.name)
         changed = True
 
-    for path in [] if claude_hold() else review_mod.unreviewed_drafts():
+    for path in [] if claude_hold() or auth_down else review_mod.unreviewed_drafts():
         try:
             review_mod.review_with_regeneration(path)
             changed = True
+        except llm.ClaudeAuthExpired as e:
+            if msg := mark_auth_down(e):
+                notices.append(msg)
+            auth_down = True
+            break
         except llm.RateLimited as e:  # 차단 → 재생성하다 한도 (02b 가 검수 기록을 지워 다음에 다시 한다)
             until = set_hold(str(e))
             log.warning("재생성 보류: %s — %s", path.name, e)
@@ -218,7 +276,7 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             changed = True  # ⏳ 상태라도 알려준다
 
     try:  # 시술 글 검수 메시지에 블로그 그림을 같이 보낸다 (2026-10-26) — 검수 전에 먼저 만든다
-        if importlib.import_module("pipeline.figures").ensure_drafts():
+        if not auth_down and importlib.import_module("pipeline.figures").ensure_drafts():
             changed = True
     except Exception as e:  # noqa: BLE001 — 그림 실패가 검수를 막지 않게
         log.warning("검수용 그림 실패: %s", e)
@@ -254,8 +312,13 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
 
     social_mod = importlib.import_module("pipeline.social")
     try:
-        if social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 글 3종 (한 번에 3건, 보내기는 오늘의 글로)
-            made, social_failures = social_mod.compose_pending(limit=3)
+        if not auth_down and social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 글 3종 (한 번에 3건, 보내기는 오늘의 글로)
+            try:
+                made, social_failures = social_mod.compose_pending(limit=3)
+            except llm.ClaudeAuthExpired as e:
+                if msg := mark_auth_down(e):
+                    message = (message + "\n\n" if message else "") + msg
+                auth_down, made, social_failures = True, [], []
             failures += [f"SNS 글 생성 실패 {f}" for f in social_failures]
             blocked = [f"⛔ SNS 글 검사 실패: {d['title']} [{social_mod.LABEL[k]}] — {'; '.join(i['problems'][:2])}"
                        for name in made for d in [social_mod.load_social(social_mod._file(name).parent)]
@@ -266,7 +329,7 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         reminder = importlib.import_module("pipeline.site").publish_reminder()  # 게시일(월·수·금)에 올라갈 글이 없으면
         exp = importlib.import_module("pipeline.experiment")  # 숏폼 화면 소스 실험: 그날 안내·영상이 들어오면 편집
         experiments = "\n\n".join(m for m in (exp.daily_message(), exp.poll_message()) if m)
-        ahead = "\n".join(importlib.import_module("pipeline.figures").ensure_upcoming()  # 게시 예정 글: 블로그 그림 먼저
+        ahead = "" if auth_down else "\n".join(importlib.import_module("pipeline.figures").ensure_upcoming()  # 게시 예정 글: 블로그 그림 먼저
                           + importlib.import_module("pipeline.shorts").make_ready())  # 다 찬 주: 숏폼 대본
         if ahead:  # 2026-10-22 사람 요청: 텔레그램 보고는 잠시 멈춤 — 만들기만 하고 로그에 남긴다
             log.info("미리 만들기: %s", ahead.replace("\n", " | "))
