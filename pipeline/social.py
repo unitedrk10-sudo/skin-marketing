@@ -530,6 +530,9 @@ def _waiting_for_blog(now: datetime) -> bool:
     return False
 
 
+BACKLOG = 4  # 일요일 저녁에 안 보낸 글이 이만큼(글 1편 몫) 남아 있으면 아직 밀린 상태 — 평소 주에는 토요일까지 다 나간다
+
+
 def daily_hours() -> list[int]:
     d = settings()["daily"]
     return list(d.get("hours") or [d["hour"]])
@@ -548,7 +551,7 @@ def due_slot(now: datetime) -> str | None:
 
 def pick_today(now: datetime) -> Ref | None:
     """지금 보낼 글 하나. 이번 칸을 이미 보냈거나 시각 전이면 None."""
-    if not due_slot(now):
+    if not (slot := due_slot(now)):
         return None
     if now.weekday() == 6 and (key := roundup(now.date())):
         item = _load(Ref(key, "roundup"))["items"]["roundup"]
@@ -559,6 +562,8 @@ def pick_today(now: datetime) -> Ref | None:
     candidates = [(ref, item) for ref, _, item in entries()
                   if ref.kind in KINDS and item["status"] == "ready" and not item.get("scheduled_on")
                   and not any(c.get("posted") for c in item["channels"].values())]
+    if now.weekday() == 6 and "#" in slot and len(candidates) < BACKLOG:
+        return None  # 일요일은 1개만 — 밀린 글이 남아 있는 동안만 두 번째 칸도 쓴다 (2026-10-29)
     for kinds in (("link",), ("fact", "angle", "ask")):
         for ref, _ in candidates:
             if ref.kind in kinds:

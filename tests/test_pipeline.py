@@ -2359,6 +2359,12 @@ def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkey
     assert social_mod.resolve("오늘") == social_mod.Ref("roundup-2026-W42", "roundup")
     out = social_mod.record("오늘", "x", "https://x.com/Skinboundkorea/status/9")
     assert "`All guides with sources: https://skinboundkorea.com/`" in out
+    social_mod.compose(_published("2026-W41-08-laser"))
+    sunday_eve = (MONDAY + timedelta(days=6)).replace(hour=20)
+    monkeypatch.setattr(social_mod, "BACKLOG", 99)
+    assert social_mod.daily_message(sunday_eve) == ""                            # 일요일은 정리 1개만 (밀린 글 없으면)
+    monkeypatch.setattr(social_mod, "BACKLOG", 1)
+    assert "[오늘의 SNS 글 2/2]" in social_mod.daily_message(sunday_eve)          # 밀려 있으면 일요일도 2개
 
 
 def test_social_daily_waits_for_todays_blog_post(env, monkeypatch):
