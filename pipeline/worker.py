@@ -107,7 +107,23 @@ def _process(req: dict) -> None:
 
 
 def hermes_send(text: str) -> bool:
-    """Hermes 로 텔레그램(홈 채널)에 메시지 하나를 보낸다 — 길면 Hermes 가 나눠 보낸다."""
+    """Hermes 로 텔레그램에 보낸다. 실패하면 줄 단위로 작게(약 1500자) 나눠 한 번 더 — 긴 검수 메시지가
+    통째로는 시간 초과로 계속 실패하고 나누면 가는 경우가 있었다 (2026-10-29)."""
+    if _hermes_send_once(text):
+        return True
+    if len(text) <= 1500 or "MEDIA:" in text:
+        return False
+    parts, cur = [], ""
+    for line in text.splitlines():
+        if cur and len(cur) + len(line) > 1500:
+            parts.append(cur)
+            cur = ""
+        cur += line + "\n"
+    parts.append(cur)
+    return all(_hermes_send_once(p) for p in parts)
+
+
+def _hermes_send_once(text: str) -> bool:
     hermes = os.environ.get("HERMES_BIN") or shutil.which("hermes")
     if not hermes:
         return False
