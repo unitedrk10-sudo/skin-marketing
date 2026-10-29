@@ -2340,13 +2340,18 @@ def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkey
     social_mod.compose(_published())
     assert social_mod.daily_message(MONDAY.replace(hour=8)) == ""                # 9시 전
     msg = social_mod.daily_message(MONDAY)
-    assert msg.startswith("[오늘의 SNS 글] 10/12(월) · 새 글 소개 — What is Rejuran?")
+    assert msg.startswith("[오늘의 SNS 글 1/2] 10/12(월) · 새 글 소개 — What is Rejuran?")
     assert "'오늘 게시 완료 x <주소>' → 답글로 붙일 블로그 링크 문구" in msg
-    assert social_mod.daily_message(MONDAY.replace(hour=15)) == ""               # 하루 한 번
-    assert "사실 하나" in social_mod.daily_message(MONDAY + timedelta(days=1))
-    assert "여행 팁·흔한 오해" in social_mod.daily_message(MONDAY + timedelta(days=2))
-    assert "독자에게 질문" in social_mod.daily_message(MONDAY + timedelta(days=3))
-    assert social_mod.daily_message(MONDAY + timedelta(days=4)) == ""            # 보낼 게 없으면 조용히
+    assert social_mod.daily_message(MONDAY.replace(hour=15)) == ""               # 칸마다 한 번 (9시 칸은 보냄)
+    evening = social_mod.daily_message(MONDAY.replace(hour=20))                  # 20시 두 번째 칸 (2026-10-29)
+    assert evening.startswith("[오늘의 SNS 글 2/2] 10/12(월) · 사실 하나")
+    assert social_mod.daily_message(MONDAY.replace(hour=22)) == ""
+    monkeypatch.setattr(social_mod, "now_kst", lambda: MONDAY.replace(hour=21))
+    assert social_mod.resolve("오늘").kind == "fact"                              # "오늘" = 가장 최근에 보낸 칸
+    assert "여행 팁·흔한 오해" in social_mod.daily_message(MONDAY + timedelta(days=1))
+    assert "독자에게 질문" in social_mod.daily_message(MONDAY + timedelta(days=2))
+    assert social_mod.daily_message(MONDAY + timedelta(days=3)) == ""            # 보낼 게 없으면 조용히
+    assert social_mod.daily_message(MONDAY + timedelta(days=4)) == ""
     _published("2026-W41-08-laser")                                             # 정리 글은 그 주 2편 이상일 때만
     sunday = social_mod.daily_message(MONDAY + timedelta(days=6))
     assert "한 주 정리" in sunday and "%E2%86%92%20What%20is%20Rejuran%3F" in sunday   # 작성 링크 안: "→ What is Rejuran?"

@@ -225,7 +225,14 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     if recovered.exists():
         recovered.unlink()
         notices.append("✅ Claude 로그인 복구 — 멈췄던 글쓰기를 이어서 합니다.")
-    for path in [] if auth_down else sorted(requests_dir().glob("*.json")):
+    pending = [] if auth_down else sorted(requests_dir().glob("*.json"))
+    if pending:  # 초안 작성은 수십 분 걸린다 — 오늘의 SNS 글은 기다리게 하지 않고 먼저 보낸다 (2026-10-29)
+        try:
+            if (early := importlib.import_module("pipeline.social").daily_message()) and not (sender or hermes_send)(early):
+                notices.append(early)  # 따로 못 보냈으면 이번 실행 메시지에 붙인다
+        except Exception as e:  # noqa: BLE001
+            log.warning("오늘의 SNS 글 먼저 보내기 실패: %s", e)
+    for path in pending:
         req = load_json(path)
         try:
             _process(req)

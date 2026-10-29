@@ -530,10 +530,25 @@ def _waiting_for_blog(now: datetime) -> bool:
     return False
 
 
-def pick_today(now: datetime) -> Ref | None:
-    """오늘 보낼 글 하나. 이미 골랐거나 시각 전이면 None."""
+def daily_hours() -> list[int]:
+    d = settings()["daily"]
+    return list(d.get("hours") or [d["hour"]])
+
+
+def due_slot(now: datetime) -> str | None:
+    """보낼 차례인 칸 (첫 칸 = 날짜, 둘째 칸부터 = 날짜#2 …). 2026-10-29: 글 1편당 4종 + 일요일 정리로 주 13개가 생겨 하루 2개."""
     state = load_json(daily_file()) if daily_file().exists() else {}
-    if now.date().isoformat() in state or now.hour < settings()["daily"]["hour"]:
+    today = now.date().isoformat()
+    for n, hour in enumerate(daily_hours(), 1):
+        key = today if n == 1 else f"{today}#{n}"
+        if now.hour >= hour and key not in state:
+            return key
+    return None
+
+
+def pick_today(now: datetime) -> Ref | None:
+    """지금 보낼 글 하나. 이번 칸을 이미 보냈거나 시각 전이면 None."""
+    if not due_slot(now):
         return None
     if now.weekday() == 6 and (key := roundup(now.date())):
         item = _load(Ref(key, "roundup"))["items"]["roundup"]
@@ -552,20 +567,21 @@ def pick_today(now: datetime) -> Ref | None:
 
 
 def daily_message(now: datetime | None = None) -> str:
-    """오전 9시(한국 시간) 이후 첫 호출에 오늘의 글 1개 (하루 한 번). 보낼 게 없으면 빈 문자열."""
+    """하루 칸(channels.yaml daily.hours, 한국 시간)마다 그 시각 이후 첫 호출에 글 1개. 보낼 게 없으면 빈 문자열."""
     now = now or now_kst()
     ref = pick_today(now)
     if not ref:
         return ""
+    slot = due_slot(now)
     data = _load(ref)
     item = data["items"][ref.kind]
-    today = now.date().isoformat()
-    item["scheduled_on"] = today
+    item["scheduled_on"] = now.date().isoformat()
     _save(ref, data)
     state = load_json(daily_file()) if daily_file().exists() else {}
-    state[today] = {"key": ref.key, "kind": ref.kind}
+    state[slot] = {"key": ref.key, "kind": ref.kind}
     save_json(daily_file(), state)
-    head = f"[오늘의 SNS 글] {now:%m/%d}({DAY_NAMES[now.weekday()]}) · {LABEL[ref.kind]} — {data['title']}"
+    n, total = int(slot.partition("#")[2] or 1), len(daily_hours())
+    head = f"[오늘의 SNS 글{f' {n}/{total}' if total > 1 else ''}] {now:%m/%d}({DAY_NAMES[now.weekday()]}) · {LABEL[ref.kind]} — {data['title']}"
     return "\n".join([head, *_channel_lines("오늘", item)])
 
 
@@ -574,7 +590,7 @@ def resolve(ref: str) -> Ref:
     ref = ref.strip()
     if ref in TODAY:
         state = load_json(daily_file()) if daily_file().exists() else {}
-        days = sorted(d for d in state if d <= now_kst().date().isoformat())
+        days = sorted(d for d in state if d[:10] <= now_kst().date().isoformat())  # 2026-10-29#2 = 그날 두 번째 칸
         if not days:
             raise SocialError("보낸 오늘의 SNS 글이 없습니다")
         latest = state[days[-1]]  # 자정을 넘겨 답해도 가장 최근에 보낸 글
