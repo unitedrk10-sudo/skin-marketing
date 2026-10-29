@@ -111,7 +111,7 @@ def hermes_send(text: str) -> bool:
     2026-10-29: Hermes 가 긴 글을 스스로 나눠 보내다 뒤 조각에서 시간 초과가 나면 앞 조각은 이미 갔는데 실패로 돌아와,
     통째로 다시 보내면서 같은 초안 메시지가 두 번 갔다 → 보낸 조각은 다시 보내지 않고, 실패한 조각만 한 번 더."""
     if "MEDIA:" in text or len(text) <= SEND_PIECE:
-        return _hermes_send_once(text) or _hermes_send_once(text)
+        return _send_retry(text)
     parts, cur = [], ""
     for line in text.splitlines():
         if cur and len(cur) + len(line) > SEND_PIECE:
@@ -120,7 +120,7 @@ def hermes_send(text: str) -> bool:
         cur += line + "\n"
     parts.append(cur)
     for n, part in enumerate(parts):
-        if not (_hermes_send_once(part) or _hermes_send_once(part)):
+        if not _send_retry(part):
             if n == 0:
                 return False  # 아무것도 안 갔다 — 워커가 다른 방식으로 보낸다
             log.warning("텔레그램 조각 %d/%d 전송 실패 — 앞 조각은 이미 보냄, 나머지는 건너뜀", n + 1, len(parts))
@@ -129,6 +129,16 @@ def hermes_send(text: str) -> bool:
 
 
 SEND_PIECE = 3000
+SEND_TRIES = 4  # 이 PC 의 텔레그램 연결이 자주 끊겨 같은 글도 시간 초과가 났다 났다 한다 (2026-10-29 확인 — 내용 문제 아님)
+
+
+def _send_retry(text: str) -> bool:
+    for attempt in range(SEND_TRIES):
+        if _hermes_send_once(text):
+            return True
+        if attempt + 1 < SEND_TRIES and "PYTEST_CURRENT_TEST" not in os.environ:
+            time.sleep(10)
+    return False
 
 
 def _hermes_send_once(text: str) -> bool:
