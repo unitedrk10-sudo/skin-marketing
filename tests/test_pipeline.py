@@ -3068,3 +3068,24 @@ def test_social_resolve_today_slot(env):
     assert social.resolve("오늘#1") == social.Ref("a", "fact") and social.resolve("오늘#2") == social.Ref("b", "angle")
     with pytest.raises(social.SocialError):
         social.resolve("오늘#3")
+
+
+@pytest.mark.parametrize("text,chunks", [
+    ("1 승인하고 오늘 스레드 올려", ["1 승인", "오늘 스레드 올려"]),
+    ("1 승인\n2 폐기\n오늘 스레드 올려", ["1 승인\n2 폐기", "오늘 스레드 올려"]),
+    ("2 수정: 첫 문단 고쳐\n3\n둘째 줄\n오늘 스레드 올려", ["2 수정: 첫 문단 고쳐\n3\n둘째 줄", "오늘 스레드 올려"]),
+    ("그림 1 승인, 블로그 일정", ["그림 1 승인", "블로그 일정"]),
+    ("1 승인\n이거 괜찮아?", None),
+    ("다 괜찮아", None),
+])
+def test_telegram_router_splits_commands_in_order(text, chunks):
+    assert importlib.import_module("pipeline.telegram_router").split_commands(text) == chunks
+
+
+def test_telegram_router_runs_in_order_and_stops_on_failure(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    ran = []
+    router.run = lambda args: ran.append(args[-1]) or ("❓ 안 됨" if "2 폐기" in args else "ok")
+    out = router.handle("1 승인하고 그림 1 승인\n2 폐기\n오늘 스레드 올려")
+    assert ran == ["1 승인", "1 승인", "2 폐기"]
+    assert "실행 안 한 명령" in out and "오늘 스레드 올려" in out

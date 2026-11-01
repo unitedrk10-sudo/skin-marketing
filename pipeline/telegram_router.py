@@ -28,6 +28,7 @@ HISTORY_KEEP = 6
 X_URL = re.compile(r"https://(?:www\.|mobile\.)?(?:x|twitter)\.com/\S+/status/\d+\S*", re.I)
 THREADS_URL = re.compile(r"https://(?:www\.)?threads\.(?:com|net)/\S+", re.I)
 TARGET = r"(?:전체|[Ww\d][Ww\d,~\s\-번]*?)"
+CHAIN = re.compile(r"(승인|폐기|병원확인|빼기|올려)(?:하고|한 다음|한 뒤|\s*그리고|\s*,)\s+")  # "1 승인하고 오늘 스레드 올려"
 SECRET = re.compile(r"(access_token=|key=|token=|Bearer\s+)\S+|\b[A-Za-z0-9_\-]{32,}\b")
 
 HELP = """[명령어]
@@ -40,6 +41,7 @@ SNS: 오늘 스레드 올려 / 오늘 2번째 스레드 올려 / 3 스레드 올
 스폰서: 스폰서 목록 / 스폰서 <id> | <영문 제목> | <답할 질문> (코스 글은 끝에 | 코스)
 숏폼: 숏폼 1,3 승인 / 숏폼 2 반려 / 숏폼 4 수정: 내용 / 숏폼 검수 목록
 실험: 실험 영상 넣었어 / 실험 점수 4 4 3 예 / 실험 정리
+여러 개: 줄을 나누거나 연달아 보내면 순서대로 실행합니다 (예: 1 승인하고 오늘 스레드 올려). 앞 명령이 실패하면 멈춥니다.
 그 외 말은 Claude 가 답만 합니다 (실행은 하지 않습니다)."""
 
 
@@ -196,16 +198,57 @@ def chat(text: str) -> str:
     return result.text.strip() + "\n\n(실행한 작업 없음)"
 
 
-def handle(text: str) -> str:
-    cmd = parse(text)
-    if cmd is None:
-        return chat(text)
+def _is_memo(chunk: str) -> bool:
+    return bool(re.search(r"(수정|되돌리기)\s*:", chunk))
+
+
+def _is_plain_review(cmd: dict | None) -> bool:
+    args = (cmd or {}).get("args") or []
+    return args[:2] == ["pipeline.03_review", "apply"] and len(args) == 3 and "수정" not in args[2]
+
+
+def split_commands(text: str) -> list[str] | None:
+    """한 메시지(또는 몰아 온 메시지들)를 순서대로 실행할 명령으로 나눈다. 모르는 줄이 하나라도 있으면 None.
+    수정 메모의 다음 줄은 명령처럼 보이지 않으면 메모로 이어 붙이고, 이어지는 승인·폐기 줄은 한 번에 검증되게 합친다."""
+    lines = [x.strip() for x in CHAIN.sub(r"\1\n", text).splitlines() if x.strip()] if not _is_memo(text) else \
+            [x.strip() for x in text.splitlines() if x.strip()]
+    chunks: list[str] = []
+    for line in lines:
+        cmd = parse(line)
+        if chunks and _is_memo(chunks[-1]) and (cmd is None or (cmd.get("args") or [""])[0] == "pipeline.worker"):
+            chunks[-1] += "\n" + line  # 메모 안의 숫자만 있는 줄을 주제 선택으로 읽지 않는다
+        elif cmd is None:
+            return None
+        elif chunks and _is_plain_review(cmd) and _is_plain_review(parse(chunks[-1])) and not line.startswith("재확인"):
+            chunks[-1] += "\n" + line
+        else:
+            chunks.append(line)
+    return chunks
+
+
+def run_one(chunk: str) -> str:
+    cmd = parse(chunk)
     if "reply" in cmd:
         return cmd["reply"]
     if "show" in cmd:
         return show(cmd["show"], cmd["part"])
     log.info("명령: %s", cmd["args"][:2])
     return run(cmd["args"])
+
+
+def handle(text: str) -> str:
+    """명령을 순서대로 실행한다. 앞 명령이 실패하면 뒤 명령은 실행하지 않는다."""
+    chunks = split_commands(text)
+    if chunks is None:
+        return chat(text)
+    out = []
+    for n, chunk in enumerate(chunks):
+        reply = run_one(chunk)
+        out.append(reply)
+        if reply.startswith(("⚠️", "❓")) and chunks[n + 1:]:
+            out.append("⏹ 앞 명령이 실패해 멈췄습니다. 실행 안 한 명령:\n" + "\n".join(chunks[n + 1:]))
+            break
+    return "\n\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:

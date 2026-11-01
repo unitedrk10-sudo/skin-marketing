@@ -9,7 +9,10 @@ import os
 import queue
 import subprocess
 import threading
+import time
 
+INPUT_DELAY = 4  # 초: 마지막 메시지 뒤 이만큼 기다렸다 처리
+MAX_WAIT = 20
 REPO = r"{{REPO}}"
 PYTHON = r"{{PYTHON}}"
 HERMES = r"{{HERMES}}"
@@ -40,6 +43,12 @@ def _handle(text):
 def _loop():
     while True:
         text = _queue.get()
+        deadline = time.monotonic() + MAX_WAIT
+        while time.monotonic() < deadline:  # 연달아 보낸 메시지를 모아 순서대로 한 번에
+            try:
+                text += "\n" + _queue.get(timeout=INPUT_DELAY)
+            except queue.Empty:
+                break
         try:
             _handle(text)
         except Exception as e:  # noqa: BLE001 — 스레드가 죽으면 이후 메시지가 전부 멈춘다
