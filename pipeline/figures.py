@@ -28,7 +28,7 @@ from pipeline.common import content_dir, facts_text, get_logger, load_draft, loa
 log = get_logger("figures")
 
 KST = timezone(timedelta(hours=9))
-FIG_KINDS = {"skin_layers", "molecule", "timeline", "fade_patch"}
+FIG_KINDS = {"skin_layers", "timeline"}  # 2026-11-01: 장식뿐인 molecule·fade_patch 는 뺐다
 MAX_FIGS = 2
 STILL_FRAME = 108  # 4초(120프레임) 중 끝쪽 — 입자·섬유 효과가 보이는 순간
 
@@ -79,6 +79,17 @@ def render(beat: dict, out: Path) -> Path:
     return out
 
 
+def visual_check(path: Path, png: Path, fig: dict) -> list[str]:
+    """완성된 그림을 Claude 가 직접 보고 검사 (2026-11-01). 글자 겹침·잘림, 그림과 설명의 불일치, 사실 목록에 없는 내용. 반환: 문제 목록."""
+    draft = load_draft(path)
+    shorts = importlib.import_module("pipeline.shorts")
+    data, _ = llm.generate_json("figure_check", prompt("figure_check", file=png.name, heading=fig.get("after_heading", ""),
+                                                       alt=fig.get("alt", ""), facts=facts_text(shorts._facts(draft))), files=[png])
+    if not isinstance(data, dict) or data.get("ok") is not True:
+        return [str(x) for x in (data or {}).get("problems") or ["검사 결과 없음"]] if isinstance(data, dict) else ["검사 결과 없음"]
+    return []
+
+
 def make(path: Path) -> list[dict]:
     figs = plan(path)
     folder = path / "figures"
@@ -86,6 +97,10 @@ def make(path: Path) -> list[dict]:
     saved = []
     for n, f in enumerate(figs, 1):
         png = render({k: v for k, v in f.items() if k not in ("after_heading", "alt", "fact_ids")}, folder / f"fig{n}.png")
+        if problems := visual_check(path, png, f):
+            log.warning("그림 버림 (눈으로 검사, %s): %s", f.get("after_heading"), problems)
+            png.unlink(missing_ok=True)
+            continue
         saved.append({"file": png.name, "after_heading": f["after_heading"], "alt": f.get("alt", ""),
                       "caption": " — ".join(x for x in (f.get("label"), f.get("note")) if x), "source": f.get("source", ""),
                       "fact_ids": f.get("fact_ids") or []})

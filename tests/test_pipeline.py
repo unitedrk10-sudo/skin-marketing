@@ -3005,3 +3005,15 @@ def test_social_seal_blocks_edited_text(env):
     assert not social.repeated_opening("Flying home after a laser?\nStudies of cabin air suggest dryness builds slowly.")
     assert (social.with_opener("Hook\nCabin effects aren't noticeable until 3-4 hours.\n· x", "Cabin effects aren't noticeable until 3 to 4 hours.")
             == "Cabin effects aren't noticeable until 3 to 4 hours.\n· x")
+
+
+def test_figure_visual_check_drops_bad_figure(env, monkeypatch):
+    fig = importlib.import_module("pipeline.figures")
+    path = _published("2026-W41-11-later-x", live=False)
+    monkeypatch.setattr(fig, "plan", lambda p: [{"kind": "timeline", "after_heading": "A", "alt": "a", "label": "l", "note": "n"},
+                                                {"kind": "timeline", "after_heading": "B", "alt": "b", "label": "l", "note": "n"}])
+    monkeypatch.setattr(fig, "render", lambda beat, out: (out.write_bytes(b"png"), out)[1])
+    monkeypatch.setattr(fig, "visual_check", lambda p, png, f: ["text overlaps"] if f["after_heading"] == "A" else [])
+    assert [f["after_heading"] for f in fig.make(path)] == ["B"]
+    assert not (path / "figures" / "fig1.png").exists() and (path / "figures" / "fig2.png").exists()
+    assert llm.stage_config("figure_check")["provider"] == llm.CLAUDE_CLI

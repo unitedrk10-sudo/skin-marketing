@@ -4,6 +4,8 @@ audience:
   language: en            # 영어권 우선
   regions: [US, CA, TH, SG]
 
+shorts_scripts:
+  enabled: false  # 2026-11-01 보류: 숏폼 진행 안 함 — 워커가 대본을 미리 만들지 않는다 (Gemini 검수 비용). 다시 하려면 true
 shortform:
   # 형식 (2026-10-07): video = TTS + 실제 영상 클립(Claude 가 고름) | carousel = 사진 넘기기형(글자 슬라이드 — 시험해 보니 약해서 보류)
   # 주력은 블로그. 숏폼은 작게 시험: 주 video_per_week 편(그 주 승인 글 중 수요 점수 순), 4주 뒤 조회수·블로그 유입으로 계속할지 판단.

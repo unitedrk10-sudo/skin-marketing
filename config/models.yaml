@@ -82,6 +82,11 @@ stages:
     tools: []
     timeout_sec: 600
 
+  figure_check:    # 완성된 블로그 그림을 눈으로 검사 (글자 겹침·그림과 설명 불일치·사실 목록 대조). 그림은 Claude 로만 (사람 결정 2026-11-01), 최종은 사람 승인
+    provider: claude_cli
+    tools: [Read]
+    timeout_sec: 300
+
   explainer_plan:  # 숏폼 실험 E·BE — 대본 줄마다 설명 도식 종류·글자 (pipeline/explainer.py, 글자는 사실 목록만 → 코드 검사)
     provider: claude_cli
     tools: []

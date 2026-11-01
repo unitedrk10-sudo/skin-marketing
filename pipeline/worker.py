@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import IO
 
 from pipeline import llm
-from pipeline.common import content_dir, get_logger, load_json, now_iso, run_cli, save_json
+from pipeline.common import content_dir, get_logger, load_json, load_yaml, now_iso, run_cli, save_json
 
 log = get_logger("worker")
 
@@ -371,7 +371,8 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         exp = importlib.import_module("pipeline.experiment")  # 숏폼 화면 소스 실험: 그날 안내·영상이 들어오면 편집
         experiments = "\n\n".join(m for m in (exp.daily_message(), exp.poll_message()) if m)
         ahead = "" if auth_down else "\n".join(importlib.import_module("pipeline.figures").ensure_upcoming()  # 게시 예정 글: 블로그 그림 먼저
-                          + importlib.import_module("pipeline.shorts").make_ready())  # 다 찬 주: 숏폼 대본
+                          + (importlib.import_module("pipeline.shorts").make_ready()  # 다 찬 주: 숏폼 대본
+                             if (load_yaml("channels.yaml").get("shorts_scripts") or {}).get("enabled", True) else []))
         if ahead:  # 2026-10-22 사람 요청: 텔레그램 보고는 잠시 멈춤 — 만들기만 하고 로그에 남긴다
             log.info("미리 만들기: %s", ahead.replace("\n", " | "))
         figure_ask = importlib.import_module("pipeline.figures").ask_message()  # 게시 전 그림 승인 요청 (2026-11-01)
