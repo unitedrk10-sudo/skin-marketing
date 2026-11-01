@@ -3003,3 +3003,5 @@ def test_social_seal_blocks_edited_text(env):
     assert not social.sealed(item)
     assert social.repeated_opening("Cabin effects aren't noticeable until 3 to 4 hours.\nLow cabin effects aren't noticeable until 3-4 hours.\n· x")
     assert not social.repeated_opening("Flying home after a laser?\nStudies of cabin air suggest dryness builds slowly.")
+    assert (social.with_opener("Hook\nCabin effects aren't noticeable until 3-4 hours.\n· x", "Cabin effects aren't noticeable until 3 to 4 hours.")
+            == "Cabin effects aren't noticeable until 3 to 4 hours.\n· x")

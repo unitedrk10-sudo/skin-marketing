@@ -272,7 +272,12 @@ def pick_openers(draft: dict, generated: dict[str, dict]) -> dict[str, dict]:
 def with_opener(body: str, opener: str) -> str:
     """본문 첫 줄을 고른 첫 줄로 바꾼다."""
     rest = body.split("\n", 1)
-    return opener + ("\n" + rest[1] if len(rest) > 1 else "")
+    text = opener + ("\n" + rest[1] if len(rest) > 1 else "")
+    if repeated_opening(text):  # 고른 첫 줄이 둘째 줄과 같은 내용이면 둘째 줄을 뺀다
+        lines = text.split("\n")
+        del lines[1]
+        text = "\n".join(lines)
+    return text
 
 
 def check(draft: dict, texts: dict[str, str]) -> list[str]:
