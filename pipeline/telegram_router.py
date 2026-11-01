@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -129,7 +130,8 @@ def scrub(text: str) -> str:
 
 def run(args: list[str]) -> str:
     proc = subprocess.run([sys.executable, "-m", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=RUN_TIMEOUT, check=False)
+                          errors="replace", timeout=RUN_TIMEOUT, check=False,
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
     out = proc.stdout.strip()
     if out:
         return out
