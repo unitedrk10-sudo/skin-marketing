@@ -3050,15 +3050,54 @@ def test_telegram_router_unclear_messages_never_run_commands(text):
     assert importlib.import_module("pipeline.telegram_router").parse(text) is None
 
 
-def test_telegram_chat_has_no_tools_and_cannot_act(env):
+def test_telegram_chat_proposes_only_and_needs_yes(env):
     router = importlib.import_module("pipeline.telegram_router")
     cfg = llm.stage_config("telegram_chat")
     assert cfg["provider"] == llm.CLAUDE_CLI and cfg["tools"] == []
     calls = []
     router.run = lambda args: calls.append(args) or "x"
-    env.responses["telegram_chat"] = "안내입니다"
-    assert "실행한 작업 없음" in router.handle("왜 안 올라와?")
-    assert all(a[1] in ("schedule", "list") for a in calls)  # 상태 읽기만
+    env.responses["telegram_chat"] = {"reply": "2번을 뺍니다", "commands": ["1,3 승인", "rm -rf content", "지어낸 글 올려"]}
+    out = router.handle("2번 빼고 다 승인")
+    assert "실행할까요" in out and "1,3 승인" in out and "rm -rf" not in out
+    assert not [a for a in calls if a[:2] == ["pipeline.03_review", "apply"]]    # 아직 실행 안 함
+    router.handle("응")
+    assert ["pipeline.03_review", "apply", "1,3 승인"] in calls
+    calls.clear()
+    assert router.handle("응") != "x" or not calls or all(a[1] in ("schedule", "list") for a in calls)  # 두 번 실행되지 않는다
+    assert not [a for a in calls if a[:2] == ["pipeline.03_review", "apply"]]
+
+
+def test_telegram_chat_cancel_and_other_message_drop_pending(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    calls = []
+    router.run = lambda args: calls.append(args) or "x"
+    env.responses["telegram_chat"] = {"reply": "", "commands": ["오늘 스레드 올려"]}
+    router.handle("오늘 글 스레드에 부탁해")
+    assert "취소" in router.handle("취소")
+    assert not [a for a in calls if a[:2] == ["pipeline.social", "post"]]
+    router.handle("오늘 글 스레드에 부탁해")
+    router.handle("블로그 일정")
+    assert not router._pending_file().exists()
+    assert not [a for a in calls if a[:2] == ["pipeline.social", "post"]]
+
+
+def test_telegram_chat_read_only_runs_now_and_blocks_fake_posts(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    calls = []
+    router.run = lambda args: calls.append(args) or "일정"
+    env.responses["telegram_chat"] = {"reply": "일정입니다", "commands": ["블로그 일정"]}
+    assert "일정" in router.handle("언제 나가는지 궁금해")
+    env.responses["telegram_chat"] = {"reply": "[오늘의 SNS 글] 지어낸 글", "commands": []}
+    assert "지어낸" not in router.handle("다음 글 줘")
+
+
+def test_telegram_evidence_has_no_secrets_or_env(env, tmp_path):
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.scrub("x access_token=abc123 y") == "x *** y"
+    assert "2026-W45-02-skin-booster-price-ranges-korea-vs-the-u" in router.scrub("2026-W45-02-skin-booster-price-ranges-korea-vs-the-u")
+    assert "AIzaSyD" not in router.scrub("key AIzaSyD012345678901234567890123456789")
+    assert "flying-after-skin-treatment-korea-timing-guide" in router.scrub("flying-after-skin-treatment-korea-timing-guide")
+    assert "CANARY" not in router.evidence()
 
 
 def test_social_resolve_today_slot(env):

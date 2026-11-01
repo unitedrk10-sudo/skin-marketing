@@ -1,8 +1,9 @@
 """텔레그램 답장 처리 (2026-11-01) — Gemini 대화 에이전트를 없애고 코드 + Claude 로.
 
 Hermes 플러그인(hermes/plugins/skin-router)이 사람의 메시지를 받아 여기로 넘긴다.
-정해진 형식은 AI 없이 정해진 명령으로만 실행하고, 그 외에는 도구 없는 Claude(stage telegram_chat)가 답만 한다.
-Claude 경로는 게시·승인·파일 수정을 할 수 없다 — 글을 지어내 게시한 사고(2026-10-29·30)를 구조적으로 막는다.
+정해진 형식은 AI 없이 정해진 명령으로만 실행한다. 그 외 말은 Claude(stage telegram_chat)가 해석한다:
+코드가 민감값을 지워 넘긴 로그·검수 결과만 보고 답하며(도구 없음), 실행이 필요하면 정해진 명령을 제안만 한다. 코드가 제안을 다시 검사하고,
+조회가 아닌 명령은 사람이 "응" 해야 실행한다. Claude 는 게시·승인·파일 수정을 할 수 없다 (2026-10-29·30 사고 방지).
 
     python -m pipeline.telegram_router handle < 메시지.txt   # 플러그인이 호출
     python -m pipeline.telegram_router parse "1,3 승인"      # 어떤 명령으로 바뀌는지 확인
@@ -17,6 +18,8 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from pipeline import llm
 from pipeline.common import ROOT, content_dir, get_logger, load_env_file, load_json, prompt, run_cli
@@ -29,7 +32,18 @@ X_URL = re.compile(r"https://(?:www\.|mobile\.)?(?:x|twitter)\.com/\S+/status/\d
 THREADS_URL = re.compile(r"https://(?:www\.)?threads\.(?:com|net)/\S+", re.I)
 TARGET = r"(?:전체|[Ww\d][Ww\d,~\s\-번]*?)"
 CHAIN = re.compile(r"(승인|폐기|병원확인|빼기|올려)(?:하고|한 다음|한 뒤|\s*그리고|\s*,)\s+")  # "1 승인하고 오늘 스레드 올려"
-SECRET = re.compile(r"(access_token=|key=|token=|Bearer\s+)\S+|\b[A-Za-z0-9_\-]{32,}\b")
+SECRET = re.compile(r"(access_token=|key=|token=|Bearer\s+)\S+|(?<![A-Za-z0-9_\-])(?!\d{4}-W\d\d)(?=[A-Za-z0-9_\-]*[A-Z0-9])[A-Za-z0-9_\-]{32,}")  # 글 id·주소 slug 는 살린다
+YES = re.compile(r"(응|네|예|ㅇㅇ|그래|좋아|실행|진행|ok|yes)[.!\s]*", re.I)
+NO = re.compile(r"(아니|아니요|아니오|취소|ㄴㄴ|no)[.!\s]*", re.I)
+PENDING_MINUTES = 10
+READ_ONLY = {("pipeline.figures", "list"), ("pipeline.social", "list"), ("pipeline.site", "schedule"), ("pipeline.03_review", "list"),
+             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary")}
+EVIDENCE_LOGS = ("worker", "social", "site", "figures", "telegram", "02_draft", "02b_auto_review", "03_review", "01_topics")
+EVIDENCE_POSTS = 12
+LOG_TAIL = 80
+LINE_CHARS = 300
+FILE_CHARS = 2500
+EVIDENCE_CHARS = 80000
 
 HELP = """[명령어]
 검수: 1,3 승인 / 전체 승인 / 2 수정: 내용 / 5 폐기 / 2 병원확인 / 재확인 1 승인 (경고 건)
@@ -42,7 +56,7 @@ SNS: 오늘 스레드 올려 / 오늘 2번째 스레드 올려 / 3 스레드 올
 숏폼: 숏폼 1,3 승인 / 숏폼 2 반려 / 숏폼 4 수정: 내용 / 숏폼 검수 목록
 실험: 실험 영상 넣었어 / 실험 점수 4 4 3 예 / 실험 정리
 여러 개: 줄을 나누거나 연달아 보내면 순서대로 실행합니다 (예: 1 승인하고 오늘 스레드 올려). 앞 명령이 실패하면 멈춥니다.
-그 외 말은 Claude 가 답만 합니다 (실행은 하지 않습니다)."""
+그 외 말: Claude 가 기록을 읽고 답하고, 실행이 필요하면 명령을 제안합니다 ("응" 하면 실행)."""
 
 
 def _review_args(text: str) -> list[str] | None:
@@ -127,6 +141,9 @@ def parse(text: str) -> dict | None:
 
 
 def scrub(text: str) -> str:
+    for name, value in os.environ.items():  # 형식과 상관없이 실제 키 값은 반드시 지운다
+        if value and len(value) >= 8 and re.search(r"KEY|TOKEN|SECRET|PASSWORD|_OC$", name):
+            text = text.replace(value, "***")
     return SECRET.sub("***", text)
 
 
@@ -188,14 +205,86 @@ def snapshot() -> str:
     return "\n\n".join(parts)
 
 
+def _log_tail(name: str) -> str:
+    f = ROOT / "logs" / f"{name}.log"
+    if not f.exists():
+        return ""
+    lines = f.read_text(encoding="utf-8", errors="replace").splitlines()[-LOG_TAIL:]
+    return "\n".join(x[:LINE_CHARS] for x in lines)
+
+
+def _json_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")[:FILE_CHARS] if path.exists() else ""
+
+
+def evidence() -> str:
+    """Claude 답변 근거. 저장소 경로·도구를 주지 않고 코드가 고른 기록만, 값처럼 보이는 것은 지워서 프롬프트로 넣는다."""
+    parts = [(f"log {n}", _log_tail(n)) for n in EVIDENCE_LOGS]
+    parts += [("schedule.json", _json_text(content_dir() / "site" / "schedule.json")),
+              ("sns daily.json", _json_text(content_dir() / "social" / "daily.json"))]
+    topics_dir = content_dir() / "topics"
+    for t in sorted(topics_dir.glob("*.json"))[-1:] if topics_dir.exists() else []:
+        parts.append((f"topics {t.name}", _json_text(t)))
+    posts = [p for stage in ("drafts", "approved") if content_dir(stage).exists() for p in content_dir(stage).iterdir() if p.is_dir()]
+    for post in sorted(posts, key=lambda p: p.stat().st_mtime)[-EVIDENCE_POSTS:]:
+        for name in ("review", "social", "figures"):
+            parts.append((f"{post.parent.name}/{post.name}/{name}.json", _json_text(post / f"{name}.json")))
+    return scrub("\n\n".join(f"--- {title} ---\n{body}" for title, body in parts if body))[:EVIDENCE_CHARS]
+
+
+def _pending_file() -> Path:
+    return content_dir() / "telegram" / "pending.json"
+
+
+def _save_pending(chunks: list[str]) -> None:
+    f = _pending_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"at": datetime.now(timezone.utc).isoformat(), "chunks": chunks}, ensure_ascii=False), encoding="utf-8")
+
+
+def _take_pending() -> list[str]:
+    """제안해 둔 명령을 꺼내고 지운다. 다른 말을 하거나 시간이 지나면 없던 일로 한다."""
+    f = _pending_file()
+    if not f.exists():
+        return []
+    data = load_json(f)
+    f.unlink()
+    fresh = datetime.now(timezone.utc) - datetime.fromisoformat(data["at"]) <= timedelta(minutes=PENDING_MINUTES)
+    return data["chunks"] if fresh else []
+
+
+def _read_only(chunk: str) -> bool:
+    cmd = parse(chunk) or {}
+    return "reply" in cmd or "show" in cmd or tuple((cmd.get("args") or [""])[:2]) in READ_ONLY
+
+
 def chat(text: str) -> str:
     history = "\n".join(f"사람: {h['user']}\n봇: {h['bot']}" for h in load_history()) or "(없음)"
     try:
-        result = llm.generate("telegram_chat", prompt("telegram_chat", help=HELP, status=snapshot(), history=history, message=text))
+        data, _ = llm.generate_json("telegram_chat", prompt("telegram_chat", help=HELP, status=snapshot(), history=history,
+                                                            message=text, evidence=evidence()))
     except llm.LLMError as e:
         log.warning("telegram_chat 실패: %s", e)
         return "⚠️ 지금은 답변을 만들 수 없습니다 (Claude 연결 확인 필요). 정해진 명령은 그대로 됩니다 — '도움말'"
-    return result.text.strip() + "\n\n(실행한 작업 없음)"
+    data = data if isinstance(data, dict) else {}
+    answer = scrub(str(data.get("reply") or "")).strip()
+    if "[오늘의 SNS 글" in answer:  # SNS 글은 워커만 보낸다
+        answer = "⚠️ 답변이 규칙에 맞지 않아 보내지 않았습니다."
+    chunks, dropped = [], []
+    for proposal in data.get("commands") or []:
+        found = split_commands(str(proposal))
+        if found:
+            chunks += found
+        else:
+            dropped.append(str(proposal))
+    if dropped:
+        log.warning("Claude 제안 버림: %s", dropped)
+    if not chunks:
+        return (answer or "❓ 무슨 뜻인지 모르겠습니다. '도움말' 을 확인해 주세요") + "\n\n(실행한 작업 없음)"
+    if all(_read_only(c) for c in chunks):
+        return "\n\n".join(x for x in (answer, run_chunks(chunks)) if x)
+    _save_pending(chunks)
+    return "\n\n".join(x for x in (answer, "이렇게 실행할까요? (응 / 취소)\n" + "\n".join(f"→ {c}" for c in chunks)) if x)
 
 
 def _is_memo(chunk: str) -> bool:
@@ -237,10 +326,17 @@ def run_one(chunk: str) -> str:
 
 
 def handle(text: str) -> str:
-    """명령을 순서대로 실행한다. 앞 명령이 실패하면 뒤 명령은 실행하지 않는다."""
+    pending = _take_pending()
+    if pending and YES.fullmatch(text.strip()):
+        return run_chunks(pending)
+    if pending and NO.fullmatch(text.strip()):
+        return "취소했습니다."
     chunks = split_commands(text)
-    if chunks is None:
-        return chat(text)
+    return chat(text) if chunks is None else run_chunks(chunks)
+
+
+def run_chunks(chunks: list[str]) -> str:
+    """명령을 순서대로 실행한다. 앞 명령이 실패하면 뒤 명령은 실행하지 않는다."""
     out = []
     for n, chunk in enumerate(chunks):
         reply = run_one(chunk)
@@ -265,12 +361,15 @@ def main(argv: list[str] | None = None) -> int:
     text = sys.stdin.buffer.read().decode("utf-8", "replace").strip()
     if not text:
         return 0
+    worker = importlib.import_module("pipeline.worker")
+    if split_commands(text) is None and not YES.fullmatch(text) and not NO.fullmatch(text):
+        worker.hermes_send("🔎 확인 중입니다")  # 기록을 읽는 데 1분 안팎 걸린다
     try:
         reply = handle(text)
     except subprocess.TimeoutExpired:
         reply = "⚠️ 시간이 너무 오래 걸려 중단했습니다"
     remember(text, reply)
-    if not importlib.import_module("pipeline.worker").hermes_send(reply):
+    if not worker.hermes_send(reply):
         log.error("답장 전송 실패")
         return 1
     return 0
