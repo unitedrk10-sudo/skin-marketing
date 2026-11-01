@@ -438,9 +438,11 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             if not cmd.numbers and grade != "pass" and not confirm:
                 out.append(f"- {draft_id}: {GRADE_ICON[grade]} 자동검수 {grade or '미실시'} — 번호로 따로 승인하거나 `전체 승인` 재확인 필요")
                 continue
-            move(draft_id, "drafts", "approved")
+            moved = move(draft_id, "drafts", "approved")
             record_agreement(draft_id, grade, "approve")
-            out.append(f"- {draft_id}: 승인 → approved")
+            # 검수 메시지에 첨부해 보여 준 그림은 초안 승인으로 같이 승인 (2026-11-01)
+            n_figs = importlib.import_module("pipeline.figures").approve(moved, "draft_review")
+            out.append(f"- {draft_id}: 승인 → approved" + (f" (첨부한 그림 {n_figs}개 포함)" if n_figs else ""))
         elif cmd.action == "reject":
             move(draft_id, stage, "rejected")
             if stage == "drafts":

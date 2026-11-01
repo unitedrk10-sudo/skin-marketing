@@ -374,7 +374,8 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
                           + importlib.import_module("pipeline.shorts").make_ready())  # 다 찬 주: 숏폼 대본
         if ahead:  # 2026-10-22 사람 요청: 텔레그램 보고는 잠시 멈춤 — 만들기만 하고 로그에 남긴다
             log.info("미리 만들기: %s", ahead.replace("\n", " | "))
-        for part in (reminder, daily, experiments):
+        figure_ask = importlib.import_module("pipeline.figures").ask_message()  # 게시 전 그림 승인 요청 (2026-11-01)
+        for part in (reminder, daily, figure_ask, experiments):
             if part:
                 message = (message + "\n\n" if message else "") + part
     except Exception as e:  # noqa: BLE001 — SNS 글 실패가 워커 전체를 멈추지 않게

@@ -2964,3 +2964,42 @@ def test_claude_login_expiry_notifies_once_and_pauses_claude_steps(env, monkeypa
     common.save_json(worker.auth_file(), st)
     assert worker.claude_auth_down() is False and not worker.auth_file().exists()  # 가짜 LLM 이 답하면 복구
     assert llm.AUTH_WORDS.search("Failed to authenticate: OAuth session expired and could not be refreshed")
+
+
+def test_blog_figures_need_human_approval(env, monkeypatch):
+    site = importlib.import_module("pipeline.site")
+    fig = importlib.import_module("pipeline.figures")
+    path = _published("2026-W41-11-later-x", live=False)
+    common.save_json(common.content_dir() / "site" / "schedule.json",
+                     {"2026-W41-11-later-x": {"date": "2030-01-08", "at": "2030-01-08T07:00:00+09:00"}})
+    (path / "figures").mkdir()
+    (path / "figures" / "fig1.png").write_bytes(b"png")
+    common.save_json(path / "figures.json", {"figures": [{"file": "fig1.png", "after_heading": "A", "caption": "c"}],
+                                             "blog_hash": fig.blog_hash(path)})
+    out = common.content_dir() / "out"
+    post = {"path": path, "slug": "later"}
+    assert site.copy_figures(post, out) == [] and [p.name for p in fig.pending()] == [path.name]  # 승인 전엔 안 나간다
+    asked = fig.ask_message()
+    assert "[블로그 그림 승인]" in asked and "MEDIA:" in asked and "fig1.png" in asked
+    assert fig.ask_message() == ""                                              # 같은 그림은 다시 묻지 않는다
+    assert "승인" in fig.apply("그림 1 승인")[0]
+    assert len(site.copy_figures(post, out)) == 1 and fig.pending() == []
+    (path / "figures" / "fig1.png").write_bytes(b"changed")                     # 승인 뒤 바뀌면 무효
+    assert site.copy_figures(post, out) == [] and len(fig.pending()) == 1
+    assert fig.ask_message()
+    fig.apply("전체 빼기")
+    assert fig.pending() == [] and site.copy_figures(post, out) == []
+    with pytest.raises(fig.FigureError):
+        fig.apply("9 승인")
+
+
+def test_social_seal_blocks_edited_text(env):
+    social = importlib.import_module("pipeline.social")
+    item = {"status": "ready", "fact_ids": ["F1"], "channels": {"threads": {"text": "a", "posted": None},
+                                                               "x": {"text": "b", "reply": None, "posted": None}}}
+    item["seal"] = social.seal_of(item)
+    assert social.sealed(item)
+    item["channels"]["threads"]["text"] = "made up"
+    assert not social.sealed(item)
+    assert social.repeated_opening("Cabin effects aren't noticeable until 3 to 4 hours.\nLow cabin effects aren't noticeable until 3-4 hours.\n· x")
+    assert not social.repeated_opening("Flying home after a laser?\nStudies of cabin air suggest dryness builds slowly.")

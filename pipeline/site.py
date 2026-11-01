@@ -743,11 +743,8 @@ def read_minutes(md: str) -> int:
 
 
 def copy_figures(post: dict, out: Path) -> list[dict]:
-    f = post["path"] / "figures.json"
-    if not f.exists():
-        return []
-    figs = []
-    for n, fig in enumerate(load_json(f).get("figures") or [], 1):
+    figs = []  # 사람이 승인한 그림만 나간다 (2026-11-01)
+    for n, fig in enumerate(importlib.import_module("pipeline.figures").approved(post["path"]), 1):
         src = post["path"] / "figures" / fig["file"]
         if src.exists():
             dest = out / "fig" / f"{post['slug']}-{n}.png"

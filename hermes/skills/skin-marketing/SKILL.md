@@ -96,6 +96,11 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - "숏폼 대본 보여줘" / "숏폼 검수 목록": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.shorts send` (검수 메시지를 나눠서 직접 보냄) → 출력 한 줄만 답한다.
 - 초안 검수(2번)의 "1,3 승인"과 헷갈리면 어느 쪽인지 묻는다 — 직전 봇 메시지 제목으로 판단.
 
+## 2-12. 블로그 그림 승인 (직전 봇 메시지가 `[블로그 그림 승인]` 일 때)
+- "그림 1,3 승인" / "그림 2 빼기" / "그림 전체 승인": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.figures apply "1,3 승인"` (받은 문장에서 '그림'을 떼고 그대로) → 출력 그대로.
+- "그림 승인 목록": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.figures list` → 출력 그대로. 승인 전 그림은 블로그에 나가지 않는다.
+- 사람 답 없이 승인하지 않는다.
+
 ## 3-0. 게시 완료 기록
 사용자 예: `1 게시 완료 tiktok https://www.tiktok.com/@.../video/...` / "리쥬란 영상 인스타에 올렸어 <URL>"
 - `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.06_publish done <draft_id> <tiktok|instagram|youtube> <URL>` (draft_id 는 `06_publish status` 목록에서)
@@ -118,6 +123,7 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 - "검수 목록 다시": `cd "{{REPO}}" && "{{PYTHON}}" -m pipeline.03_review list`
 
 ## 금지
+- **`content/` 의 파일(`social.json`, `daily.json`, `figures.json` 등)을 직접 고치지 않는다.** 검사에 걸리거나 "저장된 글이 바뀌었습니다" 오류가 나면 고쳐서 다시 시도하지 말고 출력 그대로 알리고 멈춘다. 요청받지 않은 다른 글을 이어서 게시하지 않는다 (2026-10-30 사고).
 - `content/` 파일을 직접 옮기거나 고치거나 지우지 않는다 (상태 이동은 03_review 만).
 - 초안 내용을 직접 수정하지 않는다 (수정은 `N 수정: …` 으로만).
 - git push·commit, `06_publish` 실행, `.env` 열람·출력 금지.

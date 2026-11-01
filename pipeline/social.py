@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import difflib
 import hashlib
 import hmac
 import json
@@ -173,6 +174,22 @@ def build_channels(kind: str, bodies: dict[str, str], url: str, domains: list[st
     return {ch: {"text": bodies[ch] + end, "posted": None} for ch in CHANNELS}
 
 
+def seal_of(item: dict) -> str:
+    """검사를 통과해 저장된 글의 지문. 다른 경로로 본문을 바꾸면 게시·발송이 멈춘다 (2026-10-30 봇이 파일을 고쳐 게시한 사고)."""
+    parts = {ch: [c.get("text"), c.get("reply")] for ch, c in sorted(item["channels"].items())}
+    return hashlib.sha256(json.dumps([parts, item.get("fact_ids") or []], ensure_ascii=False).encode()).hexdigest()[:20]
+
+
+def sealed(item: dict) -> bool:
+    return item.get("seal") == seal_of(item)
+
+
+def repeated_opening(text: str) -> bool:
+    """첫 두 줄이 거의 같은 문장 (첫 줄 후보가 본문 둘째 줄과 겹친 경우, 2026-10-30 Flying)."""
+    lines = [x.strip().lower() for x in text.split("\n") if x.strip()]
+    return len(lines) > 1 and difflib.SequenceMatcher(None, lines[0], lines[1]).ratio() > 0.7
+
+
 def check_item(draft: dict, kind: str, bodies: dict[str, str], channels: dict | None = None,
                fact_ids: list[str] | None = None) -> list[str]:
     """금지 표현·병원명·연락처·출처 없는 수치·링크·길이 (02b 와 같은 목록). 길이는 끝줄까지 붙인 실제 글로 센다."""
@@ -190,6 +207,8 @@ def check_item(draft: dict, kind: str, bodies: dict[str, str], channels: dict | 
             problems.append(f"[{kind}·{ch}] 빈 글")
             continue
         problems += [f"[{ch}] {msg}" for msg in text_problems(text, known_numbers)]
+        if repeated_opening(text):
+            problems.append(f"[{ch}] 첫 두 줄이 거의 같음")
         limit = cfg[ch]["max_chars"]
         if (n := size(ch, channels[ch]["text"])) > limit:
             problems.append(f"[{ch}] 너무 김 ({n}/{limit}자)")
@@ -340,6 +359,7 @@ def compose(path: Path) -> dict:
                 results[kind]["opener"] = pick
     for kind, item in results.items():
         item["status"] = "blocked" if item["problems"] else "ready"
+        item["seal"] = seal_of(item)
         data["items"][kind] = item
     save_json(social_file(path), data)
     return data
@@ -409,9 +429,10 @@ def roundup(day: date) -> str | None:
                                 "posted": None}}
         if all(size(ch, channels[ch]["text"]) <= cfg[ch]["max_chars"] for ch in CHANNELS):
             break
+    item = {"status": "ready", "problems": [], "fact_ids": [], "channels": channels, "scheduled_on": None}
+    item["seal"] = seal_of(item)
     save_json(f, {"version": 2, "draft_id": key, "title": f"한 주 정리 ({key[8:]})", "created_at": now_iso(),
-                  "blog_url": home, "items": {"roundup": {"status": "ready", "problems": [], "fact_ids": [],
-                                                          "channels": channels, "scheduled_on": None}}})
+                  "blog_url": home, "items": {"roundup": item}})
     return key
 
 
@@ -560,7 +581,7 @@ def pick_today(now: datetime) -> Ref | None:
     if _waiting_for_blog(now):
         return None
     candidates = [(ref, item) for ref, _, item in entries()
-                  if ref.kind in KINDS and item["status"] == "ready" and not item.get("scheduled_on")
+                  if ref.kind in KINDS and item["status"] == "ready" and sealed(item) and not item.get("scheduled_on")
                   and not any(c.get("posted") for c in item["channels"].values())]
     if now.weekday() == 6 and "#" in slot and len(candidates) < BACKLOG:
         return None  # 일요일은 1개만 — 밀린 글이 남아 있는 동안만 두 번째 칸도 쓴다 (2026-10-29)
@@ -873,6 +894,8 @@ def post(target: Ref | Path | str, channel: str, kind: str = "link") -> str:
     c = item["channels"][channel]
     if c["posted"]:
         return f"이미 게시됨: {c['posted']['url']}"
+    if not sealed(item):
+        raise SocialError("저장된 글이 검사 뒤에 바뀌었습니다 — 게시하지 않습니다. 파일을 고치지 말고 그대로 알려 주세요")
     url = (threads_post if channel == "threads" else x_post)(c["text"])
     out = record(ref, channel, url)
     if channel == "x" and c.get("reply"):  # API 로 올렸으면 링크 답글도 API 로
