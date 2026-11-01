@@ -82,6 +82,11 @@ stages:
     tools: []
     timeout_sec: 600
 
+  telegram_chat:   # 텔레그램에서 정해진 명령이 아닌 말에 답만 한다 (pipeline/telegram_router.py, 도구 없음 — 실행 불가)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 180
+
   figure_check:    # 완성된 블로그 그림을 눈으로 검사 (글자 겹침·그림과 설명 불일치·사실 목록 대조). 그림은 Claude 로만 (사람 결정 2026-11-01), 최종은 사람 승인
     provider: claude_cli
     tools: [Read]

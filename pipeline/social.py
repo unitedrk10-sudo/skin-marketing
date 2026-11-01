@@ -619,6 +619,13 @@ def daily_message(now: datetime | None = None) -> str:
 def resolve(ref: str) -> Ref:
     """번호(list 순서) · 오늘 · draft_id[:종류]."""
     ref = ref.strip()
+    if m := re.fullmatch(r"(?:오늘|today)#(\d)", ref):  # 오늘 그 칸 (오늘#2 = 저녁 글)
+        state = load_json(daily_file()) if daily_file().exists() else {}
+        today = now_kst().date().isoformat()
+        slot = state.get(today if m.group(1) == "1" else f"{today}#{m.group(1)}")
+        if not slot:
+            raise SocialError(f"오늘 {m.group(1)}번째로 보낸 SNS 글이 없습니다")
+        return Ref(slot["key"], slot["kind"])
     if ref in TODAY:
         state = load_json(daily_file()) if daily_file().exists() else {}
         days = sorted(d for d in state if d[:10] <= now_kst().date().isoformat())  # 2026-10-29#2 = 그날 두 번째 칸

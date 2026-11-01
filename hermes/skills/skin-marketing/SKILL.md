@@ -5,6 +5,8 @@ description: 피부과 시술정보 콘텐츠 파이프라인의 텔레그램 �
 
 # skin-marketing 텔레그램 처리
 
+> 2026-11-01: 텔레그램 답장은 이제 `pipeline/telegram_router.py`(플러그인 skin-router)가 처리한다. 이 스킬은 대화 에이전트를 다시 켤 때만 쓰는 예전 절차다.
+
 저장소: `{{REPO}}` / 파이썬: `{{PYTHON}}`
 모든 명령은 `cd "{{REPO}}" &&` 로 시작한다. 명령의 stdout 을 그대로 사용자에게 답장한다.
 

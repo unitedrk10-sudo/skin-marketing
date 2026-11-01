@@ -3017,3 +3017,54 @@ def test_figure_visual_check_drops_bad_figure(env, monkeypatch):
     assert [f["after_heading"] for f in fig.make(path)] == ["B"]
     assert not (path / "figures" / "fig1.png").exists() and (path / "figures" / "fig2.png").exists()
     assert llm.stage_config("figure_check")["provider"] == llm.CLAUDE_CLI
+
+
+@pytest.mark.parametrize("text,args", [
+    ("1,3 승인", ["pipeline.03_review", "apply", "1,3 승인"]),
+    ("1번 승인", ["pipeline.03_review", "apply", "1 승인"]),
+    ("전체 승인", ["pipeline.03_review", "apply", "전체 승인"]),
+    ("W41-07 승인", ["pipeline.03_review", "apply", "W41-07 승인"]),
+    ("재확인 2 승인", ["pipeline.03_review", "apply", "2 승인", "--confirm"]),
+    ("2 수정: 첫 문단\n둘째 줄", ["pipeline.03_review", "apply", "2 수정: 첫 문단\n둘째 줄"]),
+    ("1 승인\n2 폐기", ["pipeline.03_review", "apply", "1 승인\n2 폐기"]),
+    ("승인글 2 폐기", ["pipeline.03_review", "apply", "2 폐기", "--stage", "approved"]),
+    ("그림 1,2 승인", ["pipeline.figures", "apply", "1,2 승인"]),
+    ("숏폼 1,3 승인", ["pipeline.shorts", "apply", "1,3 승인"]),
+    ("1,3,4", ["pipeline.worker", "request-drafts", "--pick", "1,3,4"]),
+    ("오늘 스레드 올려", ["pipeline.social", "post", "오늘", "threads"]),
+    ("오늘 2번째 스레드 올려", ["pipeline.social", "post", "오늘#2", "threads"]),
+    ("1 오늘 스레드 올려", ["pipeline.social", "post", "오늘#1", "threads"]),
+    ("3 스레드 올려", ["pipeline.social", "post", "3", "threads"]),
+    ("https://x.com/Skinboundkorea/status/123?s=35", ["pipeline.social", "done", "오늘", "x", "https://x.com/Skinboundkorea/status/123?s=35"]),
+    ("3 게시 완료 x https://x.com/a/status/9", ["pipeline.social", "done", "3", "x", "https://x.com/a/status/9"]),
+    ("https://www.threads.com/@a/post/Abc", ["pipeline.social", "done", "오늘", "threads", "https://www.threads.com/@a/post/Abc"]),
+])
+def test_telegram_router_fixed_commands(text, args):
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse(text)["args"] == args
+
+
+@pytest.mark.parametrize("text", ["좋아요", "다 괜찮아", "왜 오늘 sns 안 올라와?", "1번 글 어때?", "전체 승인해도 될까?",
+                                  "재확인 전체 승인", "스레드 올리는 방법 좀 자세히 알려줘 어떻게 하는 건지 궁금해요 정말로요"])
+def test_telegram_router_unclear_messages_never_run_commands(text):
+    assert importlib.import_module("pipeline.telegram_router").parse(text) is None
+
+
+def test_telegram_chat_has_no_tools_and_cannot_act(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    cfg = llm.stage_config("telegram_chat")
+    assert cfg["provider"] == llm.CLAUDE_CLI and cfg["tools"] == []
+    calls = []
+    router.run = lambda args: calls.append(args) or "x"
+    env.responses["telegram_chat"] = "안내입니다"
+    assert "실행한 작업 없음" in router.handle("왜 안 올라와?")
+    assert all(a[1] in ("schedule", "list") for a in calls)  # 상태 읽기만
+
+
+def test_social_resolve_today_slot(env):
+    social = importlib.import_module("pipeline.social")
+    today = social.now_kst().date().isoformat()
+    common.save_json(social.daily_file(), {today: {"key": "a", "kind": "fact"}, f"{today}#2": {"key": "b", "kind": "angle"}})
+    assert social.resolve("오늘#1") == social.Ref("a", "fact") and social.resolve("오늘#2") == social.Ref("b", "angle")
+    with pytest.raises(social.SocialError):
+        social.resolve("오늘#3")
