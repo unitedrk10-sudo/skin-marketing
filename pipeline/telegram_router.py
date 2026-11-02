@@ -484,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
     if not text:
         return 0
     worker = importlib.import_module("pipeline.worker")
+    keys = os.environ.get("SKIN_TG_SOURCE_KEYS", "")
+    log.info("받은 방: %s%s", origin() or "(모름 → 기본 방으로 답)", f" — 플러그인이 본 속성: {keys}" if keys else "")
     if split_commands(text) is None and not YES.fullmatch(text) and not NO.fullmatch(text) and not _reddit_request(text):
         reply_to("🔎 확인 중입니다")  # 기록을 읽는 데 1분 안팎 걸린다
     try:

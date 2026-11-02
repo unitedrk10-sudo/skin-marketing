@@ -3663,3 +3663,4 @@ def test_skin_router_plugin_reads_origin_room():
     assert plugin._origin(Source(chat_id="-1001234", thread_id=7)) == "telegram:-1001234:7"
     assert plugin._origin(Source(chat=Source(id=42))) == "telegram:42"
     assert plugin._origin(Source()) == "" and plugin._origin(Source(chat_id="abc")) == ""
+    assert plugin._source_keys(Source(platform="telegram", user_id=1)) == "platform,user_id"   # 진단용: 이름만

@@ -49,9 +49,19 @@ def _origin(source):
     return f"telegram:{chat}" + (f":{thread}" if thread and str(thread).isdigit() else "")
 
 
-def _handle(origin, text):
+def _source_keys(source):
+    """방을 못 찾았을 때 진단용: source 의 속성 이름만 (값은 넘기지 않는다)."""
+    try:
+        names = sorted(vars(source)) if hasattr(source, "__dict__") else sorted(n for n in dir(source) if not n.startswith("_"))
+    except Exception:  # noqa: BLE001
+        names = []
+    return ",".join(names)[:300]
+
+
+def _handle(origin, text, keys=""):
     env = _env()
     env["SKIN_TG_ORIGIN"] = origin
+    env["SKIN_TG_SOURCE_KEYS"] = "" if origin else keys
     proc = subprocess.run([PYTHON, "-m", "pipeline.telegram_router", "handle"], input=text.encode("utf-8"), cwd=REPO,
                           env=env, capture_output=True, timeout=TIMEOUT, check=False)
     if proc.returncode != 0:
@@ -61,7 +71,7 @@ def _handle(origin, text):
 def _loop():
     later = None  # 다른 방에서 온 메시지는 섞지 않고 다음 차례로
     while True:
-        origin, text = later or _queue.get()
+        origin, text, keys = later or _queue.get()
         later = None
         deadline = time.monotonic() + MAX_WAIT
         while time.monotonic() < deadline:  # 같은 방에서 연달아 보낸 메시지를 모아 순서대로 한 번에
@@ -74,7 +84,7 @@ def _loop():
                 break
             text += "\n" + nxt[1]
         try:
-            _handle(origin, text)
+            _handle(origin, text, keys)
         except Exception as e:  # noqa: BLE001 — 스레드가 죽으면 이후 메시지가 전부 멈춘다
             logger.warning("telegram_router 호출 실패: %s", type(e).__name__)
 
@@ -102,7 +112,7 @@ def on_dispatch(event=None, gateway=None, **_):
             origin = _origin(source)
         except Exception:  # noqa: BLE001 — 방을 몰라도 메시지는 처리한다 (기본 방으로 답)
             origin = ""
-        _queue.put((origin, text))
+        _queue.put((origin, text, "" if origin else _source_keys(source)))
     return {"action": "skip", "reason": "skin-router"}
 
 
