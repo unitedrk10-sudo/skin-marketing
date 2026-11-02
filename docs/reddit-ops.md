@@ -28,6 +28,7 @@
 - AI 검색이 홍보 금지나 운영자 글 금지로 찾은 곳은 문의 필요로 본다.
 - 연습 초안은 붙여넣기용 메시지를 따로 보내지 않는다. 메시지 한 개에 "게시용 아님"을 붙여 보낸다.
 - 확인 기록은 90일이 지나면 다시 확인 대상으로 표시한다. 단계는 그대로 두되 목록에 표시한다.
+- **규칙은 주 1회 다시 조사한다 (2026-11-02 운영자 요청).** 매주 화요일 후보를 찾기 전에, 제외·정지가 아닌 커뮤니티 전부를 Gemini 검색으로 다시 보고 홍보·운영자 글·링크·AI 글 판정이 바뀐 곳만 알린다 (`레딧 규칙 조사`로 바로 돌릴 수도 있다). 더 엄격해진 판정은 바로 단계에 반영된다. 못 찾은 주에는 전 조사를 그대로 둔다.
 
 ## 3. 커뮤니티별 현재 기준 (2026-11-02)
 
@@ -75,16 +76,23 @@
 
 방향 영작도 AI가 쓴 글이므로 AI 글 금지 커뮤니티에서는 쓰지 않는다.
 
-**AI 글 금지 커뮤니티에서 "주제를 주고 AI가 조사·작성 → 검수 → 복사해 붙이기"는 안 된다 (2026-11-02 확인).** 검수를 거쳐도 문장을 쓴 것은 AI라서 규칙이 막는 바로 그 글이다. 걸리면 삭제·밴으로 이어지고, 운영자임을 밝힌 계정이라 사이트 신뢰까지 같이 잃는다. 공개 문구에 "AI-assisted"를 붙이면 스스로 위반을 밝히는 셈이고, 빼면 숨기는 셈이 된다. 할 수 있는 것은 **조사는 AI, 문장은 운영자**다: `레딧 N 사실`로 근거를 받고, 짧고 투박해도 운영자가 직접 영어로 쓴다. 한국어로 쓴 글을 AI로 번역해 올리는 것은 커뮤니티마다 판단이 다를 수 있어 운영진 문의 때 같이 묻는다.
+**AI 글 금지 커뮤니티에서 "주제를 주고 AI가 조사·작성 → 검수 → 복사해 붙이기"는 안 된다 (2026-11-02 확인).** 검수를 거쳐도 문장을 쓴 것은 AI라서 규칙이 막는 바로 그 글이다. 걸리면 삭제·밴으로 이어지고, 운영자임을 밝힌 계정이라 사이트 신뢰까지 같이 잃는다. 공개 문구에 "AI-assisted"를 붙이면 스스로 위반을 밝히는 셈이고, 빼면 숨기는 셈이 된다. 할 수 있는 것은 **조사는 AI, 문장은 운영자**다: `레딧 N 사실`로 근거를 받고, 짧고 투박해도 운영자가 직접 영어로 쓴다. 
 
-**직접 쓴 글 검사는 가볍게 한다 (2026-11-02 운영자 결정).** 운영자 본인의 말이라 사실 목록 대조와 수치 검사는 하지 않는다. 아래 문장만 **빼고**, 남은 문장은 한 글자도 고치지 않는다 (AI가 단어를 보태면 AI 글이 되므로).
+**번역 (2026-11-02):** 한국어로 쓴 글은 Google 번역(Cloud Translation API)으로 옮길 수 있다. 짧은 실무 답변은 Google 번역도 뜻이 거의 그대로 나오고, LLM과 달리 내용을 다시 쓰거나 보태지 않는다. 다만 Google 번역도 기계 번역이라 "AI 글 금지"에 번역까지 넣는 커뮤니티가 있을 수 있다. 그래서:
+
+- 활동 단계(AI 글 허용)이거나, 원문·운영진 답변에서 번역이 괜찮다고 확인한 곳(`번역허용` 기록)에서만 번역한다. 그 외에는 영어로 직접 쓴다.
+- 번역한 글에는 공개 문구에 `Written in Korean and machine-translated.`를 붙인다. 숨기지 않으면 문체가 어색해도 이해받고, 나중에 문제 될 일도 줄어든다.
+- 번역 뒤 영어 문장에 같은 가벼운 검사(숫자·법적 문제·명백히 틀린 의료 내용 빼기)를 한다. 번역문이 뜻과 맞는지는 운영자가 확인한다.
+- 키: 환경변수 `GOOGLE_TRANSLATE_API_KEY` (Google Cloud에서 Cloud Translation API 사용 설정 후 발급). 키가 없으면 Google 번역 사이트에서 직접 옮겨 영어로 보내면 된다.
+
+**직접 쓴 글 검사는 가볍게 한다 (2026-11-02 운영자 결정).** 운영자 본인의 말이라 사실 목록 대조는 하지 않는다. 대신 **숫자(기간·횟수·용량·%)는 쓰지 않는다** — 대조하지 않는 숫자는 틀려도 걸러낼 수 없어서, 숫자가 든 문장은 뺀다 ("for a while", "the period your doctor gives you"처럼 쓴다). 아래 문장만 **빼고**, 남은 문장은 한 글자도 고치지 않는다 (AI가 단어를 보태면 AI 글이 되므로).
 
 - 코드: 병원·의사 이름, 연락처·예약 링크, 자격 표기, 과장·보장·비교 표현(`banned_terms.txt`), 시술·주사제 추천, 시술 경험담(의료법 §56②2), 화장품 의약품 오인(화장품법 §13).
 - Gemini(`reddit_light_check`): 일반 의학 지식으로 봐서 명백히 틀리거나 위험한 의료 내용, 위 법적 문제 중 코드가 놓친 것. 애매하면 남긴다. Gemini가 고른 문장이 원문에 그대로 없으면 빼지 않고 운영자에게 고쳐 달라고 한다.
 - 뺀 문장과 이유는 안내 메시지에 보여 준다. 빼고 나서 남는 내용이 거의 없으면 붙여넣을 글을 만들지 않는다.
 - 화장품·여행에 대한 운영자 개인 경험과 의견은 그대로 둔다.
 
-**관련 글 링크:** 직접 쓴 글과 관련된 우리 블로그 글이 있으면 Gemini가 하나를 고른다. 링크 허용 기록(`규칙확인 … 링크허용`)이 있는 커뮤니티에서는 본문 끝에 붙이고, 없는 곳에서는 안내 메시지에만 보여 준다. 링크를 금지한 곳에 링크를 붙이면 그 자체로 홍보 위반이 되기 때문이다.
+**관련 글 링크:** 직접 쓴 글과 관련된 우리 블로그 글이 있으면 Gemini가 하나를 고른다. 링크 허용이 확인된 커뮤니티(운영자의 `규칙확인 … 링크허용`, 또는 주간 규칙 조사에서 링크 허용)에서는 본문 끝에 붙이고, 아닌 곳에서는 안내 메시지에만 보여 준다. 조사 결과로 붙인 링크는 안내 메시지에 그렇다고 표시한다. 링크를 금지한 곳에 링크를 붙이면 그 자체로 홍보 위반이 되기 때문이다.
 
 **변하지 않는 선:** 시술·주사제·병원 추천 없음 (리투오 포함, 풀려면 변호사 확인 먼저), 의료 내용은 검수된 사실 목록만, 게시는 운영자가 직접.
 
@@ -111,7 +119,7 @@
 - 같은 커뮤니티에서 연속 2개가 0점 이하 → 그 커뮤니티 정지 (환영받지 못한다는 신호).
 - 12/28까지 활동 단계 커뮤니티가 하나도 없으면 Reddit은 직접 작성 답변만 남기고 비중을 외부 언급으로 옮긴다 (8장).
 
-**주간 리포트** (`07_report`): 최근 7일 게시·누적, 반응 기록이 빠진 글, 삭제·경고, 정지된 커뮤니티, 외부 언급 현황. 텔레그램으로 따로 먼저 보고하지 않는다 (운영자 요청). 매주 화요일 후보 찾기는 그대로 두되 전체 정지 중에는 하지 않는다.
+**주간 리포트** (`07_report`): 최근 7일 게시·누적, 반응 기록이 빠진 글, 삭제·경고, 정지된 커뮤니티, 외부 언급 현황. 텔레그램으로 따로 먼저 보고하지 않는다 (운영자 요청). 매주 화요일 규칙 조사와 후보 찾기는 그대로 두되 전체 정지 중에는 하지 않는다.
 
 ## 6. Reddit 밖 외부 언급
 
@@ -147,4 +155,4 @@ AI 검색이 인용하는 출처는 Reddit만이 아니다. Reddit이 막히면 
 
 **운영진 문의 글 (초안, 운영자가 고쳐 보냄):**
 
-> Hi mods, I run Skinbound Korea (skinboundkorea.com), an English information site about skin treatments and travel in Korea. Some of our work is paid content production for clinics, which is always labeled as advertising on our site. I'd like to occasionally answer practical questions (aftercare, timing, flying after treatments) here, always disclosing who I am, never naming or recommending clinics, and without links unless you allow them. Is that OK under your rules, or would you prefer I don't participate? Thanks.
+> Hi mods, I run Skinbound Korea (skinboundkorea.com), an English information site about skin treatments and travel in Korea. Some of our work is paid content production for clinics, which is always labeled as advertising on our site. I'd like to occasionally answer practical questions (aftercare, timing, flying after treatments) here, always disclosing who I am, never naming or recommending clinics, and without links unless you allow them. I write in Korean and may use Google Translate, which I'd also disclose. Is that OK under your rules, or would you prefer I don't participate? Thanks.

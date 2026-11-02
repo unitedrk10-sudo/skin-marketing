@@ -2884,29 +2884,35 @@ def test_reddit_ai_banned_community_gets_facts_and_checks_operator_text(env, mon
     item = rd.check(1, "I'd recommend Re2O for this.")                    # 남는 내용이 없으면 붙여넣을 글 없음
     assert item["status"] == "blocked" and "Re2O" in item["removed"][0]["sentence"] and "검사:" in rd.paste_messages(item)[0]
 
-    text = ("I flew home two days later and it was fine for me. Swelling can last a couple of days, so ask your doctor. "
-            "This clinic in Gangnam is the best, call +82 2 1234 5678. Ice the area for an hour every night.")
-    answers["reddit_light_check"] = {"remove": [{"sentence": "Ice the area for an hour every night.", "why": "잘못된 사후관리"},
+    text = ("I flew home soon after and it was fine for me. Swelling can last a while, so ask your doctor. "
+            "This clinic in Gangnam is the best, call them today. Ice the area all night long.")
+    answers["reddit_light_check"] = {"remove": [{"sentence": "Ice the area all night long.", "why": "잘못된 사후관리"},
                                                 {"sentence": "Not in the reply.", "why": "x"}], "related_post": "P1", "ko": "번역"}
     item = rd.check(1, text)                                                 # 고쳐 쓰지 않고 문장만 뺀다. 못 찾은 문장은 사람에게
     assert item["status"] == "blocked" and any("Not in the reply" in p for p in item["problems"])
     answers["reddit_light_check"]["remove"] = answers["reddit_light_check"]["remove"][:1]
     item = rd.check(1, text)
     assert item["status"] == "ready" and item["written_by"] == "operator"
-    assert item["body"] == "I flew home two days later and it was fine for me. Swelling can last a couple of days, so ask your doctor."
-    assert {r["sentence"] for r in item["removed"]} == {"This clinic in Gangnam is the best, call +82 2 1234 5678.", "Ice the area for an hour every night."}
+    assert item["body"] == "I flew home soon after and it was fine for me. Swelling can last a while, so ask your doctor."
+    assert {r["sentence"] for r in item["removed"]} == {"This clinic in Gangnam is the best, call them today.", "Ice the area all night long."}
     assert item["paste"].endswith(rd.DISCLOSURE_OPERATOR) and "AI-assisted" not in item["paste"]
     assert "https://skinboundkorea.com/fly/" in item["paste"] and len(rd.paste_messages(item)) == 2   # 링크 허용 기록 → 관련 글 링크
     assert "뺀 문장" in rd.paste_messages(item)[0] and "Gangnam" in rd.paste_messages(item)[0]
     answers["reddit_light_check"]["remove"] = []
-    item = rd.check(1, "I got Rejuran and loved my results. Swelling can last a couple of days.")
+    item = rd.check(1, "Swelling can last 2 days. Avoid saunas for two weeks. Use it twice daily. Swelling can last a while, so ask your doctor first.")
+    assert item["body"] == "Swelling can last a while, so ask your doctor first." and len(item["removed"]) == 3   # 숫자 든 문장은 뺀다
+    assert all("숫자" in r["why"] for r in item["removed"])
+    item = rd.check(1, "I got Rejuran and loved my results. Swelling can last a while, so ask your doctor.")
     assert item["status"] == "ready" and item["removed"]                     # 시술 경험담만 뺀다
-    assert not rd.check(1, "I tried a mild sunscreen and my skin liked it. Swelling can last a couple of days.")["removed"]
-    rd.allow("NoAI", False)                                                  # 링크 허용 기록이 없으면 안내 메시지에만
-    item = rd.check(1, "Swelling can last a couple of days, so ask your doctor before flying.")
+    assert not rd.check(1, "I tried a mild sunscreen and my skin liked it. Swelling can last a while, ask your doctor.")["removed"]
+    with pytest.raises(rd.RedditError) as e:                                 # 번역 허용 기록이 없으면 한국어 글은 번역하지 않는다
+        rd.check(1, "붓기는 한동안 갈 수 있으니 의사에게 물어보세요.")
+    assert "번역허용" in str(e.value)
+    rd.allow("NoAI", False)                                                  # 링크 허용 확인이 없으면 안내 메시지에만
+    item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
     assert "http" not in item["paste"] and "관련 글: https://skinboundkorea.com/fly/" in rd.paste_messages(item)[0]
     monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "disclosure_ai_label": "always"})
-    assert "AI-assisted" in rd.check(1, "Swelling can last a couple of days, so ask your doctor.")["paste"]
+    assert "AI-assisted" in rd.check(1, "Swelling can last a while, so ask your doctor about it.")["paste"]
     router = importlib.import_module("pipeline.telegram_router")
     assert router.parse("레딧 1 사실")["args"] == ["pipeline.reddit", "facts", "1"]
     assert router.parse("레딧 1 검사: - Swelling may last.")["args"] == ["pipeline.reddit", "check", "1", "--", "- Swelling may last."]
@@ -3031,8 +3037,10 @@ def test_reddit_reads_unknown_rules_only_with_search_evidence(env, monkeypatch):
 def test_reddit_weekly_find_runs_once_a_week(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: ({"threads": []}, None))
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
     tuesday = datetime(2026, 11, 3, 11)
-    assert rd.weekly_message(tuesday) and rd.weekly_message(tuesday) == ""   # 주 1회
+    first = rd.weekly_message(tuesday)
+    assert "규칙 주간 조사" in first and "후보" in first and rd.weekly_message(tuesday) == ""   # 주 1회: 규칙 조사 → 후보
     assert rd.weekly_message(datetime(2026, 11, 4, 11)) == ""
 
 
@@ -3046,6 +3054,55 @@ def test_reddit_real_config_sets_initial_stages(env):
     assert not [s for s in stages.values() if s["writer"] == "post"]          # 2026-11-02: 바로 게시할 수 있는 곳 없음
     assert rd.standing(state, "AsianBeauty")["writer"] == "facts"              # 단계만 있고 조사 없는 곳은 규칙을 모르는 곳
     assert rd.OPERATOR_LINE in rd.DISCLOSURE and rd.OPERATOR_LINE in rd.DISCLOSURE_OPERATOR
+
+
+def test_reddit_korean_text_uses_machine_translation_where_allowed(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    mt = importlib.import_module("pipeline.machine_translate")
+    assert mt.is_korean("붓기는 한동안 갈 수 있어요. Rejuran 후에") and not mt.is_korean("Swelling may last. 한국")
+    _reddit_items(rd, ("NoAI", "Can I fly the next day?"))
+    rd.allow("NoAI", False, mt=True)
+    _reddit_answers(rd, monkeypatch)
+    calls = []
+    monkeypatch.setattr(mt, "_translator", lambda text: (calls.append(text), "Swelling can last a while, so ask your doctor. It lasts 3 days.")[1])
+    item = rd.check(1, "붓기는 한동안 갈 수 있으니 의사에게 물어보세요. 3일 정도 가요.")
+    assert calls and item["translated"] and item["original"].startswith("붓기는")
+    assert item["body"] == "Swelling can last a while, so ask your doctor."             # 번역 뒤에도 숫자 문장은 뺀다
+    assert rd.TRANSLATED_LINE in item["paste"] and rd.OPERATOR_LINE in item["paste"] and "AI-assisted" not in item["paste"]
+    assert "Google 번역" in rd.paste_messages(item)[0]
+    monkeypatch.setattr(mt, "_translator", None)
+    monkeypatch.delenv("GOOGLE_TRANSLATE_API_KEY", raising=False)
+    with pytest.raises(rd.RedditError) as e:
+        rd.check(1, "붓기는 한동안 갈 수 있어요.")
+    assert "GOOGLE_TRANSLATE_API_KEY" in str(e.value)
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 운영진답변 NoAI 허용 번역허용")["args"] == ["pipeline.reddit", "mods", "NoAI", "allowed", "--mt"]
+
+
+def test_reddit_weekly_rules_research_reports_changes(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("testsub", "Can I fly?"))
+    rd.allow("testsub", False)
+    grounded = llm.LLMResult(text="rules", model="m", stage="reddit_rules", grounding_urls=[{"url": "https://reddit.com/r/testsub/about/rules", "title": "r"}])
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: grounded)
+    rules = {"found": True, "rules_ko": ["친절"], "self_promotion": "limited", "ai_text": "unknown", "links": "banned"}
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_rules_extract=rules)
+    lines = rd.refresh_rules()                                               # 설정 커뮤니티(제외 빼고) + 기록된 커뮤니티 전부
+    assert {line.split(":")[0] for line in lines} == {"r/NoMods", "r/NoAI", "r/testsub"}
+    assert rd.refresh_rules() == [] and stages.count("reddit_rules_extract") == 3   # 7일 안에는 다시 안 본다
+    answers["reddit_rules_extract"] = {**rules, "links": "allowed"}
+    lines = rd.refresh_rules(force=True)
+    assert any(line.startswith("r/testsub: 링크 금지→허용") and "링크 붙임" in line for line in lines)
+    st = rd.standing(rd.load(), "testsub")
+    assert st["links"] and st["links_from"] == "ai"                          # 조사에서 링크 허용 → 본문에 링크
+    item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
+    assert "https://skinboundkorea.com/fly/" in item["paste"] and "AI 규칙 조사" in rd.paste_messages(item)[0]
+    answers["reddit_rules_extract"] = {**rules, "operators_banned": True, "links": "allowed"}
+    assert any("단계 활동→문의 필요" in line for line in rd.refresh_rules(force=True))   # 더 엄격해지면 바로 반영
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
+    rd.refresh_rules(force=True)                                             # 못 찾으면 전 조사를 지우지 않는다
+    assert rd.load()["subs"]["testsub"]["research"]["found"] and rd.load()["subs"]["testsub"]["research"]["refresh_failed"]
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙 조사")["args"] == ["pipeline.reddit", "rules", "--force"]
 
 
 def test_mentions_ledger(env):
