@@ -63,7 +63,7 @@ log = get_logger("social")
 
 CHANNELS = ("x", "threads")
 KINDS = ("link", "fact", "angle", "ask")  # 글마다 만드는 종류 (보내는 순서도 이 순서). ask = 독자 질문 (2026-10-19)
-LABEL = {"link": "새 글 소개", "fact": "사실 하나", "angle": "여행 팁·흔한 오해", "ask": "독자에게 질문", "roundup": "한 주 정리"}
+LABEL = {"link": "새 글 소개", "fact": "사실 하나", "angle": "여행 팁·흔한 오해", "ask": "독자에게 질문", "roundup": "한 주 정리", "share": "공유 실험"}
 ASK_FOOTER = "\n\n(AI-assisted · not medical advice)"
 PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
 URL_WEIGHT = 23  # X 는 링크(도메인만 쓴 것 포함)를 길이와 관계없이 23자로 센다
@@ -397,6 +397,111 @@ def compose_pending(limit: int = 5) -> tuple[list[str], list[str]]:
     return done, failed
 
 
+# ---------------- 공유 실험 (2026-11-02, 4주) ----------------
+# "친구에게 보낼 만한가" 기준의 글(share)과 기존 글을 번갈아 보내고 글별 Threads 반응을 비교한다. 사실 목록·규칙 검사는 같다.
+
+def experiment() -> dict:
+    return settings().get("experiment") or {}
+
+
+def experiment_active(day: date) -> bool:
+    cfg = experiment()
+    return bool(cfg) and str(cfg["start"]) <= day.isoformat() <= str(cfg["end"])
+
+
+def share_pending() -> list[Path]:
+    """실험 기간에 게시된 글 중 share 글이 아직 없는 것 (최근 글부터)."""
+    if not experiment_active(now_kst().date()):
+        return []
+    live = live_slugs()
+    paths = [p for s in PUBLIC_STATES for p in draft_dirs(s) if p.name in live and allowed(load_draft(p))
+             and (data := load_social(p)) is not None and "share" not in data["items"]]
+    return sorted(paths, key=lambda p: p.name, reverse=True)
+
+
+def compose_share(path: Path) -> dict:
+    draft = load_draft(path)
+    data = load_social(path)
+    limits = {ch: settings()[ch]["max_chars"] - 60 for ch in CHANNELS}
+    problems: list[str] = []
+    for _ in range(2):
+        fix = "\n\nYour previous version failed these checks. Fix them:\n" + "\n".join(f"- {p}" for p in problems) if problems else ""
+        made, _r = llm.generate_json("social", prompt("social_share", title=draft["blog"].get("title", ""), facts=facts_text(social_facts(draft)),
+                                                      share_x=str(limits["x"]), share_threads=str(limits["threads"])) + fix)
+        bodies = {ch: str(made.get(ch) or "").strip() for ch in CHANNELS}
+        ids = [str(i) for i in made.get("fact_ids") or []]
+        channels = build_channels("share", bodies, data.get("blog_url", ""), fact_domains(draft, ids) or ["source"])
+        problems = check_item(draft, "share", bodies, channels, ids)
+        if not problems:
+            break
+    item = {"status": "blocked" if problems else "ready", "fact_ids": ids, "channels": channels, "scheduled_on": None,
+            "problems": problems, "style": str(made.get("style") or "")}
+    item["seal"] = seal_of(item)
+    data["items"]["share"] = item
+    save_json(social_file(path), data)
+    return item
+
+
+def compose_shares(limit: int = 2) -> tuple[list[str], list[str]]:
+    done, failed = [], []
+    for path in share_pending()[:limit]:
+        try:
+            compose_share(path)
+            done.append(path.name)
+        except llm.ClaudeAuthExpired:
+            raise
+        except llm.LLMError as e:
+            failed.append(f"{path.name}: {e}")
+    return done, failed
+
+
+def threads_post_stats() -> dict[str, dict]:
+    """게시물 주소 → 글별 반응 (최근 100개)."""
+    token = threads_token()
+    me = _http("GET", f"{THREADS_API}/me", {"fields": "id", "access_token": token})
+    posts = _http("GET", f"{THREADS_API}/{me['id']}/threads", {"fields": "id,permalink", "limit": 100, "access_token": token}).get("data", [])
+    out = {}
+    for p in posts:
+        data = _http("GET", f"{THREADS_API}/{p['id']}/insights", {"metric": "views,likes,replies,reposts,quotes,shares", "access_token": token})
+        out[p.get("permalink", "").rstrip("/")] = {m["name"]: int(m["values"][0]["value"]) for m in data.get("data", []) if m.get("values")}
+    return out
+
+
+def experiment_results(stats: dict[str, dict] | None = None) -> dict:
+    cfg = experiment()
+    start = str(cfg["start"])
+    stats = threads_post_stats() if stats is None else stats
+    groups = {"share": [], "other": []}
+    unread = 0
+    for ref, _, item in entries(include_done=True):
+        posted = item["channels"].get("threads", {}).get("posted")
+        if not posted or posted.get("at", "")[:10] < start or ref.kind == "roundup":
+            continue
+        got = stats.get(posted["url"].rstrip("/"))
+        if got is None:
+            unread += 1
+        else:
+            groups["share" if ref.kind == "share" else "other"].append(got)
+    return {"unread": unread, **{k: {"posts": len(v), **{m: sum(x.get(m, 0) for x in v) for m in ("views", "likes", "replies", "reposts", "quotes", "shares")}}
+                                 for k, v in groups.items()}}
+
+
+def experiment_lines(stats: dict[str, dict] | None = None) -> list[str]:
+    """주간 리포트용. 글마다 평균으로 비교한다."""
+    if not experiment() or now_kst().date().isoformat() < str(experiment()["start"]):
+        return []
+    r = experiment_results(stats)
+
+    def avg(g: dict) -> str:
+        n = g["posts"] or 1
+        spread = g["reposts"] + g["quotes"] + g["shares"]
+        return f"{g['posts']}개 · 글당 조회 {g['views'] / n:.1f} · 좋아요 {g['likes'] / n:.1f} · 답글 {g['replies'] / n:.1f} · 공유 {spread / n:.1f}"
+    lines = [f"🧪 SNS 공유 실험 (Threads, ~{experiment()['end']}, 표본이 작아 방향만 참고)", f"   실험 글: {avg(r['share'])}", f"   기존 글: {avg(r['other'])}"]
+    if r["unread"]:
+        lines.append(f"   반응을 못 읽은 게시물 {r['unread']}개")
+    return lines
+
+
 # ---------------- 한 주 정리 (일요일) ----------------
 
 def roundup_dir() -> Path:
@@ -586,11 +691,15 @@ def pick_today(now: datetime) -> Ref | None:
     if _waiting_for_blog(now):
         return None
     candidates = [(ref, item) for ref, _, item in entries()
-                  if ref.kind in KINDS and item["status"] == "ready" and sealed(item) and not item.get("scheduled_on")
+                  if (ref.kind in KINDS or ref.kind == "share") and item["status"] == "ready" and sealed(item) and not item.get("scheduled_on")
                   and not any(c.get("posted") for c in item["channels"].values())]
     if now.weekday() == 6 and "#" in slot and len(candidates) < BACKLOG:
         return None  # 일요일은 1개만 — 밀린 글이 남아 있는 동안만 두 번째 칸도 쓴다 (2026-10-29)
-    for kinds in (("link",), ("fact", "angle", "ask")):
+    order = [("link",), ("fact", "angle", "ask")]
+    if experiment_active(now.date()):  # 새 글 소개 다음은 실험 글·기존 글을 칸마다 번갈아 (날짜+시각 고정, 다시 돌려도 같다)
+        turn = (now.date().toordinal() + daily_hours().index(next(h for h in reversed(daily_hours()) if h <= now.hour))) % 2
+        order = [("link",), ("share",), ("fact", "angle", "ask")] if turn == 0 else [("link",), ("fact", "angle", "ask"), ("share",)]
+    for kinds in order:
         for ref, _ in candidates:
             if ref.kind in kinds:
                 return ref

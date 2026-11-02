@@ -141,6 +141,7 @@ def extras() -> list[str]:
     try:
         from pipeline import social
         lines += social.reaction_lines(7)  # Threads·X 반응 수
+        lines += social.experiment_lines()  # 공유 실험 글 vs 기존 글
     except Exception as e:  # noqa: BLE001
         log.warning("SNS 반응 집계 실패: %s", e)
     try:

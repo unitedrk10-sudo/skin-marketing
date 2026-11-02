@@ -164,8 +164,8 @@ def test_gemini_stages_use_no_deprecated_parameters():
 def test_writing_and_review_use_different_vendors():
     """기획서 6-0: 같은 회사 모델이 쓰고 검수하지 않는다 (작성 Claude ↔ 검수 Gemini)."""
     vendor = {"claude_cli": "anthropic", "claude_code": "anthropic", "anthropic": "anthropic", "gemini": "google"}
-    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search", "shorts_write", "reddit_answer", "reddit_direct")}
-    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener", "shorts_review", "reddit_review")}
+    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search", "shorts_write", "reddit_answer", "reddit_direct", "data_note_write")}
+    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener", "shorts_review", "reddit_review", "data_note_review")}
     assert writers.isdisjoint(reviewers)
 
 
@@ -3003,6 +3003,75 @@ def test_search_console_reports_changes_and_missing_setup(env, monkeypatch):
     monkeypatch.setattr(sc, "effect_lines", lambda today=None, session=None: [])
     text = "\n".join(sc.report_lines(7, date(2026, 11, 2)))
     assert "노출 10 → 30" in text and "rejuran (30)" in text and "12.5위" in text and "색인: Submitted and indexed 1" in text
+
+
+def _note_data():
+    return {"as_of": "2026-11-02", "totals": {"total": 1000, "clinics": 900, "hospitals": 100, "named_dermatology": 100},
+            "regions": [{"sido": "서울", "sggu": "강남구", "total": 500, "clinics": 490, "hospitals": 10, "named_dermatology": 80},
+                        {"sido": "부산", "sggu": "해운대구", "total": 300, "clinics": 290, "hospitals": 10, "named_dermatology": 10},
+                        {"sido": "경기", "sggu": "분당구", "total": 200, "clinics": 120, "hospitals": 80, "named_dermatology": 10}], "attractions": []}
+
+
+def test_data_note_checks_numbers_and_publishes_only_after_approval(env, monkeypatch):
+    dn = importlib.import_module("pipeline.data_notes")
+    ds = importlib.import_module("pipeline.dataset")
+    site = importlib.import_module("pipeline.site")
+    monkeypatch.setattr(ds, "load", _note_data)
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "강남구": "Gangnam-gu", "부산": "Busan", "해운대구": "Haeundae-gu", "경기": "Gyeonggi", "분당구": "Bundang-gu"})
+    assert "50.0%" in dn.build_where(_note_data())["numbers"] and "Gangnam-gu, Seoul: 500" in dn.build_where(_note_data())["numbers"]
+    good = {"title": "Half of institutions are in Seoul", "description": "As of 2026-11-02.", "markdown": "As of 2026-11-02, Seoul has 500 institutions, 50.0% of 1,000.\n\n<script>x</script>## Why?\nThe data cannot say."}
+    answers = {"data_note_write": good, "data_note_review": {"ok": True, "issues": [], "ko": "번역"}}
+    monkeypatch.setattr(dn.llm, "generate_json", lambda stage, text: (answers[stage], None))
+    note = dn.draft("where")
+    assert note["status"] == "review" and "데이터글 승인 where" in dn.review_message(note) and dn.published() == []
+    cfg = {**site.config(), "data_page": True}
+    assert "/data/notes/where/" not in site.render_sitemap(cfg, [])            # 승인 전에는 공개 안 됨
+    print(dn.main(["approve", "where"]))
+    assert [n["id"] for n in dn.published()] == ["where"]
+    html = site.render_note(cfg, dn.published()[0])
+    assert "not a count of dermatologists" in html and "<script" not in html.split("</head>")[1].split("<footer")[0] and "/data/notes/where/" in site.render_sitemap(cfg, [])
+
+    answers["data_note_write"] = {**good, "markdown": "Seoul has 777 institutions."}   # 목록에 없는 숫자
+    note = dn.draft("where")
+    assert note["status"] == "blocked" and any("777" in p for p in note["problems"]) and "⛔" in dn.review_message(note)
+    assert dn.main(["approve", "where"]) == 2 and dn.published() == []         # 걸린 글은 승인 불가
+    answers["data_note_write"] = good
+    answers["data_note_review"] = {"ok": False, "issues": [{"problem": "과한 해석"}], "ko": ""}
+    assert dn.draft("where")["problems"] == ["과한 해석"]
+    assert importlib.import_module("pipeline.telegram_router").parse("데이터글 승인 where")["args"] == ["pipeline.data_notes", "approve", "where"]
+
+
+def test_share_experiment_alternates_and_compares_threads_stats(env, monkeypatch):
+    social = importlib.import_module("pipeline.social")
+    path = _published("2026-W41-10-rejuran-x", live=True)
+    draft = common.load_json(path / "draft.json")
+    facts = draft["facts"]
+    good = {"style": "surprise", "x": "Booking a laser before your flight? Check timing with your doctor.", "threads": "Booking a laser before your flight? Check timing with your doctor.", "fact_ids": [facts[0]["id"]]}
+    common.save_json(path / "social.json", {"version": 2, "draft_id": draft["id"], "title": "T", "blog_url": "https://x/a/", "created_at": "2026-10-01", "items": {}})
+    monkeypatch.setattr(social, "experiment", lambda: {"start": "2026-11-03", "end": "2026-11-30"})
+    monkeypatch.setattr(social, "now_kst", lambda: datetime(2026, 11, 3, 10, tzinfo=social.KST))
+    monkeypatch.setattr(social, "live_slugs", lambda: {draft["id"]: "a"})
+    monkeypatch.setattr(social.llm, "generate_json", lambda stage, text: (good, None))
+    assert social.compose_shares() == ([path.name], [])
+    item = social.load_social(path)["items"]["share"]
+    assert item["status"] == "ready" and social.sealed(item) and social.share_pending() == []
+    good2 = {**good, "x": "It is guaranteed safe.", "threads": "It is guaranteed safe."}
+    monkeypatch.setattr(social.llm, "generate_json", lambda stage, text: (good2, None))
+    assert social.compose_share(path)["status"] == "blocked"                  # 규칙 검사는 같다
+    monkeypatch.setattr(social.llm, "generate_json", lambda stage, text: (good, None))
+    social.compose_share(path)
+    assert social.experiment_active(date(2026, 11, 30)) and not social.experiment_active(date(2026, 12, 1))
+
+    data = social.load_social(path)
+    data["items"]["share"]["channels"]["threads"]["posted"] = {"url": "https://threads.com/p/1/", "at": "2026-11-04T00:00:00+00:00"}
+    data["items"]["fact"] = {"status": "ready", "channels": {"threads": {"text": "x", "posted": {"url": "https://threads.com/p/2", "at": "2026-11-05T00:00:00+00:00"}}}, "scheduled_on": "2026-11-05"}
+    data["items"]["old"] = {"status": "ready", "channels": {"threads": {"text": "x", "posted": {"url": "https://threads.com/p/3", "at": "2026-10-05T00:00:00+00:00"}}}, "scheduled_on": "2026-10-05"}
+    common.save_json(path / "social.json", data)
+    stats = {"https://threads.com/p/1": {"views": 40, "likes": 2, "shares": 1}, "https://threads.com/p/3": {"views": 999}}
+    result = social.experiment_results(stats)
+    assert result["share"]["posts"] == 1 and result["share"]["views"] == 40 and result["other"]["posts"] == 0 and result["unread"] == 1
+    lines = "\n".join(social.experiment_lines(stats))
+    assert "글당 조회 40.0" in lines and "공유 1.0" in lines and "못 읽은 게시물 1개" in lines
 
 
 def test_trust_check_every_four_weeks(env, monkeypatch):

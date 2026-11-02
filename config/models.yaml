@@ -68,6 +68,16 @@ stages:
     tools: []
     timeout_sec: 300
 
+  data_note_write: # 공공 데이터 글 설명 (숫자는 코드가 계산, pipeline/data_notes.py)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  data_note_review: # 공공 데이터 글 검수 (쓴 회사와 다른 모델) + 한국어 번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
   reddit_rules:    # 처음 보는 커뮤니티의 규칙 찾기 (검색 근거가 있을 때만 사용)
     provider: gemini
     model: gemini-3.8-flash

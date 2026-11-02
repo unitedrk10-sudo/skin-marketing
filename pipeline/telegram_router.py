@@ -37,7 +37,7 @@ YES = re.compile(r"(응|네|예|ㅇㅇ|그래|좋아|실행|진행|ok|yes)[.!\s]
 NO = re.compile(r"(아니|아니요|아니오|취소|ㄴㄴ|no)[.!\s]*", re.I)
 PENDING_MINUTES = 10
 READ_ONLY = {("pipeline.figures", "list"), ("pipeline.social", "list"), ("pipeline.site", "schedule"), ("pipeline.03_review", "list"),
-             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show")}
+             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show"), ("pipeline.data_notes", "list")}
 EVIDENCE_LOGS = ("worker", "social", "site", "figures", "telegram", "02_draft", "02b_auto_review", "03_review", "01_topics")
 EVIDENCE_POSTS = 12
 LOG_TAIL = 80
@@ -52,6 +52,7 @@ HELP = """[명령어]
 SNS: 오늘 스레드 올려 / 오늘 2번째 스레드 올려 / 3 스레드 올려 / X·Threads 주소 붙여넣기 / 3 + 주소 / SNS 목록 / 오늘 글
 조회: 검수 목록 / 승인 목록 / 3번 보여줘 / 3번 블로그 보여줘 / 블로그 일정 / 유입 / 관광지 트렌드
 승인 글: 승인글 2 폐기 / 2 되돌리기: 내용
+데이터 글: 데이터글 목록 / 데이터글 초안 where / 데이터글 승인 where / 데이터글 폐기 where
 Reddit: 레딧 1 방향: 내가 하고 싶은 말 (커뮤니티 말투로 영작) / 레딧 후보 찾아 / 레딧 목록 / 레딧 규칙확인 <서브레딧> [링크허용] / 레딧 1 초안 / 레딧 1 보여줘 / 레딧 1 빼기 / 레딧 1 완료 <댓글 주소> / 레딧 추가 <글 주소> <질문> / 레딧 글 주소만 보내기 → 글 내용 붙여넣기 → 답변
 스폰서: 스폰서 목록 / 스폰서 <id> | <영문 제목> | <답할 질문> (코스 글은 끝에 | 코스)
 숏폼: 숏폼 1,3 승인 / 숏폼 2 반려 / 숏폼 4 수정: 내용 / 숏폼 검수 목록
@@ -104,6 +105,10 @@ def parse(text: str) -> dict | None:
         return {"args": ["pipeline.experiment", "score", "최근", *m.groups()]}
     if re.fullmatch(r"실험 (정리|결과)", t):
         return {"args": ["pipeline.experiment", "summary"]}
+    if re.fullmatch(r"데이터\s*글\s*목록", t):
+        return {"args": ["pipeline.data_notes", "list"]}
+    if m := re.fullmatch(r"데이터\s*글\s*(초안|승인|폐기)\s+([a-z0-9_-]+)", t):
+        return {"args": ["pipeline.data_notes", {"초안": "draft", "승인": "approve", "폐기": "reject"}[m.group(1)], m.group(2)]}
     if re.fullmatch(r"(레딧|reddit)\s*후보\s*(찾아(줘)?|찾기)?", t, re.I):
         return {"args": ["pipeline.reddit", "find"]}
     if re.fullmatch(r"(레딧|reddit)\s*목록", t, re.I):
@@ -389,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "parse":
         print(json.dumps(parse(args.text), ensure_ascii=False))
         return 0
-    load_env_file()
+    load_env_file(override=True)  # 게이트웨이에 남은 옛 키가 아니라 .env 를 쓴다 (크론 스크립트와 같게, 2026-11-02)
     text = sys.stdin.buffer.read().decode("utf-8", "replace").strip()
     if not text:
         return 0

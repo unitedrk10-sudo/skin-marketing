@@ -1004,6 +1004,7 @@ def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
     if cfg.get("data_page"):
         lines += ["", "## Data", f"- [Dermatology institutions in Korea by region]({base}/data/): counts by province and district from Korean public health insurance data "
                               f"([CSV]({base}/data/{DATA_CSV}))"]
+        lines += [f"- [{n['title']}]({base}/data/notes/{n['id']}/): {n['description']}" for n in importlib.import_module("pipeline.data_notes").published()]
     lines += ["", "## About", f"- [Editorial policy]({base}/about/)",
               f"- [All guides as one Markdown file]({base}/llms-full.txt)"]
     return "\n".join(lines) + "\n"
@@ -1077,8 +1078,11 @@ def render_data(cfg: dict, data: dict) -> str:
                          for a in data["attractions"])
     places = (f"<h2>Near popular places in Seoul and beyond</h2><p>Institutions with a dermatology department within the radius of each place.</p>"
               f"<table><thead><tr><th>Place</th><th>Institutions</th><th>Radius</th><th>As of</th></tr></thead><tbody>{place_rows}</tbody></table>") if place_rows else ""
+    notes = importlib.import_module("pipeline.data_notes").published()
+    notes_block = ("<h2>Data notes</h2><ul>" + "".join(f'<li><a href="/data/notes/{esc(n["id"])}/">{esc(n["title"])}</a></li>' for n in notes) + "</ul>") if notes else ""
     body = f"""<div class="page"><h1>{esc(title)}</h1><p>{esc(summary)}</p>
 <p><a href="/data/{DATA_CSV}">Download all {len(rows)} regions as CSV</a></p>
+{notes_block}
 <h2>Regions with the most institutions</h2>
 <table><thead><tr><th>Province</th><th>District</th><th>With dermatology department</th><th>"Dermatology" in name</th></tr></thead><tbody>{region_rows}</tbody></table>
 {places}
@@ -1096,11 +1100,33 @@ def render_data(cfg: dict, data: dict) -> str:
     return page(cfg, f"{title} — {cfg['name']}", body, path="/data/", description=summary, jsonld=jsonld)
 
 
+def render_note(cfg: dict, note: dict) -> str:
+    """승인된 데이터 글. 표·출처·라이선스는 코드가 붙인다. 원시 HTML 은 지운다."""
+    esc = html.escape
+    base = base_url(cfg)
+    table = note["table"]
+    head = "".join(f"<th>{esc(c)}</th>" for c in table[0])
+    rows = "".join("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in r) + "</tr>" for r in table[1:])
+    chart = f'<p><img src="/data/notes/{esc(note["id"])}/chart.png" alt="{esc(note["title"])}" style="max-width:100%;height:auto"></p>' if note.get("has_chart") else ""
+    text = render_markdown(re.sub(r"<[^>]*>", "", note["markdown"]))
+    body = f"""<div class="page"><h1>{esc(note["title"])}</h1>{text}{chart}
+<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>
+<h2>Source and limits</h2>
+<p>Source: <a href="{HIRA_SOURCE}" rel="noopener">Health Insurance Review &amp; Assessment Service (HIRA), hospital information service</a>, Korea Open Government License Type 1. Retrieved {esc(note["as_of"])}, aggregated by {esc(cfg["name"])}.</p>
+<p>The count covers institutions that list a dermatology department. It is not a count of dermatologists or specialist clinics, and it does not rank or recommend any institution.</p>
+<p><a href="/data/">All data and CSV download</a>. Our aggregated tables are available under <a href="{DATA_LICENSE}" rel="noopener">CC BY 4.0</a>.</p></div>"""
+    jsonld = [{"@context": "https://schema.org", "@type": "Article", "headline": note["title"], "description": note["description"],
+               "url": f"{base}/data/notes/{note['id']}/", "dateModified": note["as_of"], "isBasedOn": HIRA_SOURCE,
+               "author": {"@type": "Organization", "name": cfg["name"], "url": f"{base}/"}}]
+    return page(cfg, f"{note['title']} — {cfg['name']}", body, path=f"/data/notes/{note['id']}/", description=note["description"], jsonld=jsonld)
+
+
 def render_sitemap(cfg: dict, posts: list[dict]) -> str:
     base = base_url(cfg)
     urls = [("/", posts[0]["date"] if posts else ""), ("/about/", ""), ("/privacy/", "")]
     if cfg.get("data_page"):
         urls.append(("/data/", ""))
+        urls += [(f"/data/notes/{n['id']}/", n["as_of"]) for n in importlib.import_module("pipeline.data_notes").published()]
     urls += [(f"/{p['slug']}/", p["date"]) for p in posts]
     items = "".join(f"<url><loc>{base}{u}</loc>" + (f"<lastmod>{d[:10]}</lastmod>" if d else "") + "</url>" for u, d in urls)
     return f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{items}</urlset>\n'
@@ -1278,6 +1304,12 @@ def build(out: Path | None = None) -> dict:
         try:
             write("data/index.html", render_data(cfg, data))
             write(f"data/{DATA_CSV}", dataset.to_csv(data))
+            notes_mod = importlib.import_module("pipeline.data_notes")
+            for note in notes_mod.published():
+                write(f"data/notes/{note['id']}/index.html", render_note(cfg, note))
+                chart = notes_mod.note_file(note["id"]).with_name("chart.png")
+                if chart.exists():
+                    shutil.copy(chart, out / "data" / "notes" / note["id"] / "chart.png")
         except dataset.DatasetError as e:  # 새 지역 영문명이 없어도 블로그 배포는 막지 않는다
             log.warning("데이터 페이지 생략: %s", e)
     if cfg.get("partners_page"):  # 병원 대상 안내 — 변호사 확인 후 켠다 (기획서 12-1-1 체크리스트)

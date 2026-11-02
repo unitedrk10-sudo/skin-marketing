@@ -373,6 +373,14 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
                        for k, i in d["items"].items() if i["status"] == "blocked"]
             if blocked:
                 message = (message + "\n\n" if message else "") + "\n".join(blocked)
+        if not auth_down:  # 공유 실험 글 (한 번에 2건, 보내기는 오늘의 글로)
+            try:
+                _made, share_failures = social_mod.compose_shares(limit=2)
+                failures += [f"SNS 실험 글 생성 실패 {f}" for f in share_failures]
+            except llm.ClaudeAuthExpired as e:
+                if msg := mark_auth_down(e):
+                    message = (message + "\n\n" if message else "") + msg
+                auth_down = True
         daily = social_mod.daily_message()  # 오전 9시(한국 시간) 이후 하루 한 번 — 오늘 올릴 글 1개
         reminder = importlib.import_module("pipeline.site").publish_reminder()  # 게시일(월·수·금)에 올라갈 글이 없으면
         exp = importlib.import_module("pipeline.experiment")  # 숏폼 화면 소스 실험: 그날 안내·영상이 들어오면 편집
