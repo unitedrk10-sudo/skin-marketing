@@ -156,7 +156,7 @@ def published() -> list[dict]:
 def review_message(note: dict) -> str:
     if note["status"] == "blocked":
         return f"[데이터 글 {note['id']}] ⛔ 검사에 걸려 승인 요청을 보내지 않았습니다\n" + "\n".join(f"- {p}" for p in note["problems"])
-    lines = [f"[데이터 글 검수] {note['id']} (기준 {note['as_of']})", f"승인: `데이터글 승인 {note['id']}` · 폐기: `데이터글 폐기 {note['id']}`", "",
+    lines = [f"[데이터 글 검수] 전국 데이터 (기준 {note['as_of']})", "승인: `데이터글 승인` · 폐기: `데이터글 폐기`", "",
              f"제목: {note['title']}", "", note.get("ko", ""), "", "📊 코드가 계산한 숫자", note["numbers"]]
     if note.get("has_chart"):
         lines += ["", f"MEDIA:`{note_file(note['id']).with_name('chart.png')}`"]
@@ -172,6 +172,14 @@ def list_message() -> str:
     return "\n".join(f"- {n['id']}: {n['status']} · 기준 {n['as_of']}" + (" · ⚠️ 새 데이터 있음" if current and n["as_of"] != current else "") + f" · {n['title']}" for n in notes)
 
 
+def _only_waiting() -> str:
+    folder = notes_dir()
+    waiting = [n["id"] for n in map(load_json, folder.glob("*/note.json")) if n["status"] == "review"] if folder.exists() else []
+    if len(waiting) != 1:
+        raise NoteError(f"검수 대기 데이터 글이 {len(waiting)}개입니다" + (f": {', '.join(waiting)}" if waiting else ""))
+    return waiting[0]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="공공 데이터 글")
     parser.add_argument("cmd", choices=["draft", "list", "approve", "reject"])
@@ -183,12 +191,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "draft":
             print(review_message(draft(args.note_id)))
         else:
-            note = load(args.note_id)
+            note = load(args.note_id or _only_waiting())
             if args.cmd == "approve" and note["status"] not in ("review", "approved"):
                 raise NoteError(f"{args.note_id}: 승인할 수 없는 상태입니다 ({note['status']})")
             note.update(status="approved" if args.cmd == "approve" else "rejected", approved_at=now_iso())
-            save_json(note_file(args.note_id), note)
-            print(f"✅ {args.note_id}: {note['status']}" + (" — 다음 배포 때 공개됩니다" if args.cmd == "approve" else ""))
+            save_json(note_file(note["id"]), note)
+            print(f"✅ {note['title']}: {'승인, 다음 배포 때 공개됩니다' if args.cmd == 'approve' else '폐기'}")
     except NoteError as e:
         print(f"⚠️ {e}")
         return 2

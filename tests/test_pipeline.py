@@ -3270,10 +3270,10 @@ def test_data_note_checks_numbers_and_publishes_only_after_approval(env, monkeyp
     answers = {"data_note_write": good, "data_note_review": {"ok": True, "issues": [], "ko": "번역"}}
     monkeypatch.setattr(dn.llm, "generate_json", lambda stage, text: (answers[stage], None))
     note = dn.draft("where")
-    assert note["status"] == "review" and "데이터글 승인 where" in dn.review_message(note) and dn.published() == []
+    assert note["status"] == "review" and "데이터글 승인" in dn.review_message(note) and dn.published() == []
     cfg = {**site.config(), "data_page": True}
     assert "/data/notes/where/" not in site.render_sitemap(cfg, [])            # 승인 전에는 공개 안 됨
-    print(dn.main(["approve", "where"]))
+    assert dn.main(["approve"]) == 0                                           # 검수 대기 글이 하나면 id 없이
     assert [n["id"] for n in dn.published()] == ["where"]
     html = site.render_note(cfg, dn.published()[0])
     assert "not a count of dermatologists" in html and "<script" not in html.split("</head>")[1].split("<footer")[0] and "/data/notes/where/" in site.render_sitemap(cfg, [])
@@ -3285,7 +3285,9 @@ def test_data_note_checks_numbers_and_publishes_only_after_approval(env, monkeyp
     answers["data_note_write"] = good
     answers["data_note_review"] = {"ok": False, "issues": [{"problem": "과한 해석"}], "ko": ""}
     assert dn.draft("where")["problems"] == ["과한 해석"]
-    assert importlib.import_module("pipeline.telegram_router").parse("데이터글 승인 where")["args"] == ["pipeline.data_notes", "approve", "where"]
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("데이터글 승인 where")["args"] == ["pipeline.data_notes", "approve", "where"]
+    assert router.parse("데이터글 승인")["args"] == router.parse("Where 승인")["args"] == ["pipeline.data_notes", "approve"]
 
 
 def test_share_experiment_alternates_and_compares_threads_stats(env, monkeypatch):
