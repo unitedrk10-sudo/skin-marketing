@@ -1,9 +1,42 @@
-# Reddit 답변 준비 (pipeline/reddit.py). 게시는 사람이 직접 한다.
-# 초안은 사람이 규칙을 읽고 `레딧 규칙확인 <서브레딧>` 으로 기록한 곳만 만든다 (content/reddit/state.json).
-excluded: [PlasticSurgery]   # 2024년 말 규칙 기준 홍보·광고가 밴 사유
-max_per_week: 2              # 최근 7일 게시 기록이 이만큼이면 초안을 더 만들지 않는다
+# Reddit 답변 준비 (pipeline/reddit.py). 게시는 사람이 직접 한다. 운영 기준: docs/reddit-ops.md
+# 커뮤니티 단계는 이 설정(개발 세션에서 정한 기준·조사 결과)과 운영자 기록(content/reddit/state.json: 원문 확인·운영진 답변·삭제·경고)을 합쳐 코드가 정한다.
+paused: false                # true 면 Reddit 전체 정지 (초안·후보 찾기 안 함). 텔레그램 `레딧 경고` 도 같은 효과
+max_per_week: 2              # 최근 7일 게시(삭제 포함)가 이만큼이면 게시용 초안·검사를 더 하지 않는다
+max_per_community_week: 1    # 한 커뮤니티에 최근 7일 게시 한도
 max_words: 180               # 공개 문구 제외 본문 길이
 max_age_days: 150            # 글 번호로 어림한 나이. Reddit 은 오래된 글(보통 6개월)을 닫아 답글을 못 달 수 있다
 find_count: 8
 find_weekday: 1              # 0=월. 화요일
 find_hour: 10                # 한국 시간
+rules_refresh_days: 7        # 후보 찾는 날 이보다 오래된 규칙 조사는 Gemini 검색으로 다시 (2026-11-02, 바뀐 곳만 알림)
+# 운영자 공개 문구(I run Skinbound Korea…)는 코드가 항상 붙인다. 아래는 "AI-assisted and human-checked." 줄만:
+#   ai_only = AI 가 쓴 글(초안·방향 영작)에만 (기본, 2026-11-02) / always = 운영자가 쓴 글에도 / never = 붙이지 않음
+disclosure_ai_label: ai_only
+# 한국어로 쓴 글은 Google 번역(GOOGLE_TRANSLATE_API_KEY) — 활동 단계나 `번역허용` 기록이 있는 곳만, 공개 문구에 "Written in Korean and machine-translated." 가 붙는다
+
+# 커뮤니티 기준 (2026-11-02, 조사는 AI 검색 요약 — 원문은 운영자가 확인 후 `레딧 규칙확인`)
+#   status: excluded = 활동 안 함 / ask_mods = 운영진 허락이 있어야 게시 / unverified = 원문 확인 전 (기본)
+#   ai_text: banned = AI 가 쓴 글 금지 → 허락·확인이 돼도 운영자가 직접 쓴 글만 (도구는 사실 정리·검사)
+communities:
+  KoreanBeauty:
+    status: ask_mods
+    note: 홍보·광고·제휴 금지, 운영자 글도 금지로 해석 (AI 요약, 검색 근거 있음)
+  KoreaTravelBeauty:
+    status: ask_mods
+    ai_text: banned
+    note: 병원·직원·홍보 담당자·대행사 참여 금지, 홍보성 댓글·AI 생성 글 금지 (AI 요약, 검색 근거 있음) — 문의 때 스폰서 제작 대행을 밝힌다
+  koreatravel:
+    status: excluded
+    ai_text: banned
+    note: 미용·시술 질문 금지(r/KoreaTravelBeauty 로 안내), AI 글 금지 (AI 요약, 검색 근거 없음)
+  SkincareAddiction:
+    status: unverified
+    ai_text: banned
+    note: 브랜드 계정 불가, 홍보 10% 이하, AI 글 금지, 승인 없는 AMA 금지 (AI 요약, 검색 근거 없음)
+  PlasticSurgery:
+    status: excluded
+    note: 홍보·광고는 밴 사유 (2024년 말 미러)
+  SeoulPlasticSurgery:
+    status: unverified
+  AsianBeauty:
+    status: unverified

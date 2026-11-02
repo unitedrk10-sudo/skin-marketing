@@ -16,6 +16,7 @@ from pipeline import common, llm, web
 
 topics_mod = importlib.import_module("pipeline.01_topics")
 draft_mod = importlib.import_module("pipeline.02_draft")
+REAL_HERMES_SEND = importlib.import_module("pipeline.worker").hermes_send  # 자동 픽스처가 바꾸기 전 (보낼 방 전달 시험용)
 review_mod = importlib.import_module("pipeline.02b_auto_review")
 human_mod = importlib.import_module("pipeline.03_review")
 
@@ -91,7 +92,7 @@ def ok_fetch(url):
 @pytest.fixture(autouse=True)
 def no_real_telegram(monkeypatch):
     """테스트가 실제 hermes send 로 텔레그램에 보내지 않게 한다 (기본: 보내기 실패 → 한 메시지 + 첨부 방식)."""
-    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: False)
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text, target=None: False)
 
 
 @pytest.fixture
@@ -2724,107 +2725,275 @@ def test_trend_compares_finished_weeks_and_splits_new_posts(env):
     assert trend.chart(data, common.log_dir() / "t.png").exists()
 
 
-def _reddit_env(monkeypatch):
+REDDIT_TEST_CFG = {"max_per_week": 2, "max_per_community_week": 1, "max_words": 180, "max_age_days": 150, "find_count": 8, "find_weekday": 1, "find_hour": 10,
+                   "communities": {"NoMods": {"status": "ask_mods", "note": "운영자 글 금지로 해석"}, "Banned": {"status": "excluded"},
+                                   "NoAI": {"status": "unverified", "ai_text": "banned"}}}
+REDDIT_POST_TEXT = "Swelling may last 2 days, so ask your doctor first."
+
+
+def _reddit_env(monkeypatch, **cfg):
     rd = importlib.import_module("pipeline.reddit")
     post = {"key": "fly", "title": "Flying", "url": "https://skinboundkorea.com/fly/",
             "facts": [{"id": "F1", "text": "Swelling may last 2 days.", "url": "https://aad.org/x"}]}
     monkeypatch.setattr(rd, "_live_posts", lambda: [post])
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, **cfg})
     return rd
 
 
-def test_reddit_find_filters_and_draft_needs_rule_check(env, monkeypatch):
+def _reddit_answers(rd, monkeypatch, **override):
+    answers = {"reddit_answer": {"answerable": True, "body": REDDIT_POST_TEXT, "fact_ids": ["P1:F1", "P9:F9"]},
+               "reddit_review": {"ok": True, "issues": [], "ko": "번역"},
+               "reddit_facts": {"answerable": True, "fact_ids": ["P1:F1"], "gaps_ko": "비행 시간은 없음"},
+               "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"}, **override}
+    stages = []
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (stages.append(stage), (answers[stage], None))[1])
+    return answers, stages
+
+
+def _reddit_items(rd, *pairs):
+    state = rd.load()
+    for n, (sub, question) in enumerate(pairs, 1):
+        rd._add(state, f"https://www.reddit.com/r/{sub}/comments/abc{n}/x/", question, question)
+    rd.save(state)
+
+
+def test_reddit_find_filters_and_unknown_rules_give_facts_only(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
     new, new2 = "1zz0000", "1zz0001"                                       # 글 번호로 어림한 나이: 큰 번호 = 새 글
     assert rd.estimated_date("1nm7hfq").year == 2025 and rd.estimated_date("1cx0tpm").year == 2024
-    threads = [{"url": f"https://www.reddit.com/r/koreatravel/comments/{new}/fly/", "title": "Fly after booster?", "question": "Can I fly the next day?"},
-               {"url": f"https://www.reddit.com/r/koreatravel/comments/{new2}/x/", "title": "Best clinic in Seoul?", "question": "Which clinic should I go to?"},
-               {"url": "https://www.reddit.com/r/PlasticSurgery/comments/abc3/x/", "title": "Flying", "question": "Can I fly?"},
-               {"url": "https://example.com/r/koreatravel/comments/abc4/", "title": "Flying", "question": "Can I fly?"},
-               {"url": "https://www.reddit.com/r/koreatravel/comments/1cx0tpm/x/", "title": "Old", "question": "Can I fly?"}]
-    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: ({"threads": threads}, None))
-    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="NOT FOUND", model="m", stage=stage, grounding_urls=[]))
+    threads = [{"url": f"https://www.reddit.com/r/travelsub/comments/{new}/fly/", "title": "Fly after booster?", "question": "Can I fly the next day?"},
+               {"url": f"https://www.reddit.com/r/travelsub/comments/{new2}/x/", "title": "Best clinic in Seoul?", "question": "Which clinic should I go to?"},
+               {"url": "https://www.reddit.com/r/Banned/comments/1zz0002/x/", "title": "Flying", "question": "Can I fly?"},
+               {"url": "https://example.com/r/travelsub/comments/1zz0003/", "title": "Flying", "question": "Can I fly?"},
+               {"url": "https://www.reddit.com/r/travelsub/comments/1cx0tpm/x/", "title": "Old", "question": "Can I fly?"}]
+    prompts = []
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), ({"threads": threads}, None))[1])
     message = rd.find()
-    assert [i["thread"] for i in rd.load()["items"]] == [new] and "규칙 아직 안 읽음" in message
-    with pytest.raises(rd.RedditError) as e:
-        rd.draft(1)                                                        # 규칙을 못 찾으면 초안을 만들지 않는다
-    assert "규칙확인 koreatravel" in str(e.value)
+    assert [i["thread"] for i in rd.load()["items"]] == [new] and "미확인" in message and "Banned" in prompts[0]
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="NOT FOUND", model="m", stage=stage, grounding_urls=[]))
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    item = rd.draft(1)                                                     # 규칙을 모르는 곳: AI 글 없이 사실 정리만
+    assert item["status"] == "manual" and item["practice"] and stages == ["reddit_facts"]
+    note = rd.paste_messages(item)
+    assert len(note) == 1 and "Swelling may last 2 days." in note[0] and "https://aad.org/x" in note[0] and "게시용 아님" in note[0]
+    assert rd.load()["subs"]["travelsub"]["research"]["found"] is False   # 못 찾은 것도 기록 (다시 찾으려면 규칙초기화)
     with pytest.raises(rd.RedditError):
-        rd.allow("PlasticSurgery", False)
-    assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙확인 r/koreatravel 링크허용")["args"] == ["pipeline.reddit", "allow", "koreatravel", "--links"]
+        rd.allow("Banned", False)
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 규칙확인 r/travelsub 링크허용")["args"] == ["pipeline.reddit", "allow", "travelsub", "--links"]
+    assert router.parse("레딧 규칙확인 travelsub AI금지")["args"] == ["pipeline.reddit", "allow", "travelsub", "--no-ai"]
+
+
+def test_reddit_stages_human_read_does_not_override_operator_ban(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    state = rd.load()
+    state["subs"]["nomods"] = {"checked": "2026-11-02", "links": True, "source": "human"}   # 예전 "직접 확인" 기록 (r/KoreanBeauty)
+    rd.save(state)
+    assert rd.standing(rd.load(), "NoMods")["mode"] == "ask_mods"           # 원문 확인만으로는 문의 필요가 안 풀린다
+    rd.allow("NoMods", True)
+    assert rd.standing(rd.load(), "NoMods")["mode"] == "ask_mods"
+    assert "1" not in rd.asked("NoMods").split("보냄")[0] and rd.load()["subs"]["nomods"]["asked"]
+    rd.mods("NoMods", "allowed", links=True, note="모드메일")
+    st = rd.standing(rd.load(), "NoMods")
+    assert st["mode"] == "active" and st["writer"] == "post" and st["links"]
+    rd.allow("NoAI", False)
+    assert rd.standing(rd.load(), "NoAI")["mode"] == "manual"               # AI 글 금지는 원문 확인으로 안 풀린다
+    rd.mods("NoAI", "refused")
+    assert rd.standing(rd.load(), "NoAI")["mode"] == "excluded"
+    rd.allow("fresh", False, no_ai=True)
+    assert rd.standing(rd.load(), "fresh")["mode"] == "manual"
+    state = rd.load()
+    state["subs"]["fresh"]["read"] = "2025-01-01"
+    assert any("다시 확인" in w for w in rd.standing(state, "fresh")["why"])
+    rd.reset("fresh")
+    assert "fresh" not in rd.load()["subs"]
+    message = rd.communities_message()
+    assert "r/NoMods: 활동" in message and "r/NoAI: 제외" in message and "운영진 거절" in message
 
 
 def test_reddit_draft_makes_paste_only_message_and_limits(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
-    state = rd.load()
-    rd._add(state, "https://www.reddit.com/r/koreatravel/comments/abc1/fly/", "Fly?", "Can I fly the next day?")
-    rd._add(state, "https://www.reddit.com/r/koreatravel/comments/abc2/fly/", "Fly 2?", "Can I fly?")
-    rd.save(state)
-    rd.allow("koreatravel", False)
-    answers = {"reddit_answer": {"answerable": True, "body": "Swelling may last 2 days, so ask your doctor first.", "fact_ids": ["P1:F1", "P9:F9"]},
-               "reddit_review": {"ok": True, "issues": [], "ko": "번역"}}
-    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (answers[stage], None))
+    _reddit_items(rd, ("testsub", "Can I fly the next day?"), ("testsub", "Can I fly?"), ("othersub", "Can I fly?"), ("thirdsub", "Can I fly?"))
+    rd.allow("testsub", False)
+    answers, _stages = _reddit_answers(rd, monkeypatch)
     item = rd.draft(1)
-    assert item["status"] == "ready" and rd.DISCLOSURE in item["paste"] and "skinboundkorea" not in item["paste"]
+    assert item["status"] == "ready" and not item["practice"] and rd.DISCLOSURE in item["paste"] and "skinboundkorea" not in item["paste"]
     meta, paste = rd.paste_messages(item)
     assert paste == item["paste"] and item["url"] in meta and "번역" in meta and "aad.org" in meta
-    rd.allow("koreatravel", True)
+    rd.allow("testsub", True)
     assert "https://skinboundkorea.com/fly/" in rd.draft(1)["paste"]        # 허용한 곳만 링크
 
     answers["reddit_answer"]["body"] = "It is guaranteed safe, 99 days."     # 규칙에 걸리면 붙여넣을 글이 없다
     item = rd.draft(1)
     assert item["status"] == "blocked" and not item["paste"] and len(rd.paste_messages(item)) == 1
-    answers["reddit_answer"]["body"] = "Swelling may last 2 days, so ask your doctor first."
+    answers["reddit_answer"]["body"] = REDDIT_POST_TEXT
     answers["reddit_review"] = {"ok": False, "issues": [{"problem": "과장"}], "ko": ""}
     prompts = []
     real = rd.llm.generate_json
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text) if stage == "reddit_answer" else None, real(stage, text))[1])
     assert rd.draft(1)["problems"] == ["과장"] and len(prompts) == 2 and "과장" in prompts[1]   # 지적을 주고 한 번 더
     answers["reddit_review"] = {"ok": True, "issues": [], "ko": "번역"}
-    item = rd.draft(1)
+    rd.draft(1)
     item_state = rd.load()
     rd._item(item_state, 1)["paste"] = "tampered"
     with pytest.raises(rd.RedditError):
         rd.paste_messages(rd._item(item_state, 1))                           # 만든 뒤 바뀐 본문은 보내지 않는다
 
-    rd.done(1, "https://www.reddit.com/r/koreatravel/comments/abc1/fly/c1/")
+    assert "기준 밖" not in rd.done(1, "https://www.reddit.com/r/testsub/comments/abc1/x/c1/")
     with pytest.raises(rd.RedditError):
         rd.done(2, "https://evil.example/x/")
-    monkeypatch.setattr(rd, "settings", lambda: {"max_per_week": 1, "excluded": []})
+    with pytest.raises(rd.RedditError) as e:
+        rd.draft(2)                                                          # 커뮤니티당 주 1개
+    assert "r/testsub" in str(e.value)
+    rd.allow("othersub", False)
+    rd.draft(3)
+    rd.done(3, "https://www.reddit.com/r/othersub/comments/abc3/x/c1/")
+    rd.allow("thirdsub", False)
+    with pytest.raises(rd.RedditError) as e:
+        rd.draft(4)                                                          # 전체 주 2개
+    assert "최근 7일 게시가 2개" in str(e.value)
+
+
+def test_reddit_practice_draft_is_not_for_posting(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("NoMods", "Can I fly the next day?"), ("testsub", "Can I fly?"))
+    _reddit_answers(rd, monkeypatch)
+    item = rd.draft(1)                                                       # 문의 필요: 연습 초안 (한도와 무관)
+    assert item["status"] == "ready" and item["practice"] and "http" not in item["paste"]
+    message = rd.paste_messages(item)
+    assert len(message) == 1 and "게시용 아님" in message[0] and REDDIT_POST_TEXT in message[0]
+    assert "기준 밖" in rd.done(1, "https://www.reddit.com/r/NoMods/comments/abc1/x/c1/") and rd._item(rd.load(), 1)["outside_standard"]
+
+    rd.allow("testsub", False)
+    item = rd.draft(2)
+    assert len(rd.paste_messages(item)) == 2
+    rd.reset("testsub")                                                      # 만든 뒤 기준이 바뀌면 붙여넣기 글을 보내지 않는다
+    assert len(rd.paste_messages(rd._item(rd.load(), 2))) == 1
+
+
+def test_reddit_ai_banned_community_gets_facts_and_checks_operator_text(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("NoAI", "Can I fly the next day?"))
+    rd.allow("NoAI", True)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    for item in (rd.draft(1), rd.draft(1, "비행 이야기")):                   # 초안도 방향 영작도 AI 글이라 사실 정리로
+        assert item["status"] == "manual" and not item["practice"]
+    assert "reddit_answer" not in stages and "reddit_direct" not in stages
+    note = rd.paste_messages(rd._item(rd.load(), 1))[0]
+    assert "Swelling may last 2 days." in note and "검사:" in note and "비행 시간은 없음" in note
+
+    item = rd.check(1, "I'd recommend Re2O for this.")                    # 남는 내용이 없으면 붙여넣을 글 없음
+    assert item["status"] == "blocked" and "Re2O" in item["removed"][0]["sentence"] and "검사:" in rd.paste_messages(item)[0]
+
+    text = ("I flew home soon after and it was fine for me. Swelling can last a while, so ask your doctor. "
+            "This clinic in Gangnam is the best, call them today. Ice the area all night long.")
+    answers["reddit_light_check"] = {"remove": [{"sentence": "Ice the area all night long.", "why": "잘못된 사후관리"},
+                                                {"sentence": "Not in the reply.", "why": "x"}], "related_post": "P1", "ko": "번역"}
+    item = rd.check(1, text)                                                 # 고쳐 쓰지 않고 문장만 뺀다. 못 찾은 문장은 사람에게
+    assert item["status"] == "blocked" and any("Not in the reply" in p for p in item["problems"])
+    answers["reddit_light_check"]["remove"] = answers["reddit_light_check"]["remove"][:1]
+    item = rd.check(1, text)
+    assert item["status"] == "ready" and item["written_by"] == "operator"
+    assert item["body"] == "I flew home soon after and it was fine for me. Swelling can last a while, so ask your doctor."
+    assert {r["sentence"] for r in item["removed"]} == {"This clinic in Gangnam is the best, call them today.", "Ice the area all night long."}
+    assert item["paste"].endswith(rd.DISCLOSURE_OPERATOR) and "AI-assisted" not in item["paste"]
+    assert "https://skinboundkorea.com/fly/" in item["paste"] and len(rd.paste_messages(item)) == 2   # 링크 허용 기록 → 관련 글 링크
+    assert "뺀 문장" in rd.paste_messages(item)[0] and "Gangnam" in rd.paste_messages(item)[0]
+    answers["reddit_light_check"]["remove"] = []
+    item = rd.check(1, "Swelling can last 2 days. Avoid saunas for two weeks. Use it twice daily. Swelling can last a while, so ask your doctor first.")
+    assert item["body"] == "Swelling can last a while, so ask your doctor first." and len(item["removed"]) == 3   # 숫자 든 문장은 뺀다
+    assert all("숫자" in r["why"] for r in item["removed"])
+    item = rd.check(1, "I got Rejuran and loved my results. Swelling can last a while, so ask your doctor.")
+    assert item["status"] == "ready" and item["removed"]                     # 시술 경험담만 뺀다
+    assert not rd.check(1, "I tried a mild sunscreen and my skin liked it. Swelling can last a while, ask your doctor.")["removed"]
+    with pytest.raises(rd.RedditError) as e:                                 # 번역 허용 기록이 없으면 한국어 글은 번역하지 않는다
+        rd.check(1, "붓기는 한동안 갈 수 있으니 의사에게 물어보세요.")
+    assert "번역허용" in str(e.value)
+    rd.allow("NoAI", False)                                                  # 링크 허용 확인이 없으면 안내 메시지에만
+    item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
+    assert "http" not in item["paste"] and "관련 글: https://skinboundkorea.com/fly/" in rd.paste_messages(item)[0]
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "disclosure_ai_label": "always"})
+    assert "AI-assisted" in rd.check(1, "Swelling can last a while, so ask your doctor about it.")["paste"]
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 1 사실")["args"] == ["pipeline.reddit", "facts", "1"]
+    assert router.parse("레딧 1 검사: - Swelling may last.")["args"] == ["pipeline.reddit", "check", "1", "--", "- Swelling may last."]
+    assert router.split_commands("레딧 1 검사: First line.\nSecond line.") == ["레딧 1 검사: First line.\nSecond line."]
+
+
+def test_reddit_records_stop_conditions_and_report(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("testsub", "Can I fly?"), ("testsub", "Can I fly 2?"), ("othersub", "Can I fly?"), ("othersub", "Can I fly 2?"))
+    for sub in ("testsub", "othersub"):
+        rd.allow(sub, False)
+    _reddit_answers(rd, monkeypatch)
+    rd.draft(1)
+    rd.done(1, "https://www.reddit.com/r/testsub/comments/abc1/x/c1/")
+    assert any("반응 기록" not in x for x in rd.report_lines()) and "게시 1" in rd.report_lines()[0]
+    assert "삭제" in rd.removed(1, "스팸")                                   # 삭제 → 그 커뮤니티 정지
+    assert rd.standing(rd.load(), "testsub")["mode"] == "stopped"
     with pytest.raises(rd.RedditError):
-        rd.draft(2)                                                          # 주간 한도
+        rd.draft(2)
+    with pytest.raises(rd.RedditError):
+        rd.allow("testsub", False)                                           # 정지는 원문 확인으로 못 푼다
+    assert rd._add(rd.load(), "https://www.reddit.com/r/testsub/comments/zzz9/x/", "Fly?", "Fly?") is None
+    rd.resume("testsub")
+    assert rd.standing(rd.load(), "testsub")["mode"] == "unverified"         # 재개하면 원문 확인부터 다시
+
+    state = rd.load()                                                        # 같은 커뮤니티 연속 2개 0점 이하 → 정지
+    for n, day in ((3, "2026-10-01"), (4, "2026-10-02")):
+        rd._item(state, n).update(status="posted", done_at=f"{day}T10:00:00+09:00")
+    rd.save(state)
+    assert "멈췄" not in rd.react(3, 0, 1)
+    assert "멈췄" in rd.react(4, -1)
+    assert rd.standing(rd.load(), "othersub")["mode"] == "stopped"
+    with pytest.raises(rd.RedditError):
+        rd.react(2, 3)                                                       # 게시 안 한 글
+
+    rd.warn("all", "계정 제한")                                              # 경고 → 전체 정지
+    assert rd.standing(rd.load(), "anything")["mode"] == "paused"
+    assert "정지" in rd.find() and rd.weekly_message(datetime(2026, 11, 3, 11)) == ""
+    lines = "\n".join(rd.report_lines())
+    assert "전체 정지" in lines and "r/othersub" in lines and "삭제 누적 1" in lines
+    rd.resume("전체")
+    assert rd.standing(rd.load(), "anything")["mode"] == "unverified"
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 3 반응 5 답글 2")["args"] == ["pipeline.reddit", "react", "3", "5", "--replies", "2"]
+    assert router.parse("레딧 3 삭제됨 스팸")["args"] == ["pipeline.reddit", "removed", "3", "--note", "스팸"]
+    assert router.parse("레딧 경고 전체 계정 제한")["args"] == ["pipeline.reddit", "warn", "all", "--note", "계정 제한"]
+    assert router.parse("레딧 재개 testsub")["args"] == ["pipeline.reddit", "resume", "testsub"]
+    assert router.parse("레딧 운영진답변 NoMods 허용 링크허용 메일 답장")["args"] == [
+        "pipeline.reddit", "mods", "NoMods", "allowed", "--links", "--note", "메일 답장"]
+    assert router.parse("레딧 문의 NoMods")["args"] == ["pipeline.reddit", "asked", "NoMods"]
+    assert router.parse("레딧 기준")["args"] == ["pipeline.reddit", "communities"] and router._read_only("레딧 기준")
 
 
 def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
     router = importlib.import_module("pipeline.telegram_router")
-    link = "https://www.reddit.com/r/KoreanBeauty/s/r9B5i7yHB3"
+    link = "https://www.reddit.com/r/SomeBeauty/s/r9B5i7yHB3"
     assert router._reddit_request(link) == ["pipeline.reddit", "want", link, ""]
     assert router._reddit_request(f"{link}?utm_source=share 비행 질문") == ["pipeline.reddit", "want", link, "비행 질문"]
     assert router._reddit_request("레딧 1 완료 https://www.reddit.com/r/a/comments/b/c/") is None
+    assert router._reddit_request("언급 추가 커뮤니티 Reddit https://www.reddit.com/r/a/comments/b/c/") is None
     assert "붙여 넣어" in rd.want(link) and rd.waiting_url() == link
     assert router._reddit_request("Can I fly after this?") == ["pipeline.reddit", "want", link, "Can I fly after this?"]
     assert router._reddit_request("1 승인") is None                          # 정해진 명령은 그대로
-    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="NOT FOUND", model="m", stage=stage, grounding_urls=[]))
-    assert "규칙확인 KoreanBeauty" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
-    assert rd.load()["items"][0]["wanted"] and "병원 추천" in rd.want("https://www.reddit.com/r/KoreanBeauty/s/other", "Which clinic is best?")
-    answers = {"reddit_answer": {"answerable": True, "body": "Swelling may last 2 days, so ask your doctor first.", "fact_ids": ["P1:F1"]},
-               "reddit_review": {"ok": True, "issues": [], "ko": "번역"}}
-    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (answers[stage], None))
+    monkeypatch.setattr(rd, "draft", lambda n, direction="": (_ for _ in ()).throw(rd.RedditError("r/SomeBeauty 정지")))
+    assert "정지" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
+    assert rd.load()["items"][0]["wanted"] and "병원 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
+    monkeypatch.undo()
+    rd = _reddit_env(monkeypatch)
+    _reddit_answers(rd, monkeypatch)
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m: True)
-    rd.allow("KoreanBeauty", False)
+    rd.allow("SomeBeauty", False)
     assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"
 
 
 def test_reddit_direction_keeps_opinion_but_blocks_treatment_promotion(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
-    state = rd.load()
-    rd._add(state, "https://www.reddit.com/r/KoreanBeauty/s/abc", "Three products?", "What 3 products should I buy in Korea?")
-    rd.save(state)
-    rd.allow("KoreanBeauty", True)
-    answers = {"reddit_direct": {"answerable": True, "body": "Personally I'd look for a mild sunscreen and a simple moisturizer.", "fact_ids": []},
-               "reddit_review": {"ok": True, "issues": [], "ko": "번역"}}
-    stages = []
-    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (stages.append(stage), (answers[stage], None))[1])
+    _reddit_items(rd, ("testsub", "What 3 products should I buy in Korea?"))
+    rd.allow("testsub", True)
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_direct={"answerable": True, "body": "Personally I'd look for a mild sunscreen and a simple moisturizer.", "fact_ids": []})
     item = rd.draft(1, "선크림과 보습제를 말해줘")
     assert item["status"] == "ready" and stages[0] == "reddit_direct" and rd.DISCLOSURE in item["paste"]
     assert "http" not in item["paste"]                                       # 근거 글이 없으면 링크도 없다
@@ -2838,50 +3007,128 @@ def test_reddit_direction_keeps_opinion_but_blocks_treatment_promotion(env, monk
 
 def test_reddit_reads_unknown_rules_only_with_search_evidence(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
-    state = rd.load()
-    rd._add(state, "https://www.reddit.com/r/KoreaTravelBeauty/comments/1zz1/x/", "Fly?", "Can I fly the next day?")
-    rd._add(state, "https://www.reddit.com/r/skincareaddiction/comments/1zz2/x/", "Fly?", "Can I fly?")
-    rd.save(state)
+    _reddit_items(rd, ("TravelBeauty", "Can I fly the next day?"), ("skincare", "Can I fly?"))
     grounded = llm.LLMResult(text="rules", model="m", stage="reddit_rules", grounding_urls=[{"url": "https://reddit.com/x", "title": "reddit.com"}])
     plain = llm.LLMResult(text="rules", model="m", stage="reddit_rules", grounding_urls=[])
     search = [grounded]
     monkeypatch.setattr(rd.llm, "generate", lambda stage, text: search[0])
-    rules = {"found": True, "rules_ko": ["친절"], "source_url": "https://reddit.com/r/x/about/rules", "self_promotion": "banned", "ai_text": "unknown"}
-    answers = {"reddit_rules_extract": (rules, None), "reddit_answer": ({"answerable": True, "body": "Swelling may last 2 days, so ask your doctor first.", "fact_ids": ["P1:F1"]}, None),
-               "reddit_review": ({"ok": True, "issues": [], "ko": "번역"}, None)}
-    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: answers[stage])
-    item = rd.draft(1)
-    assert item["status"] == "ready" and "http" not in item["paste"]        # AI 가 찾은 규칙으로는 링크 없이
-    assert "홍보 금지" in rd.paste_messages(item)[0] and "친절" in rd.paste_messages(item)[0]
+    rules = {"found": True, "rules_ko": ["친절"], "source_url": "https://reddit.com/r/x/about/rules", "self_promotion": "limited", "ai_text": "unknown"}
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_rules_extract=rules)
+    item = rd.draft(1)                                                       # AI 가 찾은 규칙만으로는 연습 초안
+    assert item["status"] == "ready" and item["practice"] and "http" not in item["paste"]
+    assert rd.standing(rd.load(), "TravelBeauty")["mode"] == "unverified"
+    rd.allow("TravelBeauty", True)
+    assert "친절" in rd.paste_messages(rd.draft(1))[0]                       # 원문 확인 뒤 게시용, AI 요약 규칙도 같이
 
-    answers["reddit_rules_extract"] = ({**rules, "ai_text": "banned"}, None)
-    with pytest.raises(rd.RedditError) as e:
-        rd.draft(2)                                                          # AI 글 금지면 초안 없음
-    assert "AI 글을 금지" in str(e.value)
-    state = rd.load()
-    state["subs"].clear()
-    rd.save(state)
-    answers["reddit_rules_extract"] = ({**rules, "operators_banned": True}, None)
-    with pytest.raises(rd.RedditError) as e:
-        rd.draft(2)                                                          # 운영자·홍보 금지도 초안 없음
-    assert "운영자" in str(e.value)
-    rd.allow("skincareaddiction", False)                                     # 사람이 확인하면 진행
-    assert rd.draft(2)["status"] == "ready"
+    for change, mode in (({"self_promotion": "banned"}, "ask_mods"), ({"operators_banned": True}, "ask_mods"), ({"ai_text": "banned"}, "unverified")):
+        rd.reset("skincare")
+        answers["reddit_rules_extract"] = {**rules, **change}
+        item = rd.draft(2)
+        assert rd.standing(rd.load(), "skincare")["mode"] == mode
+        assert item["status"] == ("manual" if "ai_text" in change else "ready") and item["practice"]
+    rd.mods("skincare", "allowed")
+    assert rd.standing(rd.load(), "skincare")["mode"] == "manual"            # 허락돼도 AI 글 금지면 직접 작성
 
-    state = rd.load()
-    state["subs"].clear()
-    rd.save(state)
+    rd.reset("skincare")
     search[0] = plain                                                        # 검색 근거 없는 답은 믿지 않는다
-    with pytest.raises(rd.RedditError):
-        rd.draft(1)
+    stages.clear()
+    assert rd.draft(2)["status"] == "manual" and "reddit_rules_extract" not in stages
 
 
 def test_reddit_weekly_find_runs_once_a_week(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: ({"threads": []}, None))
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
     tuesday = datetime(2026, 11, 3, 11)
-    assert rd.weekly_message(tuesday) and rd.weekly_message(tuesday) == ""   # 주 1회
+    first = rd.weekly_message(tuesday)
+    assert "규칙 주간 조사" in first and "후보" in first and rd.weekly_message(tuesday) == ""   # 주 1회: 규칙 조사 → 후보
     assert rd.weekly_message(datetime(2026, 11, 4, 11)) == ""
+
+
+def test_reddit_real_config_sets_initial_stages(env):
+    rd = importlib.import_module("pipeline.reddit")
+    state = rd.load()
+    stages = {sub: rd.standing(state, sub) for sub in ("KoreanBeauty", "KoreaTravelBeauty", "koreatravel", "SkincareAddiction", "PlasticSurgery")}
+    assert {k: v["mode"] for k, v in stages.items()} == {"KoreanBeauty": "ask_mods", "KoreaTravelBeauty": "ask_mods", "koreatravel": "excluded",
+                                                        "SkincareAddiction": "unverified", "PlasticSurgery": "excluded"}
+    assert stages["KoreaTravelBeauty"]["writer"] == "facts" and stages["SkincareAddiction"]["writer"] == "facts"
+    assert not [s for s in stages.values() if s["writer"] == "post"]          # 2026-11-02: 바로 게시할 수 있는 곳 없음
+    assert rd.standing(state, "AsianBeauty")["writer"] == "facts"              # 단계만 있고 조사 없는 곳은 규칙을 모르는 곳
+    assert rd.OPERATOR_LINE in rd.DISCLOSURE and rd.OPERATOR_LINE in rd.DISCLOSURE_OPERATOR
+
+
+def test_reddit_korean_text_uses_machine_translation_where_allowed(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    mt = importlib.import_module("pipeline.machine_translate")
+    assert mt.is_korean("붓기는 한동안 갈 수 있어요. Rejuran 후에") and not mt.is_korean("Swelling may last. 한국")
+    _reddit_items(rd, ("NoAI", "Can I fly the next day?"))
+    rd.allow("NoAI", False, mt=True)
+    _reddit_answers(rd, monkeypatch)
+    calls = []
+    monkeypatch.setattr(mt, "_translator", lambda text: (calls.append(text), "Swelling can last a while, so ask your doctor. It lasts 3 days.")[1])
+    item = rd.check(1, "붓기는 한동안 갈 수 있으니 의사에게 물어보세요. 3일 정도 가요.")
+    assert calls and item["translated"] and item["original"].startswith("붓기는")
+    assert item["body"] == "Swelling can last a while, so ask your doctor."             # 번역 뒤에도 숫자 문장은 뺀다
+    assert rd.TRANSLATED_LINE in item["paste"] and rd.OPERATOR_LINE in item["paste"] and "AI-assisted" not in item["paste"]
+    assert "Google 번역" in rd.paste_messages(item)[0]
+    monkeypatch.setattr(mt, "_translator", None)
+    monkeypatch.delenv("GOOGLE_TRANSLATE_API_KEY", raising=False)
+    with pytest.raises(rd.RedditError) as e:
+        rd.check(1, "붓기는 한동안 갈 수 있어요.")
+    assert "GOOGLE_TRANSLATE_API_KEY" in str(e.value)
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 운영진답변 NoAI 허용 번역허용")["args"] == ["pipeline.reddit", "mods", "NoAI", "allowed", "--mt"]
+
+
+def test_reddit_weekly_rules_research_reports_changes(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("testsub", "Can I fly?"))
+    rd.allow("testsub", False)
+    grounded = llm.LLMResult(text="rules", model="m", stage="reddit_rules", grounding_urls=[{"url": "https://reddit.com/r/testsub/about/rules", "title": "r"}])
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: grounded)
+    rules = {"found": True, "rules_ko": ["친절"], "self_promotion": "limited", "ai_text": "unknown", "links": "banned"}
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_rules_extract=rules)
+    lines = rd.refresh_rules()                                               # 설정 커뮤니티(제외 빼고) + 기록된 커뮤니티 전부
+    assert {line.split(":")[0] for line in lines} == {"r/NoMods", "r/NoAI", "r/testsub"}
+    assert rd.refresh_rules() == [] and stages.count("reddit_rules_extract") == 3   # 7일 안에는 다시 안 본다
+    answers["reddit_rules_extract"] = {**rules, "links": "allowed"}
+    lines = rd.refresh_rules(force=True)
+    assert any(line.startswith("r/testsub: 링크 금지→허용") and "링크 붙임" in line for line in lines)
+    st = rd.standing(rd.load(), "testsub")
+    assert st["links"] and st["links_from"] == "ai"                          # 조사에서 링크 허용 → 본문에 링크
+    item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
+    assert "https://skinboundkorea.com/fly/" in item["paste"] and "AI 규칙 조사" in rd.paste_messages(item)[0]
+    answers["reddit_rules_extract"] = {**rules, "operators_banned": True, "links": "allowed"}
+    assert any("단계 활동→문의 필요" in line for line in rd.refresh_rules(force=True))   # 더 엄격해지면 바로 반영
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
+    rd.refresh_rules(force=True)                                             # 못 찾으면 전 조사를 지우지 않는다
+    assert rd.load()["subs"]["testsub"]["research"]["found"] and rd.load()["subs"]["testsub"]["research"]["refresh_failed"]
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙 조사")["args"] == ["pipeline.reddit", "rules", "--force"]
+
+
+def test_mentions_ledger(env):
+    mentions = importlib.import_module("pipeline.mentions")
+    item = mentions.add("디렉터리", "Seoul travel blog list", "https://example.com/list", paid=True)
+    assert item["kind"] == "directory" and "sponsored" in mentions.list_message()
+    for name in ("Wikipedia", "Best clinic Seoul list"):
+        with pytest.raises(mentions.MentionError):
+            mentions.add("기타", name)
+    with pytest.raises(mentions.MentionError):
+        mentions.add("뉴스", "x")
+    mentions.set_status(1, "신청")
+    with pytest.raises(mentions.MentionError):
+        mentions.set_status(1, "게재")                                       # 게재는 주소와 함께
+    state = mentions.load()
+    state["items"][0]["history"][-1]["at"] = "2026-09-01T10:00:00+09:00"
+    mentions.save(state)
+    assert "답 없음" in "\n".join(mentions.report_lines())
+    mentions.set_status(1, "게재", "https://example.com/list#skinbound")
+    assert "게재 1 (이번 주 새로 1)" in mentions.report_lines()[0]
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("언급 추가 기고 Korea Travel Mag https://mag.example/write 유료")["args"] == [
+        "pipeline.mentions", "add", "기고", "Korea Travel Mag", "--url", "https://mag.example/write", "--paid"]
+    assert router.parse("언급 1 거절 답장 옴")["args"] == ["pipeline.mentions", "set", "1", "거절", "--note", "답장 옴"]
+    assert router._read_only("언급 목록")
 
 
 def test_dataset_aggregates_without_institution_details(env, monkeypatch):
@@ -3555,3 +3802,57 @@ def test_telegram_router_runs_in_order_and_stops_on_failure(env):
     out = router.handle("1 승인하고 그림 1 승인\n2 폐기\n오늘 스레드 올려")
     assert ran == ["1 승인", "1 승인", "2 폐기"]
     assert "실행 안 한 명령" in out and "오늘 스레드 올려" in out
+
+
+def test_reddit_room_routes_commands_and_replies(env, monkeypatch):
+    router = importlib.import_module("pipeline.telegram_router")
+    worker = importlib.import_module("pipeline.worker")
+    rd = _reddit_env(monkeypatch)
+    sent = []
+    monkeypatch.setattr(worker, "hermes_send", REAL_HERMES_SEND)
+    monkeypatch.setattr(worker, "_hermes_send_once", lambda text, target=None: (sent.append((target, text)), True)[1])
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER", raising=False)
+    monkeypatch.delenv("SKIN_TG_ORIGIN", raising=False)
+    assert router.room() == "" and router.wrong_room(router.parse("레딧 기준")) == ""      # 방을 나누지 않으면 예전 그대로
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009")
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009")
+    assert router.room() == "reddit"
+    assert "Reddit 전용" in router.run_one("1 승인") and "Reddit 전용" in router.run_one("3번 보여줘")
+    assert router.run_one("도움말").startswith("[Reddit 방 명령어]") and "검수:" not in router.run_one("도움말")
+    assert router.wrong_room(router.parse("레딧 기준")) == "" and router.wrong_room(router.parse("언급 목록")) == ""
+    router.reply_to("답")
+    assert sent[-1] == ("telegram:-1009", "답")                                          # 답장은 온 방으로
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:555")
+    assert router.room() == "main" and "Reddit 방에서" in router.run_one("레딧 기준")
+    assert "Reddit 방에" in router.handle("https://www.reddit.com/r/x/comments/abc/y/ question")
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009:7")                         # 포럼 주제
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009:7")
+    assert router.room() == "reddit"
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009:3")
+    assert router.room() == "main"
+
+    _reddit_items(rd, ("testsub", "Can I fly?"))                                       # Reddit 메시지는 Reddit 방으로
+    rd.allow("testsub", False)
+    _reddit_answers(rd, monkeypatch)
+    sent.clear()
+    assert rd.send(rd.draft(1)) == "✅ 보냈습니다" and {t for t, _ in sent} == {"telegram:-1009:7"} and len(sent) == 2
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER")
+    sent.clear()
+    rd.send(rd._item(rd.load(), 1))
+    assert {t for t, _ in sent} == {None}                                               # 없으면 기본 방
+
+
+def test_skin_router_plugin_reads_origin_room():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("skin_router_plugin", Path(__file__).parent.parent / "hermes/plugins/skin-router/__init__.py")
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+
+    class Source:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+    assert plugin._origin(Source(chat_id=-1001234)) == "telegram:-1001234"
+    assert plugin._origin(Source(chat_id="-1001234", thread_id=7)) == "telegram:-1001234:7"
+    assert plugin._origin(Source(chat=Source(id=42))) == "telegram:42"
+    assert plugin._origin(Source()) == "" and plugin._origin(Source(chat_id="abc")) == ""
+    assert plugin._source_keys(Source(platform="telegram", user_id=1)) == "platform,user_id"   # 진단용: 이름만
