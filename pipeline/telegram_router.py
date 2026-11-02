@@ -233,8 +233,50 @@ def show(n: int, part: str) -> str:
     return f"{n}번 {ids[n - 1]}\nMEDIA:`{doc}`"
 
 
+# ── 방 나누기 (2026-11-02): Reddit 전용 방 SKIN_REDDIT_DELIVER=telegram:<chat_id>[:<thread_id>] ──
+# 플러그인이 메시지가 온 방을 SKIN_TG_ORIGIN 으로 넘긴다. 방을 모르면(예전 플러그인) 지금처럼 기본 방에서 모든 명령을 받는다.
+REDDIT_MODULES = ("pipeline.reddit", "pipeline.mentions")
+REDDIT_HELP = "[Reddit 방 명령어]\n" + "\n".join(line for line in HELP.splitlines() if line.startswith(("Reddit", "외부 언급"))) + \
+              "\n다른 명령(검수·SNS·블로그 등)은 메인 방에서 보내 주세요."
+
+
+def origin() -> str:
+    return os.environ.get("SKIN_TG_ORIGIN", "").strip()
+
+
+def _place(target: str) -> tuple[str, str]:
+    parts = target.split(":")
+    return (parts[1] if len(parts) > 1 else "", parts[2] if len(parts) > 2 else "")
+
+
+def room() -> str:
+    """'reddit' | 'main' | '' (방을 모름 → 나누지 않음)."""
+    reddit = importlib.import_module("pipeline.worker").reddit_target()
+    here = origin()
+    if not reddit or not here.startswith("telegram:"):
+        return ""
+    (r_chat, r_thread), (h_chat, h_thread) = _place(reddit), _place(here)
+    return "reddit" if r_chat == h_chat and (not r_thread or r_thread == h_thread) else "main"
+
+
+def wrong_room(cmd: dict | None) -> str:
+    """이 방에서 받지 않는 명령이면 안내 문구."""
+    where, module = room(), ((cmd or {}).get("args") or [""])[0]
+    if where == "reddit" and ("show" in cmd or (module and module not in REDDIT_MODULES)):
+        return "⚠️ 이 방은 Reddit 전용입니다. 이 명령은 메인 방에서 보내 주세요."
+    if where == "main" and module in REDDIT_MODULES:
+        return "⚠️ Reddit 명령은 Reddit 방에서 보내 주세요."
+    return ""
+
+
+def reply_to(text: str) -> bool:
+    """답장은 메시지가 온 방으로."""
+    send = importlib.import_module("pipeline.worker").hermes_send
+    return send(text, target=origin()) if origin() else send(text)
+
+
 def _history_file():
-    return content_dir() / "telegram" / "history.json"
+    return content_dir() / "telegram" / ("history_reddit.json" if room() == "reddit" else "history.json")
 
 
 def load_history() -> list[dict]:
@@ -379,8 +421,10 @@ def split_commands(text: str) -> list[str] | None:
 
 def run_one(chunk: str) -> str:
     cmd = parse(chunk)
+    if blocked := wrong_room(cmd):
+        return blocked
     if "reply" in cmd:
-        return cmd["reply"]
+        return REDDIT_HELP if room() == "reddit" and cmd["reply"] == HELP else cmd["reply"]
     if "show" in cmd:
         return show(cmd["show"], cmd["part"])
     log.info("명령: %s", cmd["args"][:2])
@@ -406,6 +450,8 @@ def handle(text: str) -> str:
     if pending and NO.fullmatch(text.strip()):
         return "취소했습니다."
     if args := _reddit_request(text):
+        if room() == "main":
+            return "⚠️ Reddit 글은 Reddit 방에 보내 주세요."
         return run(args)
     chunks = split_commands(text)
     return chat(text) if chunks is None else run_chunks(chunks)
@@ -439,13 +485,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     worker = importlib.import_module("pipeline.worker")
     if split_commands(text) is None and not YES.fullmatch(text) and not NO.fullmatch(text) and not _reddit_request(text):
-        worker.hermes_send("🔎 확인 중입니다")  # 기록을 읽는 데 1분 안팎 걸린다
+        reply_to("🔎 확인 중입니다")  # 기록을 읽는 데 1분 안팎 걸린다
     try:
         reply = handle(text)
     except subprocess.TimeoutExpired:
         reply = "⚠️ 시간이 너무 오래 걸려 중단했습니다"
     remember(text, reply)
-    if not worker.hermes_send(reply):
+    if not reply_to(reply):
         log.error("답장 전송 실패")
         return 1
     return 0

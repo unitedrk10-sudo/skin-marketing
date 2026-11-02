@@ -16,6 +16,7 @@ from pipeline import common, llm, web
 
 topics_mod = importlib.import_module("pipeline.01_topics")
 draft_mod = importlib.import_module("pipeline.02_draft")
+REAL_HERMES_SEND = importlib.import_module("pipeline.worker").hermes_send  # 자동 픽스처가 바꾸기 전 (보낼 방 전달 시험용)
 review_mod = importlib.import_module("pipeline.02b_auto_review")
 human_mod = importlib.import_module("pipeline.03_review")
 
@@ -91,7 +92,7 @@ def ok_fetch(url):
 @pytest.fixture(autouse=True)
 def no_real_telegram(monkeypatch):
     """테스트가 실제 hermes send 로 텔레그램에 보내지 않게 한다 (기본: 보내기 실패 → 한 메시지 + 첨부 방식)."""
-    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: False)
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text, target=None: False)
 
 
 @pytest.fixture
@@ -3609,3 +3610,56 @@ def test_telegram_router_runs_in_order_and_stops_on_failure(env):
     out = router.handle("1 승인하고 그림 1 승인\n2 폐기\n오늘 스레드 올려")
     assert ran == ["1 승인", "1 승인", "2 폐기"]
     assert "실행 안 한 명령" in out and "오늘 스레드 올려" in out
+
+
+def test_reddit_room_routes_commands_and_replies(env, monkeypatch):
+    router = importlib.import_module("pipeline.telegram_router")
+    worker = importlib.import_module("pipeline.worker")
+    rd = _reddit_env(monkeypatch)
+    sent = []
+    monkeypatch.setattr(worker, "hermes_send", REAL_HERMES_SEND)
+    monkeypatch.setattr(worker, "_hermes_send_once", lambda text, target=None: (sent.append((target, text)), True)[1])
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER", raising=False)
+    monkeypatch.delenv("SKIN_TG_ORIGIN", raising=False)
+    assert router.room() == "" and router.wrong_room(router.parse("레딧 기준")) == ""      # 방을 나누지 않으면 예전 그대로
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009")
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009")
+    assert router.room() == "reddit"
+    assert "Reddit 전용" in router.run_one("1 승인") and "Reddit 전용" in router.run_one("3번 보여줘")
+    assert router.run_one("도움말").startswith("[Reddit 방 명령어]") and "검수:" not in router.run_one("도움말")
+    assert router.wrong_room(router.parse("레딧 기준")) == "" and router.wrong_room(router.parse("언급 목록")) == ""
+    router.reply_to("답")
+    assert sent[-1] == ("telegram:-1009", "답")                                          # 답장은 온 방으로
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:555")
+    assert router.room() == "main" and "Reddit 방에서" in router.run_one("레딧 기준")
+    assert "Reddit 방에" in router.handle("https://www.reddit.com/r/x/comments/abc/y/ question")
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009:7")                         # 포럼 주제
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009:7")
+    assert router.room() == "reddit"
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009:3")
+    assert router.room() == "main"
+
+    _reddit_items(rd, ("testsub", "Can I fly?"))                                       # Reddit 메시지는 Reddit 방으로
+    rd.allow("testsub", False)
+    _reddit_answers(rd, monkeypatch)
+    sent.clear()
+    assert rd.send(rd.draft(1)) == "✅ 보냈습니다" and {t for t, _ in sent} == {"telegram:-1009:7"} and len(sent) == 2
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER")
+    sent.clear()
+    rd.send(rd._item(rd.load(), 1))
+    assert {t for t, _ in sent} == {None}                                               # 없으면 기본 방
+
+
+def test_skin_router_plugin_reads_origin_room():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("skin_router_plugin", Path(__file__).parent.parent / "hermes/plugins/skin-router/__init__.py")
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+
+    class Source:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+    assert plugin._origin(Source(chat_id=-1001234)) == "telegram:-1001234"
+    assert plugin._origin(Source(chat_id="-1001234", thread_id=7)) == "telegram:-1001234:7"
+    assert plugin._origin(Source(chat=Source(id=42))) == "telegram:42"
+    assert plugin._origin(Source()) == "" and plugin._origin(Source(chat_id="abc")) == ""

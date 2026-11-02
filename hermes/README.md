@@ -77,3 +77,14 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 - Windows 작업 스케줄러 `Hermes_Watchdog` 가 10분마다 `hermes/watchdog.py` 를 창 없이(`pythonw`) 실행 → 게이트웨이가 꺼져 있으면 `gateway start`, 크론 심장박동이 멈춰 있으면 `gateway restart`, 그리고 텔레그램 알림. 기록 `logs/watchdog.log`.
 - 계기: 2026-10-18 00:34 텔레그램 연결 오류 뒤 게이트웨이가 종료 기록 없이 사라져 하루 넘게 예약 작업이 멈춤.
 - 상태만 보기: `.venv\Scripts\python hermes\watchdog.py --check` / 작업 다시 등록은 `Register-ScheduledTask` (10분 반복, 배터리에서도 실행, 동시 실행 무시).
+
+## Reddit 전용 텔레그램 방 (2026-11-02, 선택)
+Reddit 메시지(화요일 규칙 조사·후보, 초안·붙여넣을 글)와 `레딧 …`·`언급 …` 명령을 메인 방과 나눈다. 같은 봇을 쓰고, 기록(`content/reddit/state.json`)은 그대로라 옮길 것이 없다.
+1. 텔레그램 앱에서 새 그룹을 만들고 지금 봇을 초대한다 (그룹 이름 예: Skinbound Reddit).
+2. 그룹에 아무 메시지나 한 번 보낸 뒤, 이 PC 의 명령 프롬프트(cmd)나 PowerShell 에서 `hermes send --list` → 그 그룹의 `telegram:-100…` 을 찾는다. 안 보이면 Hermes 게이트웨이를 켠 채로 다시.
+3. `.env` 에 `SKIN_REDDIT_DELIVER=telegram:-100…` (포럼 주제면 `telegram:-100…:<주제 id>`).
+4. `.venv\Scripts\python hermes\install.py` 다시 실행(플러그인 갱신) → Hermes 게이트웨이 재시작.
+5. 확인: Reddit 방에서 `도움말` → "[Reddit 방 명령어]" 가 오면 끝. 메인 방에서 `레딧 기준` 을 보내면 "Reddit 방에서 보내 주세요" 가 온다.
+- 플러그인이 방 정보를 못 읽으면(Hermes 버전 차이) 예전처럼 모든 답이 기본 방으로 간다. 그때는 `logs/telegram.log` 와 Hermes 버전을 개발 세션에 알려 준다.
+- 그룹에서 봇이 일반 메시지를 못 받으면 BotFather → `/setprivacy` → Disable (또는 봇을 그룹 관리자로).
+

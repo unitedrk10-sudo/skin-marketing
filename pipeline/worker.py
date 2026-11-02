@@ -106,12 +106,17 @@ def _process(req: dict) -> None:
         raise ValueError(f"알 수 없는 요청: {req['kind']}")
 
 
-def hermes_send(text: str) -> bool:
+def reddit_target() -> str:
+    """Reddit 전용 텔레그램 방 (2026-11-02). `.env` 의 SKIN_REDDIT_DELIVER=telegram:<chat_id>[:<thread_id>]. 없으면 기본 방."""
+    return os.environ.get("SKIN_REDDIT_DELIVER", "").strip()
+
+
+def hermes_send(text: str, target: str | None = None) -> bool:
     """Hermes 로 텔레그램에 보낸다. 긴 메시지는 줄 단위로 미리 나눠(약 3000자) 조각마다 한 번씩 보낸다.
     2026-10-29: Hermes 가 긴 글을 스스로 나눠 보내다 뒤 조각에서 시간 초과가 나면 앞 조각은 이미 갔는데 실패로 돌아와,
     통째로 다시 보내면서 같은 초안 메시지가 두 번 갔다 → 보낸 조각은 다시 보내지 않고, 실패한 조각만 한 번 더."""
     if "MEDIA:" in text or len(text) <= SEND_PIECE:
-        return _send_retry(text)
+        return _send_retry(text, target)
     parts, cur = [], ""
     for line in text.splitlines():
         if cur and len(cur) + len(line) > SEND_PIECE:
@@ -120,7 +125,7 @@ def hermes_send(text: str) -> bool:
         cur += line + "\n"
     parts.append(cur)
     for n, part in enumerate(parts):
-        if not _send_retry(part):
+        if not _send_retry(part, target):
             if n == 0:
                 return False  # 아무것도 안 갔다 — 워커가 다른 방식으로 보낸다
             log.warning("텔레그램 조각 %d/%d 전송 실패 — 앞 조각은 이미 보냄, 나머지는 건너뜀", n + 1, len(parts))
@@ -132,23 +137,23 @@ SEND_PIECE = 3000
 SEND_TRIES = 4  # 이 PC 의 텔레그램 연결이 자주 끊겨 같은 글도 시간 초과가 났다 났다 한다 (2026-10-29 확인 — 내용 문제 아님)
 
 
-def _send_retry(text: str) -> bool:
+def _send_retry(text: str, target: str | None = None) -> bool:
     for attempt in range(SEND_TRIES):
-        if _hermes_send_once(text):
+        if _hermes_send_once(text, target):
             return True
         if attempt + 1 < SEND_TRIES and "PYTEST_CURRENT_TEST" not in os.environ:
             time.sleep(10)
     return False
 
 
-def _hermes_send_once(text: str) -> bool:
+def _hermes_send_once(text: str, target: str | None = None) -> bool:
     hermes = os.environ.get("HERMES_BIN") or shutil.which("hermes")
     if not hermes:
         return False
     with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as f:
         f.write(text)
     try:
-        proc = subprocess.run([hermes, "send", "-t", os.environ.get("SKIN_DELIVER", "telegram"), "-f", f.name, "-q"],
+        proc = subprocess.run([hermes, "send", "-t", target or os.environ.get("SKIN_DELIVER", "telegram"), "-f", f.name, "-q"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
         log.warning("hermes send 실패: %s", e)
@@ -388,6 +393,9 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         except Exception as e:  # noqa: BLE001
             reddit_candidates = ""
             log.warning("Reddit 후보 찾기 실패: %s", e)
+        if reddit_candidates and reddit_target():  # Reddit 전용 방이 있으면 그쪽으로 따로 (못 보내면 기본 방 메시지에 붙인다)
+            if hermes_send(reddit_candidates, target=reddit_target()):
+                reddit_candidates = ""
         for part in (reminder, daily, figure_ask, experiments, reddit_candidates):
             if part:
                 message = (message + "\n\n" if message else "") + part

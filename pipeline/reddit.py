@@ -32,7 +32,7 @@ from datetime import date, datetime, timedelta
 
 from pipeline import llm
 from pipeline import machine_translate as mt
-from pipeline.common import content_dir, get_logger, load_draft, load_json, load_yaml, now_iso, prompt, run_cli, save_json
+from pipeline.common import content_dir, get_logger, load_draft, load_env_file, load_json, load_yaml, now_iso, prompt, run_cli, save_json
 
 log = get_logger("reddit")
 
@@ -641,8 +641,9 @@ def notes_message(item: dict, st: dict) -> str:
 def send(item: dict) -> str:
     """메시지를 나눠 보낸다. 못 보내면 출력으로 돌려준다 (텔레그램 답장으로 나간다)."""
     messages = paste_messages(item)
-    hermes_send = importlib.import_module("pipeline.worker").hermes_send
-    if all(hermes_send(m) for m in messages):
+    worker = importlib.import_module("pipeline.worker")
+    target = worker.reddit_target()  # Reddit 전용 방이 있으면 그쪽으로
+    if all(worker.hermes_send(m, target=target) if target else worker.hermes_send(m) for m in messages):
         return "✅ 보냈습니다"
     return "\n\n".join(messages)
 
@@ -939,6 +940,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("score", type=int)
     p.add_argument("--replies", type=int)
     args = parser.parse_args(argv)
+    load_env_file()  # 터미널에서 직접 돌려도 Reddit 방(SKIN_REDDIT_DELIVER)·번역 키를 읽게 — 이미 있는 환경변수는 그대로
     try:
         if args.cmd == "find":
             print(find())
