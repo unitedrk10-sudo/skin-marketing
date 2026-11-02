@@ -156,13 +156,41 @@ def standing(state: dict, sub: str) -> dict:
     known = _researched(c) or bool(research.get("found"))
     writer = {"active": "post", "manual": "facts"}.get(mode) or ("practice" if known and not ai_banned else "facts")
     links = mode in ("active", "manual") and (bool(rec.get("links")) or research.get("links") == "allowed")
-    return {**_st(mode, why), "links": links, "writer": writer,
+    if treatments_banned(c, rec, research):
+        why.append("시술 주제 금지 (화장품 글만 근거)")
+    return {**_st(mode, why), "links": links, "writer": writer, "treatments_banned": treatments_banned(c, rec, research),
             "links_from": "human" if rec.get("links") else ("ai" if links else ""),
             "mt": mode == "active" or bool(rec.get("mt_ok"))}
 
 
 def _st(mode: str, why: list[str]) -> dict:
-    return {"mode": mode, "label": MODE_LABEL[mode], "why": [w for w in why if w], "links": False, "writer": None, "links_from": "", "mt": False}
+    return {"mode": mode, "label": MODE_LABEL[mode], "why": [w for w in why if w], "links": False, "writer": None, "links_from": "", "mt": False,
+            "treatments_banned": False}
+
+
+def treatments_banned(c: dict, rec: dict, research: dict) -> bool:
+    """시술·성형 주제를 막는 커뮤니티 (2026-11-02 검토 항목 추가, r/AsianBeauty 규칙 7). 그곳에서는 화장품 글만 근거로 쓴다."""
+    return c.get("treatments") == "banned" or research.get("treatments") == "banned" or bool(rec.get("treatments_banned"))
+
+
+def check_marks(state: dict, sub: str) -> dict[str, str]:
+    """검토 항목 세 가지 — AI 글·링크·시술 주제. ○ 허용 / △ 조건부 / ✕ 금지 / ? 모름. 사람 기록이 조사보다 먼저."""
+    c, rec = _community(sub), _record(state, sub)
+    research = rec.get("research") or {}
+    def mark(human_ban: bool, human_ok: bool, *values) -> str:
+        if human_ban:
+            return "✕"
+        if human_ok:
+            return "○"
+        for v in values:
+            if v in ("banned", "limited", "allowed"):
+                return {"banned": "✕", "limited": "△", "allowed": "○"}[v]
+        return "?"
+    read = bool(rec.get("read") or rec.get("mods") == "allowed")
+    return {"AI": mark(bool(rec.get("ai_banned")), False, c.get("ai_text"), research.get("ai_text")),
+            "링크": mark(False, bool(rec.get("links")), c.get("links"), research.get("links")),
+            "시술": mark(bool(rec.get("treatments_banned")), read and not rec.get("treatments_banned") and c.get("treatments") != "banned"
+                       and research.get("treatments") != "banned", c.get("treatments"), research.get("treatments"))}
 
 
 def _researched(c: dict) -> bool:
@@ -220,8 +248,19 @@ def _live_posts() -> list[dict]:
         draft = post["draft"]
         if draft["id"] in live and not draft.get("sponsor"):
             out.append({"key": post["slug"], "title": draft["blog"].get("title", ""), "url": social.blog_url(draft, live),
-                        "facts": social.social_facts(load_draft(post["path"]))})
+                        "facts": social.social_facts(load_draft(post["path"])), "skincare": draft.get("content_type") == "skincare"})
     return out
+
+
+def _posts_for(st: dict, sub: str = "") -> list[dict]:
+    """시술 주제를 막는 커뮤니티에서는 화장품 글만 근거로."""
+    posts = _live_posts()
+    if not st.get("treatments_banned"):
+        return posts
+    posts = [p for p in posts if p.get("skincare")]
+    if not posts:
+        raise RedditError(f"r/{sub} 은 시술 주제 금지라 화장품 글만 근거로 쓸 수 있는데, 게시된 화장품 글이 없습니다")
+    return posts
 
 
 def _skip_subs(state: dict) -> list[str]:
@@ -284,7 +323,8 @@ def look_up_rules(sub: str) -> dict:
             return {"found": True, "checked": date.today().isoformat(), "rules_ko": data.get("rules_ko", [])[:12],
                     "url": data.get("source_url", ""), "self_promotion": data.get("self_promotion", "unknown"),
                     "operators_banned": bool(data.get("operators_banned")), "ai_text": data.get("ai_text", "unknown"),
-                    "links": data.get("links", "unknown"), "sources": [g.get("url", "") for g in res.grounding_urls][:5]}
+                    "links": data.get("links", "unknown"), "treatments": data.get("treatments", "unknown"),
+                    "sources": [g.get("url", "") for g in res.grounding_urls][:5]}
         break
     return {"found": False, "checked": date.today().isoformat()}
 
@@ -297,7 +337,7 @@ def _ensure_research(state: dict, sub: str) -> None:
     save(state)
 
 
-RESEARCH_FIELDS = {"self_promotion": "홍보", "operators_banned": "운영자 글", "links": "링크", "ai_text": "AI 글"}
+RESEARCH_FIELDS = {"self_promotion": "홍보", "operators_banned": "운영자 글", "links": "링크", "ai_text": "AI 글", "treatments": "시술 주제"}
 VALUE_KO = {"banned": "금지", "limited": "제한", "allowed": "허용", "unknown": "모름", True: "금지", False: "금지 아님", None: "기록 없음"}
 
 
@@ -410,7 +450,7 @@ def draft(n: int, direction: str = "") -> dict:
         return notes(n)
     if st["writer"] == "post":
         _check_limits(state, item["sub"])
-    facts, by_id = _facts_block(_live_posts())
+    facts, by_id = _facts_block(_posts_for(st, item["sub"]))
     social = importlib.import_module("pipeline.social")
     numbers = _numbers(by_id, item["question"])
     problems: list[str] = []
@@ -464,7 +504,7 @@ def _finish(item: dict, problems: list[str], body: str, link: str) -> None:
 def notes(n: int) -> dict:
     """사실 정리: 직접 쓸 운영자에게 질문에 맞는 사실을 원문 그대로 준다. Claude(reddit_facts)는 고르기만 하고 사실 문장은 코드가 목록에서 꺼낸다."""
     state, item, st = _prepare(n)
-    facts, by_id = _facts_block(_live_posts())
+    facts, by_id = _facts_block(_posts_for(st, item["sub"]))
     data, _r = llm.generate_json("reddit_facts", prompt("reddit_facts", subreddit=item["sub"], title=item["title"], question=item["question"], facts=facts))
     ids = [k for k in (data.get("fact_ids") or []) if k in by_id][:8] if isinstance(data, dict) else []
     if not ids or not data.get("answerable", True):
@@ -542,12 +582,13 @@ def check(n: int, text: str) -> dict:
     removed: list[dict] = []
     keep = body
     for sentence in _sentences(body):
-        hits = legal_hits(sentence) + (["숫자 (기간·횟수·용량은 쓰지 않음)"] if HAS_NUMBER.search(sentence) else [])
+        hits = legal_hits(sentence) + (["숫자 (기간·횟수·용량은 쓰지 않음)"] if HAS_NUMBER.search(sentence) else []) \
+            + (["이 커뮤니티는 시술 주제 금지"] if st["treatments_banned"] and re.search(rf"\b{TREATMENT}\b|plastic surgery|cosmetic surgery|procedure", sentence, re.I) else [])
         if hits:
             removed.append({"sentence": sentence, "why": "; ".join(dict.fromkeys(hits))})
             keep = keep.replace(sentence, "", 1)
     keep = re.sub(r"https?://\S+", "", keep)  # 링크는 코드가 붙인다
-    posts = _live_posts()
+    posts = _posts_for(st, item["sub"])
     review, _r = llm.generate_json("reddit_light_check", prompt("reddit_light_check", question=item["question"], answer=_tidy(keep),
                                                                 posts=_related_block(posts)))
     review = review if isinstance(review, dict) else {}
@@ -620,7 +661,7 @@ def paste_messages(item: dict) -> list[str]:
 
 
 def notes_message(item: dict, st: dict) -> str:
-    _facts, by_id = _facts_block(_live_posts())
+    _facts, by_id = _facts_block(_posts_for(st, item["sub"]))
     lines = [f"[Reddit {item['n']}번] r/{item['sub']}: {item['title']}", item["url"], "",
              f"✍️ 직접 작성 — r/{item['sub']}: {st['label']}" + (f" ({'; '.join(st['why'])})" if st["why"] else "")
              + ("\n🧪 지금은 게시용 아님 (연습)" if item.get("practice") else ""),
@@ -705,14 +746,14 @@ def _after(state: dict, sub: str, head: str) -> str:
                                                                 f"{_name(sub)} 허용`" if st["mode"] == "ask_mods" else "")
 
 
-def allow(sub: str, links: bool, no_ai: bool = False, mt: bool = False) -> str:
+def allow(sub: str, links: bool, no_ai: bool = False, mt: bool = False, no_treatments: bool = False) -> str:
     """원문 확인 기록. 운영자 참여 금지로 나온 곳은 이것만으로 풀리지 않는다 (운영진 허락 필요)."""
     state = load()
     rec = _editable(state, sub)
-    rec.update(read=date.today().isoformat(), links=links, ai_banned=no_ai, mt_ok=mt)
+    rec.update(read=date.today().isoformat(), links=links, ai_banned=no_ai, mt_ok=mt, treatments_banned=no_treatments)
     save(state)
     return _after(state, sub, f"r/{_name(sub)} 규칙 원문 확인 기록 ({'링크 허용' if links else '링크 없이'}{', AI 글 금지' if no_ai else ''}"
-                              f"{', 번역 허용' if mt else ''})")
+                              f"{', 번역 허용' if mt else ''}{', 시술 주제 금지' if no_treatments else ''})")
 
 
 def asked(sub: str) -> str:
@@ -722,14 +763,15 @@ def asked(sub: str) -> str:
     return _after(state, sub, f"r/{_name(sub)} 운영진 문의 보냄 기록")
 
 
-def mods(sub: str, decision: str, links: bool = False, no_ai: bool = False, note: str = "", mt: bool = False) -> str:
+def mods(sub: str, decision: str, links: bool = False, no_ai: bool = False, note: str = "", mt: bool = False, no_treatments: bool = False) -> str:
     if decision not in ("allowed", "refused"):
         raise RedditError("운영진 답변은 허용 또는 거절입니다")
     state = load()
     rec = _editable(state, sub)
     rec.update(mods=decision, mods_at=date.today().isoformat(), mods_note=note)
     if decision == "allowed":
-        rec.update(links=links or bool(rec.get("links")), ai_banned=no_ai or bool(rec.get("ai_banned")), mt_ok=mt or bool(rec.get("mt_ok")))
+        rec.update(links=links or bool(rec.get("links")), ai_banned=no_ai or bool(rec.get("ai_banned")), mt_ok=mt or bool(rec.get("mt_ok")),
+                   treatments_banned=no_treatments or bool(rec.get("treatments_banned")))
     save(state)
     return _after(state, sub, f"r/{_name(sub)} 운영진 답변: {'허용' if decision == 'allowed' else '거절'}" + (f" ({note})" if note else ""))
 
@@ -813,7 +855,7 @@ def resume(target: str) -> str:
     rec = _record(state, name)
     if not rec.get("stopped"):
         return f"r/{name} 은 정지 상태가 아닙니다"
-    for key in ("stopped", "stop_reason", "read", "links", "ai_banned", "mt_ok"):
+    for key in ("stopped", "stop_reason", "read", "links", "ai_banned", "mt_ok", "treatments_banned"):
         rec.pop(key, None)
     if rec.get("mods") == "allowed":
         rec.pop("mods", None)
@@ -822,19 +864,19 @@ def resume(target: str) -> str:
 
 
 def communities_message() -> str:
+    """커뮤니티별 검토 항목(AI 글·링크·시술 주제)과 단계를 한 줄씩."""
     state = load()
     names = {n.lower(): n for n in (settings().get("communities") or {})}
     for key in state["subs"]:
         names.setdefault(key, next((i["sub"] for i in state["items"] if i["sub"].lower() == key), key))
     paused = state.get("paused")
-    lines = ["[Reddit 커뮤니티 기준] docs/reddit-ops.md"] + ([f"⛔ 전체 정지 중: {paused.get('at', '')[:10]} {paused.get('note', '')}"] if paused else [])
+    lines = ["[Reddit 커뮤니티] AI 글 · 링크 · 시술 주제 (○ 허용 △ 조건부 ✕ 금지 ? 모름) → 단계"]
+    if paused:
+        lines.append(f"⛔ 전체 정지 중: {paused.get('at', '')[:10]} {paused.get('note', '')}")
     for key in sorted(names):
-        rec = _record(state, names[key])
-        extra = [f"원문 확인 {rec['read']}" if rec.get("read") else "",
-                 f"운영진 {'허용' if rec.get('mods') == 'allowed' else '거절' if rec.get('mods') == 'refused' else ''} {rec.get('mods_at', '')}".strip() if rec.get("mods") else "",
-                 f"게시 {sum(1 for i in state['items'] if i['sub'].lower() == key and i['status'] in ('posted', 'removed'))}"]
-        lines += ["", f"• {_sub_line(state, names[key])}"] + ([f"  {' · '.join(x for x in extra if x)}"] if any(extra[:2]) else [])
-    lines += ["", "기록: `레딧 규칙확인 <이름> [링크허용] [AI금지]` · `레딧 문의 <이름>` · `레딧 운영진답변 <이름> 허용|거절` · `레딧 규칙초기화 <이름>`"]
+        m, st = check_marks(state, names[key]), standing(state, names[key])
+        lines.append(f"r/{names[key]}  AI {m['AI']} · 링크 {m['링크']} · 시술 {m['시술']} → {st['label']}")
+    lines += ["", "기록: `레딧 규칙확인 <이름> [링크허용] [AI금지] [시술금지]`"]
     return "\n".join(lines)
 
 
@@ -911,6 +953,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--links", action="store_true")
     p.add_argument("--no-ai", action="store_true")
     p.add_argument("--mt", action="store_true")
+    p.add_argument("--no-treatments", action="store_true")
     for name in ("asked", "reset", "resume"):
         sub.add_parser(name).add_argument("sub")
     p = sub.add_parser("mods")
@@ -919,6 +962,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--links", action="store_true")
     p.add_argument("--no-ai", action="store_true")
     p.add_argument("--mt", action="store_true")
+    p.add_argument("--no-treatments", action="store_true")
     p.add_argument("--note", default="")
     p = sub.add_parser("warn")
     p.add_argument("sub")
@@ -959,8 +1003,8 @@ def main(argv: list[str] | None = None) -> int:
             save(state)
             print(list_message([item], f"[Reddit {item['n']}번 추가]"))
         elif args.cmd in ("allow", "mods"):
-            print(allow(args.sub, args.links, args.no_ai, args.mt) if args.cmd == "allow"
-                  else mods(args.sub, args.decision, args.links, args.no_ai, args.note, args.mt))
+            print(allow(args.sub, args.links, args.no_ai, args.mt, args.no_treatments) if args.cmd == "allow"
+                  else mods(args.sub, args.decision, args.links, args.no_ai, args.note, args.mt, args.no_treatments))
             for item in [i for i in load()["items"] if i.get("wanted") and i["sub"].lower() == _name(args.sub).lower()]:
                 state = load()
                 _item(state, item["n"])["wanted"] = False
