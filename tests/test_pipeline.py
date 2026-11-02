@@ -2659,6 +2659,71 @@ def test_cosmetic_rule_skips_non_claim_uses(text, flagged):
     assert m and (not review_mod._cosmetic_context_ok(text, m)) == flagged
 
 
+def test_auto_approve_only_clean_unsampled_passes(env, monkeypatch):
+    review = importlib.import_module("pipeline.03_review")
+    report = importlib.import_module("pipeline.07_report")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_start": "2026-10-05", "trust_stage": 2}} if n == "channels.yaml" else _o(n))
+    ids = [f"2026-W46-{i:02d}-post" for i in range(1, 40)]
+    free = [i for i in ids if not review.human_sampled(i, 20)]
+    sampled = next(i for i in ids if review.human_sampled(i, 20))
+
+    def make(draft_id, grade="pass", human=(), **extra):
+        path = common.content_dir("drafts") / draft_id
+        path.mkdir(parents=True)
+        common.save_json(path / "draft.json", {"id": draft_id, "topic": {"title": draft_id}, "blog": {"title": draft_id, "markdown": "x"}, "facts": [], **extra})
+        common.save_json(path / "review.json", {"grade": grade, "always_human": list(human), "findings": []})
+    good, caution, priced, sponsored, revised = free[:5]
+    make(good); make(sampled); make(caution, "caution"); make(priced, human=["가격 포함"])
+    make(sponsored, sponsor={"name_ko": "병원"}); make(revised, revisions=[{"note": "고쳐"}])
+
+    message = review.auto_approve_message()
+    assert (common.content_dir("approved") / good).exists() and "W46" in message
+    for other in (sampled, caution, priced, sponsored, revised):
+        assert (common.content_dir("drafts") / other).exists()
+    assert not review.auto_approve_message()                                # 두 번 돌려도 그대로
+
+    review.build_batch("approved")
+    review.apply("1 되돌리기", "approved")                                   # 되돌린 글은 다시 자동 승인되지 않는다
+    assert (common.content_dir("drafts") / good).exists() and not review.auto_candidates()
+    rows = (common.log_dir() / "review_agreement.csv").read_text(encoding="utf-8")
+    assert ",auto," in rows and ",auto_undone," in rows
+    assert report.agreement(date(2000, 1, 1)) == (0, 1)                      # 자동 승인 줄은 일치율에 안 들어간다
+
+
+def test_auto_approve_off_in_stage_one(env, monkeypatch):
+    review = importlib.import_module("pipeline.03_review")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_stage": 1}} if n == "channels.yaml" else _o(n))
+    assert review.auto_candidates() == [] and review.auto_approve_message() == ""
+
+
+def test_trend_compares_finished_weeks_and_splits_new_posts(env):
+    trend = importlib.import_module("pipeline.trend")
+    posts = [{"slug": "old", "date": "2026-10-01T07:00:00+09:00", "draft": {"blog": {"title": "Old"}}},
+             {"slug": "new", "date": "2026-10-28T07:00:00+09:00", "draft": {"blog": {"title": "New"}}}]
+    calls = []
+
+    def fetch(a, b):
+        calls.append((a, b))
+        if a < date(2026, 10, 18):
+            raise RuntimeError("too old")
+        if str(b) == "2026-11-01" or a == date(2026, 10, 28):
+            return {"/new/": 9}
+        return {"/old/": 5 if a == date(2026, 10, 18) else 8, "/new/": 3, "/": 40}
+    data = trend.collect(date(2026, 11, 2), posts=posts, fetch=fetch, rum=lambda a, b: {"/": 10, "/new/": 2})
+    assert [str(w["to"]) for w in data["windows"]] == ["2026-10-24", "2026-10-31"]   # 일~토, 못 읽는 옛 주는 뺀다
+    last = data["windows"][-1]
+    assert (last["existing"], last["new"], last["new_posts"]) == (8, 3, 1) and data["rum"] == 2
+    assert next(r for r in data["rows"] if r["slug"] == "new")["first7"] == 9
+    text = "\n".join(trend.report_lines(data))
+    assert "위장 봇" in text and "새 글 1편 3 vs 바로 전 1편 8" in text and "5일째" in text
+    before = len(calls)
+    trend.collect(date(2026, 11, 2), posts=[], fetch=fetch, rum=lambda a, b: {})      # 다 찬 주는 쌓아 둔 것을 쓴다
+    assert not [c for c in calls[before:] if str(c[0]) == "2026-10-25"]
+    assert trend.chart(data, common.log_dir() / "t.png").exists()
+
+
 def test_trust_check_every_four_weeks(env, monkeypatch):
     report = importlib.import_module("pipeline.07_report")
     monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:

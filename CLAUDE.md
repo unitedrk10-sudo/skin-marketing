@@ -28,6 +28,8 @@
 - 자동 검수: `python -m pipeline.02b_auto_review --auto-regenerate` (출처 대조·교차 검수 = Gemini). ⛔ → 자동 재생성 1회, ⚠️ 이고 문장으로 고칠 지적(교차 검수·출처 근거 약함)이 있으면 사람에게 보내기 전에 지적된 문장만 자동 수정 1회(`02_draft.fix`, `prompts/fix_draft.md`, 버전마다 1회) → 재검수
 - (선택, 현재 미사용) Claude Code 외부 검수 한 사이클: `python -m pipeline.02c_external_review review` — 검수 단계를 `claude_code` 로 바꿨을 때만
 - 워커(Hermes 크론): `python -m pipeline.worker run` / 주제 선택 요청: `python -m pipeline.worker request-drafts --pick 1,3`
+- 신뢰 단계 (2026-11-02 2단계): `channels.yaml review.trust_stage`. ⚠️·⛔ 와 👤 항목·스폰서·사람이 수정 요청한 글은 항상 사람, ✅ 는 글 id 고정 추첨 20% 사람, 나머지는 워커가 자동 승인 후 알림(`03_review.auto_approve_message`, 게시일 전 `N 되돌리기` 가능). 그림은 자동 승인 안 됨. 되돌림·폐기는 `auto_undone` 으로 다음 점검에 잡힌다
+- 글 도달 추세: `python -m pipeline.trend` — 일~토 주 단위로 글별 지난주 대비·기존/새 글·새 글 첫 7일 + 그래프, 주간 리포트에 자동 포함. 숫자는 서버 요청(브라우저 모양, 위장 봇 포함, 추세용), JS 집계는 표본이라 합계만. 서버 기록은 약 31일 보관이라 `content/reports/page_requests.json` 에 쌓는다
 - 사람 검수: `python -m pipeline.03_review list` / `python -m pipeline.03_review apply "1,3 승인"`
 - 스폰서 글: `python -m pipeline.02_draft --sponsor <id> --title "..." --angle "..."` (병원 권역 중심 여행 코스 글: `--course`, sponsors.yaml `zone` 필요) / 목록 점검 `python -m pipeline.sponsors check`
 - 블로그 사이트: `python -m pipeline.site build|deploy|schedule` (site/dist → Cloudflare Workers 정적 자산). 배포 때 새 글·내용이 바뀐 글 주소를 IndexNow(`site.yaml indexnow_key`, Bing → ChatGPT 검색·Copilot)로 알리고, 내용이 바뀐 글은 수정일 표시·dateModified (`content/site/content_log.json`)

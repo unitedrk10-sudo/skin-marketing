@@ -87,3 +87,4 @@ sponsored_policy:
 review:
   trust_start: 2026-10-05   # 첫 검수 주의 월요일 → 4주 점검 11/1(일) 리포트, 8주 11/29
   check_weeks: 4
+  trust_stage: 2            # 2026-11-02 사람 결정: ⚠️·⛔ 전부 + ✅ 20% 사람, 나머지 ✅ 자동 승인 (03_review.auto_approve_message)

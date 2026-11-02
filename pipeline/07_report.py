@@ -70,7 +70,7 @@ def agreement(since: date) -> tuple[int, int]:
     path = log_dir() / "review_agreement.csv"
     if not path.exists():
         return 0, 0
-    rows = [r for r in csv.DictReader(path.open(encoding="utf-8")) if r.get("date", "") >= since.isoformat()]
+    rows = [r for r in csv.DictReader(path.open(encoding="utf-8")) if r.get("date", "") >= since.isoformat() and r.get("human_decision") != "auto"]
     return sum(int(r.get("agree") or 0) for r in rows), len(rows)
 
 
@@ -94,24 +94,29 @@ def trust_check(today: date | None = None) -> list[str]:
     k = elapsed // every
     since, until = start + timedelta(days=every * (k - 1)), start + timedelta(days=every * k - 1)
     path = log_dir() / "review_agreement.csv"
-    rows = [r for r in csv.DictReader(path.open(encoding="utf-8"))
-            if since.isoformat() <= r.get("date", "") <= until.isoformat()] if path.exists() else []
+    period = [r for r in csv.DictReader(path.open(encoding="utf-8"))
+              if since.isoformat() <= r.get("date", "") <= until.isoformat()] if path.exists() else []
+    rows = [r for r in period if r["human_decision"] != "auto"]  # 자동 승인은 사람 판단이 아니다
     if not rows:
         return [f"🧭 신뢰 단계 점검 ({k * 4}주차): 검수 기록 없음"]
     grades = Counter(r["auto_grade"] for r in rows)
     agree = sum(int(r.get("agree") or 0) for r in rows)
     missed = [r["draft_id"] for r in rows if r["auto_grade"] == "pass" and r["human_decision"] != "approve"]
     caution_ok = sum(1 for r in rows if r["auto_grade"] == "caution" and r["human_decision"] == "approve")
-    stage = STAGES[min(k, len(STAGES)) - 1]
+    current = int(cfg.get("trust_stage", 1))
+    stage = STAGES[current - 1]
     lines = [f"🧭 신뢰 단계 점검 ({k * 4}주차, {since:%m/%d}~{until:%m/%d}) — 지금: {stage}",
              f"   검수 {len(rows)}건 · 자동 등급 ✅{grades['pass']} ⚠️{grades['caution']} ⛔{grades['block']} · "
              f"자동-사람 일치 {agree}/{len(rows)} ({round(agree * 100 / len(rows))}%)",
              f"   ✅ 인데 사람이 고치거나 폐기: {len(missed)}건" + (f" ({', '.join(m[:10] for m in missed[:3])})" if missed else ""),
              f"   ⚠️ 인데 그대로 승인: {caution_ok}건 (많으면 ⚠️ 기준이 넓다는 뜻 — 기준 조정 검토)"]
-    nxt = STAGES[min(k, len(STAGES) - 1)]
+    if autos := sum(1 for r in period if r["human_decision"] == "auto"):
+        undone = sum(1 for r in rows if r["human_decision"] == "auto_undone")
+        lines.append(f"   🤖 자동 승인 {autos}건 · 그중 사람이 되돌리거나 폐기 {undone}건")
+    nxt = STAGES[min(current, len(STAGES) - 1)]
     if missed:
         lines.append(f"   → 권고: 단계 유지 (✅ 에서 놓친 것이 있음). 놓친 항목을 규칙에 추가")
-    elif k < len(STAGES):
+    elif current < len(STAGES):
         lines.append(f"   → 권고: 다음 단계 가능 — {nxt}. 전환은 사람이 결정 (개발 세션에서 반영)")
     return lines
 
@@ -138,6 +143,11 @@ def extras() -> list[str]:
         lines += social.reaction_lines(7)  # Threads·X 반응 수
     except Exception as e:  # noqa: BLE001
         log.warning("SNS 반응 집계 실패: %s", e)
+    try:
+        from pipeline import trend
+        lines += trend.report()  # 글별 지난주 대비·새 글 첫 7일·그래프
+    except Exception as e:  # noqa: BLE001
+        log.warning("글 추세 집계 실패: %s", e)
     try:
         from pipeline import ai_traffic
         lines += ai_traffic.report_lines(7)  # AI 답변에서 온 방문·AI 봇이 읽어 간 글
@@ -180,11 +190,13 @@ def main(argv: list[str] | None = None) -> int:
             checks += citation_check.report_lines(citation_check.check())
         except Exception as e:  # noqa: BLE001
             log.warning("AI 인용 점검 실패: %s", e)
-    text = message(collect(args.days), extras() + checks)
+    lines = extras() + checks
+    media = [x for x in lines if x.startswith("MEDIA:")]  # 첨부 줄은 메시지 끝에, 저장본에는 넣지 않는다
+    text = message(collect(args.days), [x for x in lines if x not in media])
     path = ROOT / "reports" / "weekly" / f"{iso_week()}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n", encoding="utf-8")
-    print(text)
+    print("\n".join([text, *media]))
     return 0
 
 

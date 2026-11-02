@@ -322,6 +322,13 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     except Exception as e:  # noqa: BLE001 — 그림 실패가 검수를 막지 않게
         log.warning("검수용 그림 실패: %s", e)
 
+    try:  # 신뢰 단계: ✅ 글 자동 승인 (사람 표본에 안 뽑힌 것만, 2026-11-02)
+        if auto_msg := human_mod.auto_approve_message():
+            notices.append(auto_msg)
+    except Exception as e:  # noqa: BLE001
+        failures.append(f"자동 승인 실패: {e}")
+        log.exception("자동 승인 실패")
+
     message = ""
     if changed:
         # 초안마다 메시지를 따로 보내고, 크론 출력(마지막에 도착)은 번호·답장 예시만 담은 요약으로.
