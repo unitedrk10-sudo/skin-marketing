@@ -425,8 +425,46 @@ def notes(n: int) -> dict:
     return item
 
 
+SENTENCE = re.compile(r"[^.!?\n]+(?:[.!?]+[\"')\]]*|$)")
+MIN_LEFT_WORDS = 5
+
+
+def _sentences(text: str) -> list[str]:
+    return [m.group(0).strip() for m in SENTENCE.finditer(text) if m.group(0).strip()]
+
+
+def legal_hits(sentence: str) -> list[str]:
+    """운영자가 쓴 문장에서 코드로 잡는 법적 문제 (의료법 §56·화장품법 §13·병원 알선 시비). 사실 목록 대조·수치 검사는 하지 않는다."""
+    review = importlib.import_module("pipeline.02b_auto_review")
+    out = []
+    for term, pat in review.load_banned():
+        m = pat.search(sentence)
+        if m and not (review.NEGATABLE.search(m.group(0)) and review.NEGATION.search(sentence[:m.start()])):
+            out.append(f"과장·보장·비교 표현: {term}")
+    for rule, label, pat in review.RULE_PATTERNS:
+        m = pat.search(sentence)
+        if not m or (rule == "clinic_name" and (review.INSTITUTION.search(m.group(0)) or review._generic(m.group(0)))):
+            continue
+        if rule == "testimonial" and not re.search(rf"\b{TREATMENT}\b", sentence, re.I):
+            continue  # 화장품·여행 개인 경험은 운영자 본인 의견. 시술 경험담만 (의료법 §56②2 치료경험담)
+        out.append(label)
+    out += [f"시술·주사제 추천: {m.group(0)}" for m in PROMOTES_TREATMENT.finditer(sentence)]
+    for m in review.COSMETIC_PATTERNS.finditer(sentence):
+        if not review.NEGATION.search(sentence[max(0, m.start() - 30):m.start()]):
+            out.append(f"화장품을 의약품처럼 표현: {m.group(0)}")
+    return out
+
+
+def _related_block(posts: list[dict]) -> str:
+    return "\n".join(f"P{i}: {p['title']}" for i, p in enumerate(posts, 1)) or "(none)"
+
+
 def check(n: int, text: str) -> dict:
-    """운영자가 직접 쓴 영문 본문 검사 → 통과하면 공개 문구를 붙인 붙여넣을 글. 같은 코드 규칙과 Gemini 검수를 거친다."""
+    """운영자가 직접 쓴 영문 본문 — 가볍게 검사한다 (2026-11-02 운영자 요청). 운영자 본인의 말이라 사실 목록 대조는 하지 않고,
+    ① 코드 규칙(병원·의사명, 연락처, 과장·보장·비교, 시술 추천, 시술 경험담, 화장품 의약품 오인)에 걸린 문장과
+    ② Gemini(reddit_light_check)가 일반 의학 지식으로 본 명백히 틀린 의료 내용·법적 문제 문장만 **지운다**.
+    AI 가 단어를 보태지 않도록 고쳐 쓰지 않고 원문 문장을 빼기만 한다 (AI 글 금지 커뮤니티에서도 운영자 글로 남게).
+    관련된 우리 글이 있으면 링크 — 본문에는 링크 허용 기록이 있는 커뮤니티에서만 붙이고, 아니면 안내 메시지에만 보여 준다."""
     cfg = settings()
     state, item, st = _prepare(n)
     body = text.strip()
@@ -435,28 +473,42 @@ def check(n: int, text: str) -> dict:
     practice = not can_post(st, "operator")
     if not practice:
         _check_limits(state, item["sub"])
-    _facts, by_id = _facts_block(_live_posts())
-    social = importlib.import_module("pipeline.social")
-    cosmetic = importlib.import_module("pipeline.02b_auto_review").COSMETIC_PATTERNS
-    problems = social.text_problems(body, _numbers(by_id, item["question"]))
-    problems += [f"시술·주사제 추천으로 보임: {m.group(0)}" for m in PROMOTES_TREATMENT.finditer(body)]
-    problems += [f"화장품을 의약품처럼 표현: {m.group(0)}" for m in cosmetic.finditer(body)]
-    if len(body.split()) > int(cfg.get("max_words", 180)):
-        problems.append("너무 김")
-    noted = [by_id[k] for k in item.get("note_ids", []) if k in by_id]
-    ko = ""
-    if not problems:
-        review, _r = llm.generate_json("reddit_review", prompt("reddit_review", question=item["question"], answer=body,
-                                                               facts=_review_facts(noted, by_id) if noted else "\n".join(f"- {f.get('text', '')}" for f in by_id.values()),
-                                                               direction="(none)", author="The site operator wrote this reply personally"))
-        ko = review.get("ko", "")
-        if not review.get("ok"):
-            problems = [i.get("problem", "") if isinstance(i, dict) else str(i) for i in review.get("issues", [])] or ["검수 통과 못 함"]
-    item.update(written_by="operator", direction="", body=body, ko=ko, problems=problems, practice=practice,
-                sources=list(dict.fromkeys(f.get("url", "") for f in noted if f.get("url"))))
-    _finish(item, problems, body, noted[0]["post"]["url"] if noted and st["links"] and not practice else "")
+    removed: list[dict] = []
+    keep = body
+    for sentence in _sentences(body):
+        if hits := legal_hits(sentence):
+            removed.append({"sentence": sentence, "why": "; ".join(dict.fromkeys(hits))})
+            keep = keep.replace(sentence, "", 1)
+    keep = re.sub(r"https?://\S+", "", keep)  # 링크는 코드가 붙인다
+    posts = _live_posts()
+    review, _r = llm.generate_json("reddit_light_check", prompt("reddit_light_check", question=item["question"], answer=_tidy(keep),
+                                                                posts=_related_block(posts)))
+    review = review if isinstance(review, dict) else {}
+    problems = []
+    for issue in review.get("remove", []) or []:
+        sentence, why = (issue.get("sentence", ""), issue.get("why", "")) if isinstance(issue, dict) else (str(issue), "")
+        if sentence and sentence in keep:
+            keep = keep.replace(sentence, "", 1)
+            removed.append({"sentence": sentence, "why": why})
+        elif sentence:
+            problems.append(f"직접 고쳐 주세요: \"{sentence}\" — {why}")
+    keep = _tidy(keep)
+    if len(keep.split()) < MIN_LEFT_WORDS:
+        problems.append("문제 문장을 빼고 나니 남는 내용이 거의 없습니다")
+    rel = review.get("related_post", "")
+    post = posts[int(rel[1:]) - 1] if re.fullmatch(r"P\d+", rel or "") and 0 < int(rel[1:]) <= len(posts) else None
+    item.update(written_by="operator", direction="", body=keep, original=body, removed=removed, ko=review.get("ko", ""),
+                problems=problems, practice=practice, related=post["url"] if post else "",
+                long=len(keep.split()) > int(cfg.get("max_words", 180)), sources=[])
+    _finish(item, problems, keep, post["url"] if post and st["links"] and not practice else "")
     save(state)
     return item
+
+
+def _tidy(text: str) -> str:
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r" +([.,!?])", r"\1", text)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", "\n".join(line.strip() for line in text.splitlines())).strip()
 
 
 # ── 메시지 ───────────────────────────────────────────────────
@@ -481,6 +533,12 @@ def paste_messages(item: dict) -> list[str]:
     meta = [head, item["url"], "",
             "1. 글을 열어 날짜·질문·현재 규칙을 확인", "2. 다음 메시지를 복사해 말투를 다듬고 직접 게시 (공개 문구는 지우지 않기)",
             f"3. `레딧 {item['n']} 완료 <댓글 주소>`", "", f"🇰🇷 {item.get('ko', '')}"]
+    if item.get("written_by") == "operator":
+        meta += ["", "✂️ 뺀 문장: " + ("없음" if not item.get("removed") else "")] + [f"- \"{r['sentence']}\" — {r['why']}" for r in item.get("removed", [])]
+        if item.get("related") and item["related"] not in item["paste"]:
+            meta += ["", f"🔗 관련 글: {item['related']}", f"이 커뮤니티는 링크 허용 기록이 없어 본문에 안 붙였습니다. 규칙상 허용이면 `레딧 규칙확인 {item['sub']} 링크허용`"]
+        if item.get("long"):
+            meta.append(f"(참고: {settings().get('max_words', 180)}단어가 넘습니다)")
     research = _record(state, item["sub"]).get("research") or {}
     if research.get("found"):
         meta += ["", f"📜 r/{item['sub']} 규칙 (AI 검색 요약)", _rule_lines(research)]
@@ -494,8 +552,9 @@ def notes_message(item: dict, st: dict) -> str:
     lines = [f"[Reddit {item['n']}번] r/{item['sub']}: {item['title']}", item["url"], "",
              f"✍️ 직접 작성 — r/{item['sub']}: {st['label']}" + (f" ({'; '.join(st['why'])})" if st["why"] else "")
              + ("\n🧪 지금은 게시용 아님 (연습)" if item.get("practice") else ""),
-             "AI 가 쓴 글을 올리지 않는 곳입니다. 아래 사실만 근거로 영어로 직접 써서 보내 주세요: "
-             f"`레딧 {item['n']} 검사: 본문` (공개 문구는 코드가 붙입니다)", "", "근거 사실 (원문 그대로):"]
+             "AI 가 쓴 글을 올리지 않는 곳입니다. 아래 사실을 참고해 영어로 직접 써서 보내 주세요: "
+             f"`레딧 {item['n']} 검사: 본문`", "검사는 가볍게 합니다: 법적으로 문제 될 문장과 명백히 틀린 의료 내용만 빼고(고쳐 쓰지 않음), "
+             "관련 글 링크와 공개 문구는 코드가 붙입니다.", "", "참고 사실 (원문 그대로):"]
     for k in item.get("note_ids", []):
         if k in by_id:
             f = by_id[k]

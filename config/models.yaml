@@ -89,6 +89,11 @@ stages:
     tools: []
     timeout_sec: 300
 
+  reddit_light_check:  # 운영자가 직접 쓴 Reddit 글 가벼운 검사 (2026-11-02) — 일반 의학 지식으로 틀린 의료 내용·법적 문제 문장만 골라 빼게 함, 관련 글 고르기·번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
   reddit_review:   # Reddit 답변 검수 (쓴 회사와 다른 모델) — 사실 대조·과장·광고·한국어 번역
     provider: gemini
     model: gemini-3.1-pro-preview

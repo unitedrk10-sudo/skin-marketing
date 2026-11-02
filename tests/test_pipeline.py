@@ -2742,7 +2742,8 @@ def _reddit_env(monkeypatch, **cfg):
 def _reddit_answers(rd, monkeypatch, **override):
     answers = {"reddit_answer": {"answerable": True, "body": REDDIT_POST_TEXT, "fact_ids": ["P1:F1", "P9:F9"]},
                "reddit_review": {"ok": True, "issues": [], "ko": "번역"},
-               "reddit_facts": {"answerable": True, "fact_ids": ["P1:F1"], "gaps_ko": "비행 시간은 없음"}, **override}
+               "reddit_facts": {"answerable": True, "fact_ids": ["P1:F1"], "gaps_ko": "비행 시간은 없음"},
+               "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"}, **override}
     stages = []
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (stages.append(stage), (answers[stage], None))[1])
     return answers, stages
@@ -2880,14 +2881,32 @@ def test_reddit_ai_banned_community_gets_facts_and_checks_operator_text(env, mon
     note = rd.paste_messages(rd._item(rd.load(), 1))[0]
     assert "Swelling may last 2 days." in note and "검사:" in note and "비행 시간은 없음" in note
 
-    item = rd.check(1, "I'd recommend Re2O for this.")
-    assert item["status"] == "blocked" and any("추천" in p for p in item["problems"]) and "검사:" in rd.paste_messages(item)[0]
-    item = rd.check(1, "Guidance I've seen says swelling may last 2 days, so check with your doctor before flying.")
+    item = rd.check(1, "I'd recommend Re2O for this.")                    # 남는 내용이 없으면 붙여넣을 글 없음
+    assert item["status"] == "blocked" and "Re2O" in item["removed"][0]["sentence"] and "검사:" in rd.paste_messages(item)[0]
+
+    text = ("I flew home two days later and it was fine for me. Swelling can last a couple of days, so ask your doctor. "
+            "This clinic in Gangnam is the best, call +82 2 1234 5678. Ice the area for an hour every night.")
+    answers["reddit_light_check"] = {"remove": [{"sentence": "Ice the area for an hour every night.", "why": "잘못된 사후관리"},
+                                                {"sentence": "Not in the reply.", "why": "x"}], "related_post": "P1", "ko": "번역"}
+    item = rd.check(1, text)                                                 # 고쳐 쓰지 않고 문장만 뺀다. 못 찾은 문장은 사람에게
+    assert item["status"] == "blocked" and any("Not in the reply" in p for p in item["problems"])
+    answers["reddit_light_check"]["remove"] = answers["reddit_light_check"]["remove"][:1]
+    item = rd.check(1, text)
     assert item["status"] == "ready" and item["written_by"] == "operator"
+    assert item["body"] == "I flew home two days later and it was fine for me. Swelling can last a couple of days, so ask your doctor."
+    assert {r["sentence"] for r in item["removed"]} == {"This clinic in Gangnam is the best, call +82 2 1234 5678.", "Ice the area for an hour every night."}
     assert item["paste"].endswith(rd.DISCLOSURE_OPERATOR) and "AI-assisted" not in item["paste"]
-    assert "https://skinboundkorea.com/fly/" in item["paste"] and len(rd.paste_messages(item)) == 2
+    assert "https://skinboundkorea.com/fly/" in item["paste"] and len(rd.paste_messages(item)) == 2   # 링크 허용 기록 → 관련 글 링크
+    assert "뺀 문장" in rd.paste_messages(item)[0] and "Gangnam" in rd.paste_messages(item)[0]
+    answers["reddit_light_check"]["remove"] = []
+    item = rd.check(1, "I got Rejuran and loved my results. Swelling can last a couple of days.")
+    assert item["status"] == "ready" and item["removed"]                     # 시술 경험담만 뺀다
+    assert not rd.check(1, "I tried a mild sunscreen and my skin liked it. Swelling can last a couple of days.")["removed"]
+    rd.allow("NoAI", False)                                                  # 링크 허용 기록이 없으면 안내 메시지에만
+    item = rd.check(1, "Swelling can last a couple of days, so ask your doctor before flying.")
+    assert "http" not in item["paste"] and "관련 글: https://skinboundkorea.com/fly/" in rd.paste_messages(item)[0]
     monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "disclosure_ai_label": "always"})
-    assert "AI-assisted" in rd.check(1, "Guidance I've seen says swelling may last 2 days, so check with your doctor.")["paste"]
+    assert "AI-assisted" in rd.check(1, "Swelling can last a couple of days, so ask your doctor.")["paste"]
     router = importlib.import_module("pipeline.telegram_router")
     assert router.parse("레딧 1 사실")["args"] == ["pipeline.reddit", "facts", "1"]
     assert router.parse("레딧 1 검사: - Swelling may last.")["args"] == ["pipeline.reddit", "check", "1", "--", "- Swelling may last."]
