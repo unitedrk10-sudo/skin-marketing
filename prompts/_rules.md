@@ -36,6 +36,7 @@ Place guides and routes (travel_guide, procedure_travel):
 Skincare and cosmetic products (Korean Cosmetics Act §13):
 - Describe products as cosmetics. Never say a cosmetic treats, heals, cures, repairs wounds or scars, regenerates cells, or works like a procedure or medicine ("like Botox in a jar", "medical-grade", "prescription-strength").
 - Use the manufacturer's or an official description of what the product does ("moisturizing", "soothing", "helps support the skin barrier") and cite it; cite independent research for any ingredient claim.
+- Olive Young pick lists: state the selection criteria first (for example fragrance-free, SPF/PA rating, listed ingredients), then name several products as editorial examples that meet them. Each product needs a source for what it is and a source that Olive Young sells it. Say that picks are unpaid, that stock and formulas change, and to ask the treating doctor what suits them after a procedure. Never say a product is safe or suitable right after a procedure unless a source says exactly that.
 - Name products only as examples, never as a ranking; do not use affiliate or shop links. If a brand paid or gave free products, it must go through the sponsored track instead.
 
 AI disclosure:

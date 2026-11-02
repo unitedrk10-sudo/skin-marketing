@@ -53,12 +53,15 @@ text_social:
 topics_per_week: 6        # 주 5편 게시 + 예비 1
 # 주제 후보 유형별 개수 (합 = topics_per_week). 유형 안에서는 수요 점수 순, 모자라면 다른 유형으로 채운다.
 topic_quota:
-  info:                   # 시술 정보
-    axes: [procedure, price_guide, how_to, trend, review_curation, skincare]
-    count: 4
-  procedure_travel:       # 시술 × 여행 (시술 일정·회복과 엮은 여행 정보)
-    axes: [procedure_travel]
+  info:                   # 시술 정보 (2026-11-02: 4 → 2, AI 인용 계획 — 기관 출처와 겹치는 일반 의료 질문을 줄인다)
+    axes: [procedure, price_guide, how_to, trend, review_curation]
     count: 2
+  procedure_travel:       # 시술 × 여행 (시술 일정·회복과 엮은 여행 정보, 2026-11-02: 2 → 3)
+    axes: [procedure_travel]
+    count: 3
+  skincare:               # 올리브영 화장품 추천 예시 (2026-11-02, 주 1개 — 기준 공개·순위 없음·판매 링크 없음, _rules.md)
+    axes: [skincare]
+    count: 1
 
 # 스폰서(병원 광고) 콘텐츠를 올릴 수 있는 채널 — 플랫폼 정책 (2026-09 확인, 기획서 12-1-1)
 # 06_publish 는 allowed: false 채널에 스폰서 콘텐츠를 올리지 않고, requires 설정을 켠 채로만 게시한다.

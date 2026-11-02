@@ -37,7 +37,7 @@ YES = re.compile(r"(응|네|예|ㅇㅇ|그래|좋아|실행|진행|ok|yes)[.!\s]
 NO = re.compile(r"(아니|아니요|아니오|취소|ㄴㄴ|no)[.!\s]*", re.I)
 PENDING_MINUTES = 10
 READ_ONLY = {("pipeline.figures", "list"), ("pipeline.social", "list"), ("pipeline.site", "schedule"), ("pipeline.03_review", "list"),
-             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary")}
+             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show")}
 EVIDENCE_LOGS = ("worker", "social", "site", "figures", "telegram", "02_draft", "02b_auto_review", "03_review", "01_topics")
 EVIDENCE_POSTS = 12
 LOG_TAIL = 80
@@ -52,6 +52,7 @@ HELP = """[명령어]
 SNS: 오늘 스레드 올려 / 오늘 2번째 스레드 올려 / 3 스레드 올려 / X·Threads 주소 붙여넣기 / 3 + 주소 / SNS 목록 / 오늘 글
 조회: 검수 목록 / 승인 목록 / 3번 보여줘 / 3번 블로그 보여줘 / 블로그 일정 / 유입 / 관광지 트렌드
 승인 글: 승인글 2 폐기 / 2 되돌리기: 내용
+Reddit: 레딧 1 방향: 내가 하고 싶은 말 (커뮤니티 말투로 영작) / 레딧 후보 찾아 / 레딧 목록 / 레딧 규칙확인 <서브레딧> [링크허용] / 레딧 1 초안 / 레딧 1 보여줘 / 레딧 1 빼기 / 레딧 1 완료 <댓글 주소> / 레딧 추가 <글 주소> <질문> / 레딧 글 주소만 보내기 → 글 내용 붙여넣기 → 답변
 스폰서: 스폰서 목록 / 스폰서 <id> | <영문 제목> | <답할 질문> (코스 글은 끝에 | 코스)
 숏폼: 숏폼 1,3 승인 / 숏폼 2 반려 / 숏폼 4 수정: 내용 / 숏폼 검수 목록
 실험: 실험 영상 넣었어 / 실험 점수 4 4 3 예 / 실험 정리
@@ -103,6 +104,20 @@ def parse(text: str) -> dict | None:
         return {"args": ["pipeline.experiment", "score", "최근", *m.groups()]}
     if re.fullmatch(r"실험 (정리|결과)", t):
         return {"args": ["pipeline.experiment", "summary"]}
+    if re.fullmatch(r"(레딧|reddit)\s*후보\s*(찾아(줘)?|찾기)?", t, re.I):
+        return {"args": ["pipeline.reddit", "find"]}
+    if re.fullmatch(r"(레딧|reddit)\s*목록", t, re.I):
+        return {"args": ["pipeline.reddit", "list"]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*규칙\s*확인\s+(?:r/|u/)?([A-Za-z0-9_-]+)(\s*링크\s*허용)?", t, re.I):
+        return {"args": ["pipeline.reddit", "allow", m.group(1), *(["--links"] if m.group(2) else [])]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*(초안|보여\s*줘|빼기)", t, re.I):
+        return {"args": ["pipeline.reddit", {"초안": "draft", "빼기": "skip"}.get(m.group(2), "show"), m.group(1)]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*방향\s*[:：]\s*(.+)", t, re.I | re.S):
+        return {"args": ["pipeline.reddit", "direct", m.group(1), m.group(2)]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*완료\s+(https://\S+)", t, re.I):
+        return {"args": ["pipeline.reddit", "done", m.group(1), m.group(2)]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*추가\s+(https://\S+)\s+(.+)", t, re.I | re.S):
+        return {"args": ["pipeline.reddit", "add", m.group(1), m.group(2)]}
     for channel, pattern in (("x", X_URL), ("threads", THREADS_URL)):
         if m := pattern.search(t):
             return {"args": ["pipeline.social", "done", _sns_ref(t[:m.start()]), channel, m.group(0)]}
@@ -263,6 +278,9 @@ def chat(text: str) -> str:
     try:
         data, _ = llm.generate_json("telegram_chat", prompt("telegram_chat", help=HELP, status=snapshot(), history=history,
                                                             message=text, evidence=evidence()))
+    except llm.RateLimited as e:
+        log.warning("telegram_chat 한도: %s", e)
+        return f"⏳ Claude 사용량 한도라 지금은 말로 된 요청을 처리할 수 없습니다 ({scrub(str(e))[:120]}). 시간이 지난 뒤 다시 보내 주세요. 정해진 명령은 그대로 됩니다."
     except llm.LLMError as e:
         log.warning("telegram_chat 실패: %s", e)
         return "⚠️ 지금은 답변을 만들 수 없습니다 (Claude 연결 확인 필요). 정해진 명령은 그대로 됩니다 — '도움말'"
@@ -325,12 +343,26 @@ def run_one(chunk: str) -> str:
     return run(cmd["args"])
 
 
+def _reddit_request(text: str) -> list[str] | None:
+    """Reddit 글 주소를 보내면 그 글에 답하자는 뜻. 주소만 왔으면 다음 메시지(글 내용)를 이어 받는다."""
+    reddit = importlib.import_module("pipeline.reddit")
+    if not re.match(r"\s*(레딧|reddit)\b", text, re.I) and (m := reddit.THREAD.search(text)):
+        rest = (text[:m.start()] + " " + text[m.end():]).strip()
+        rest = re.sub(r"\?\S*", "", rest, count=1).strip() if rest.startswith("?") else rest  # 공유 링크 꼬리 (?utm…)
+        return ["pipeline.reddit", "want", m.group(0), rest]
+    if split_commands(text) is None and (url := reddit.waiting_url()):
+        return ["pipeline.reddit", "want", url, text.strip()]
+    return None
+
+
 def handle(text: str) -> str:
     pending = _take_pending()
     if pending and YES.fullmatch(text.strip()):
         return run_chunks(pending)
     if pending and NO.fullmatch(text.strip()):
         return "취소했습니다."
+    if args := _reddit_request(text):
+        return run(args)
     chunks = split_commands(text)
     return chat(text) if chunks is None else run_chunks(chunks)
 
@@ -362,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
     if not text:
         return 0
     worker = importlib.import_module("pipeline.worker")
-    if split_commands(text) is None and not YES.fullmatch(text) and not NO.fullmatch(text):
+    if split_commands(text) is None and not YES.fullmatch(text) and not NO.fullmatch(text) and not _reddit_request(text):
         worker.hermes_send("🔎 확인 중입니다")  # 기록을 읽는 데 1분 안팎 걸린다
     try:
         reply = handle(text)

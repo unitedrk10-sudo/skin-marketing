@@ -57,6 +57,38 @@ stages:
     timeout_sec: 60  # 한 줄은 보통 5~10초 — 실제 운영에서 응답 없이 멈춘 호출이 있어 짧게 끊고 재시도
 
   # 검수 단계는 작성 모델(Claude)과 다른 회사 모델이 맡는다.
+  reddit_find:     # Reddit 답변 후보 찾기 (pipeline/reddit.py) — 찾기는 Gemini
+    provider: gemini
+    model: gemini-3.8-flash
+    search: true
+    thinking: low
+
+  reddit_rules:    # 처음 보는 커뮤니티의 규칙 찾기 (검색 근거가 있을 때만 사용)
+    provider: gemini
+    model: gemini-3.8-flash
+    search: true
+    thinking: low
+
+  reddit_rules_extract:  # 규칙 검색 보고를 JSON 으로 (검색 안 함)
+    provider: gemini
+    model: gemini-3.8-flash
+    thinking: low
+
+  reddit_answer:   # Reddit 답변 초안 — 게시된 글의 사실 목록만, 쓰기는 Claude
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  reddit_direct:   # 운영자 방향 → 커뮤니티 말투 영어 댓글 (시술 추천은 거절)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  reddit_review:   # Reddit 답변 검수 (쓴 회사와 다른 모델) — 사실 대조·과장·광고·한국어 번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
   pick_opener:     # SNS 첫 줄 고르기 (2026-10-20, pipeline/social.pick_openers) — Claude 가 쓴 후보 5개 중 하나, 쓴 회사와 다른 모델
     provider: gemini
     model: gemini-3.8-flash

@@ -21,6 +21,8 @@ Do NOT repeat or closely overlap these recent topics:
 
 {{rules}}
 
+The weekly skincare topic is an Olive Young pick list for one concrete need after a skin treatment or on a trip (for example gentle sunscreen, simple moisturizer, mild cleanser): state the selection criteria, then give several products as examples. No ranking and no "best" claim.
+
 Each topic must be answerable purely with public, sourceable information and must not require naming any clinic or doctor.
 
 Formats that AI assistants and search engines quote most often — include at least one of these each week when sources allow:

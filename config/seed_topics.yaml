@@ -318,6 +318,24 @@ topics:
     keywords: [rejuran pain reviews, rejuran bumps how long, rejuran review]
     hook: "Everyone says Rejuran hurts. How much, really?"
     has_price: false
+  - id: olive-young-picks-sunscreen
+    wave: 2
+    axis: skincare
+    title: "Olive Young sunscreen picks for a Korea skin trip: what to look for"
+    angle: "Selection criteria for a gentle daily sunscreen (SPF/PA rating, filters, fragrance), then several products sold at Olive Young as unpaid examples, with no ranking."
+    why_now: "Sun protection comes up in almost every aftercare leaflet, and Olive Young is on most visitors' itineraries."
+    keywords: [olive young sunscreen, korean sunscreen after laser, best korean sunscreen sensitive skin]
+    hook: "Which sunscreen do you grab at Olive Young?"
+    has_price: false
+  - id: olive-young-picks-moisturizer
+    wave: 2
+    axis: skincare
+    title: "Olive Young moisturizer picks for sensitive skin on a trip"
+    angle: "Selection criteria for a simple moisturizer (short ingredient list, fragrance, barrier ingredients), then several products sold at Olive Young as unpaid examples, with no ranking."
+    why_now: "Barrier care dominates K-beauty shelves, and travelers look for a simple option in store."
+    keywords: [olive young moisturizer, korean moisturizer sensitive skin, barrier cream olive young]
+    hook: "Too many creams at Olive Young?"
+    has_price: false
   - id: pdrn-exosome-cosmetics
     wave: 3
     axis: skincare
