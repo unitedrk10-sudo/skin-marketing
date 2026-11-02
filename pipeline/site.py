@@ -509,6 +509,7 @@ html:lang(ko) .page h1{font-size:44px;line-height:1.25}html:lang(ko) .page h2{fo
 def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", jsonld: list[dict] | None = None,
          noindex: bool = False, image: str | None = None, lang: str | None = None) -> str:
     base = base_url(cfg)
+    data_link = '<a href="/data/">Open data</a>' if cfg.get("data_page") else ""
     esc = html.escape
     image = image or ("/og/default.png" if cfg.get("_og_images") else None)
     head = [
@@ -551,7 +552,7 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
 <footer class="ft"><div class="wrap ft-in"><div><span class="brand"><img src="/icon-inverse-192.png" alt="" width="49" height="49">{wordmark}</span>
 <p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
-<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a></div>
+<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a>{data_link}</div>
 <div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}{partners}</div></div></footer>
 </body></html>"""
 
@@ -1000,6 +1001,10 @@ def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
         tag = " (sponsored)" if p["draft"].get("sponsor") else ""
         lines.append(f"- [{blog.get('title', '')}]({base}/{p['slug']}/){tag}: {blog.get('meta_description', '')} "
                      f"([markdown]({base}/{p['slug']}/index.md))")
+    if cfg.get("data_page"):
+        lines += ["", "## Data", f"- [Dermatology institutions in Korea by region]({base}/data/): counts by province and district from Korean public health insurance data "
+                              f"([CSV]({base}/data/{DATA_CSV}))"]
+        lines += [f"- [{n['title']}]({base}/data/notes/{n['id']}/): {n['description']}" for n in importlib.import_module("pipeline.data_notes").published()]
     lines += ["", "## About", f"- [Editorial policy]({base}/about/)",
               f"- [All guides as one Markdown file]({base}/llms-full.txt)"]
     return "\n".join(lines) + "\n"
@@ -1042,9 +1047,86 @@ def render_llms_full(cfg: dict, posts: list[dict]) -> str:
     return "\n".join(parts)
 
 
+DATA_LICENSE = "https://creativecommons.org/licenses/by/4.0/"
+DATA_CSV = "korea-dermatology-institutions.csv"
+HIRA_SOURCE = "https://www.data.go.kr/data/15001698/openapi.do"
+DATA_TOP = 25
+
+
+def data_ready(cfg: dict) -> dict | None:
+    """공개 데이터 페이지에 쓸 데이터. data_page 를 켜기 전(심평원 이용 조건 확인 전)에는 만들지 않는다."""
+    if not cfg.get("data_page"):
+        return None
+    data = importlib.import_module("pipeline.dataset").load()
+    if not data:
+        log.warning("data_page 가 켜져 있지만 데이터가 없습니다 — python -m pipeline.dataset refresh")
+    return data
+
+
+def render_data(cfg: dict, data: dict) -> str:
+    """지역 단위 합산 숫자만. 병원명·주소·순위 추천은 넣지 않는다."""
+    esc = html.escape
+    rows = importlib.import_module("pipeline.dataset").english_rows(data)
+    totals, as_of = data["totals"], data["as_of"]
+    base = base_url(cfg)
+    title = "Dermatology Institutions in Korea by Region"
+    summary = (f"As of {as_of}, Korea's public health insurance data lists {totals['total']:,} medical institutions offering a "
+               f"dermatology department, of which {totals['named_dermatology']:,} have \"dermatology\" (피부과) in their name.")
+    region_rows = "".join(f"<tr><td>{esc(r['province'])}</td><td>{esc(r['district'])}</td><td>{r['institutions_with_dermatology']:,}</td>"
+                          f"<td>{r['named_dermatology']:,}</td></tr>" for r in rows[:DATA_TOP])
+    place_rows = "".join(f"<tr><td>{esc(str(a['name']))}</td><td>{a['institutions']:,}</td><td>{a['radius_m']} m</td><td>{esc(a['as_of'])}</td></tr>"
+                         for a in data["attractions"])
+    places = (f"<h2>Near popular places in Seoul and beyond</h2><p>Institutions with a dermatology department within the radius of each place.</p>"
+              f"<table><thead><tr><th>Place</th><th>Institutions</th><th>Radius</th><th>As of</th></tr></thead><tbody>{place_rows}</tbody></table>") if place_rows else ""
+    notes = importlib.import_module("pipeline.data_notes").published()
+    notes_block = ("<h2>Data notes</h2><ul>" + "".join(f'<li><a href="/data/notes/{esc(n["id"])}/">{esc(n["title"])}</a></li>' for n in notes) + "</ul>") if notes else ""
+    body = f"""<div class="page"><h1>{esc(title)}</h1><p>{esc(summary)}</p>
+<p><a href="/data/{DATA_CSV}">Download all {len(rows)} regions as CSV</a></p>
+{notes_block}
+<h2>Regions with the most institutions</h2>
+<table><thead><tr><th>Province</th><th>District</th><th>With dermatology department</th><th>"Dermatology" in name</th></tr></thead><tbody>{region_rows}</tbody></table>
+{places}
+<h2>How to read these numbers</h2>
+<ul><li><strong>These are not counts of dermatologists or specialist clinics.</strong> The main number counts every institution that lists a dermatology department, including many general clinics.</li>
+<li>The "in name" column is a name match only. We did not count board-certified specialists.</li>
+<li>A higher number does not mean better care. We do not rank, recommend or evaluate institutions, and this file contains no institution names.</li></ul>
+<h2>Source and license</h2>
+<p>Source: <a href="{HIRA_SOURCE}" rel="noopener">Health Insurance Review &amp; Assessment Service (HIRA), hospital information service</a>, Korea Open Government License Type 1. Retrieved {esc(as_of)}, aggregated by {esc(cfg['name'])}. Attraction radius counts are refreshed separately and carry their own dates.</p>
+<p>Our aggregated tables are available under <a href="{DATA_LICENSE}" rel="noopener">CC BY 4.0</a>. Please credit {esc(cfg['name'])} and HIRA.</p></div>"""
+    jsonld = [{"@context": "https://schema.org", "@type": "Dataset", "name": title, "description": summary, "url": f"{base}/data/",
+               "license": DATA_LICENSE, "dateModified": as_of, "isBasedOn": HIRA_SOURCE, "spatialCoverage": "South Korea",
+               "creator": {"@type": "Organization", "name": cfg["name"], "url": f"{base}/"},
+               "distribution": [{"@type": "DataDownload", "encodingFormat": "text/csv", "contentUrl": f"{base}/data/{DATA_CSV}"}]}]
+    return page(cfg, f"{title} — {cfg['name']}", body, path="/data/", description=summary, jsonld=jsonld)
+
+
+def render_note(cfg: dict, note: dict) -> str:
+    """승인된 데이터 글. 표·출처·라이선스는 코드가 붙인다. 원시 HTML 은 지운다."""
+    esc = html.escape
+    base = base_url(cfg)
+    table = note["table"]
+    head = "".join(f"<th>{esc(c)}</th>" for c in table[0])
+    rows = "".join("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in r) + "</tr>" for r in table[1:])
+    chart = f'<p><img src="/data/notes/{esc(note["id"])}/chart.png" alt="{esc(note["title"])}" style="max-width:100%;height:auto"></p>' if note.get("has_chart") else ""
+    text = render_markdown(re.sub(r"<[^>]*>", "", note["markdown"]))
+    body = f"""<div class="page"><h1>{esc(note["title"])}</h1>{text}{chart}
+<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>
+<h2>Source and limits</h2>
+<p>Source: <a href="{HIRA_SOURCE}" rel="noopener">Health Insurance Review &amp; Assessment Service (HIRA), hospital information service</a>, Korea Open Government License Type 1. Retrieved {esc(note["as_of"])}, aggregated by {esc(cfg["name"])}.</p>
+<p>The count covers institutions that list a dermatology department. It is not a count of dermatologists or specialist clinics, and it does not rank or recommend any institution.</p>
+<p><a href="/data/">All data and CSV download</a>. Our aggregated tables are available under <a href="{DATA_LICENSE}" rel="noopener">CC BY 4.0</a>.</p></div>"""
+    jsonld = [{"@context": "https://schema.org", "@type": "Article", "headline": note["title"], "description": note["description"],
+               "url": f"{base}/data/notes/{note['id']}/", "dateModified": note["as_of"], "isBasedOn": HIRA_SOURCE,
+               "author": {"@type": "Organization", "name": cfg["name"], "url": f"{base}/"}}]
+    return page(cfg, f"{note['title']} — {cfg['name']}", body, path=f"/data/notes/{note['id']}/", description=note["description"], jsonld=jsonld)
+
+
 def render_sitemap(cfg: dict, posts: list[dict]) -> str:
     base = base_url(cfg)
     urls = [("/", posts[0]["date"] if posts else ""), ("/about/", ""), ("/privacy/", "")]
+    if cfg.get("data_page"):
+        urls.append(("/data/", ""))
+        urls += [(f"/data/notes/{n['id']}/", n["as_of"]) for n in importlib.import_module("pipeline.data_notes").published()]
     urls += [(f"/{p['slug']}/", p["date"]) for p in posts]
     items = "".join(f"<url><loc>{base}{u}</loc>" + (f"<lastmod>{d[:10]}</lastmod>" if d else "") + "</url>" for u, d in urls)
     return f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{items}</urlset>\n'
@@ -1217,6 +1299,19 @@ def build(out: Path | None = None) -> dict:
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))
+    if data := data_ready(cfg):  # 영어 공개 데이터 세트 (pipeline/dataset.py)
+        dataset = importlib.import_module("pipeline.dataset")
+        try:
+            write("data/index.html", render_data(cfg, data))
+            write(f"data/{DATA_CSV}", dataset.to_csv(data))
+            notes_mod = importlib.import_module("pipeline.data_notes")
+            for note in notes_mod.published():
+                write(f"data/notes/{note['id']}/index.html", render_note(cfg, note))
+                chart = notes_mod.note_file(note["id"]).with_name("chart.png")
+                if chart.exists():
+                    shutil.copy(chart, out / "data" / "notes" / note["id"] / "chart.png")
+        except dataset.DatasetError as e:  # 새 지역 영문명이 없어도 블로그 배포는 막지 않는다
+            log.warning("데이터 페이지 생략: %s", e)
     if cfg.get("partners_page"):  # 병원 대상 안내 — 변호사 확인 후 켠다 (기획서 12-1-1 체크리스트)
         write("partners/index.html", render_partners(cfg))
     write("404.html", page(cfg, f"Not found — {cfg['name']}", '<div class="page"><h1>Page not found</h1><p><a href="/">Back to all guides</a></p></div>',

@@ -37,7 +37,7 @@
 
 **완료 기준:** 20개 중 측정 실패 2개 이하. 이 결과를 새 기준선으로 삼는다.
 
-### 2단계. 구글·Bing 검색 현황 연결 (개발 약 2일 + 운영자 설정)
+### 2단계. 구글·Bing 검색 현황 연결 (코드 완료 2026-11-02, 운영자 설정 대기)
 
 - **운영자:** Search Console 읽기 권한 연결, Bing Webmaster 등록 여부 확인과 API 키 발급.
 - **개발:** `pipeline/search_console.py`로 글별 노출·클릭·평균 순위·검색어를 가져와 주간 리포트에 추가한다.
@@ -94,7 +94,7 @@
 
 **완료 기준:** 다음 주제 조사 후보에 인용 점검의 빈틈이 반영된다.
 
-### 5단계. 영어 공개 데이터 세트 (개발 약 4일)
+### 5단계. 영어 공개 데이터 세트 (D1·D2 공개 2026-11-02, 공공누리 제1유형 기준으로 운영자 결정)
 
 **주소:** `skinboundkorea.com/data/`. 표, CSV 내려받기, 산출 방법, 갱신 기록, `Dataset` 구조화 데이터를 함께 제공한다.
 
@@ -141,6 +141,19 @@
 | 12월 | D3 개발. 6단계는 효과가 잡혔을 때만 | 개발 |
 
 4단계는 11/5 주제 조사에 맞추려고 순서를 앞당겼다. 나머지 일정은 Claude 사용량과 운영자 설정 시점에 따라 밀릴 수 있다.
+
+## 색인 기준선 (2026-11-02)
+
+게시 글 11편 기준. 구글과 Bing은 색인이 따로라 각각 볼 수 있다. 다만 대조군 없이 모두 요청했으므로 자연 색인과 구분할 수 없다.
+
+| 검색엔진 | 조치 | 시작 시점 색인 |
+|---|---|---|
+| 구글 | 미색인 7편 수동 색인 요청 (운영자) | 4/11 |
+| Bing | 11편 URL 제출 | 1페이지 |
+
+**판정 기준 (운영자 결정):** 구글 주간 노출 기울기의 변화로 본다. 조치 전 3주(10/12~11/1)와 후 3주(11/2~11/22)를 비교하고, 요청 7편과 이미 색인돼 있던 4편을 비교군으로 나눈다. 구글 숫자가 늦게 들어오므로 **11/29 주간 리포트에서 판정**한다. 조치 후 3주 노출이 30 미만이면 판정 불가로 둔다. 효과가 있어도 Reddit, 데이터 페이지, 시간 경과가 섞이므로 단정하지 않는다.
+
+구글 요청 대상: how-many-days-korea-skin-treatment-trip, flying-after-skin-treatment-korea-timing-guide, juvelook-pdlla-collagen-booster-explained, thermage-korea-monopolar-rf-vs-hifu, rejuran-korea-downtime-sessions-aftercare, how-to-read-korean-cosmetic-labels-aftercare, jeju-busan-after-skin-treatment-sun-sea-sauna. 이미 색인돼 있던 4편: gangnam-sinsa-apgujeong-area-guide, bukchon-hanok-village-walk-after-skin-booster-laser-downtime, gyeongbokgung-hanbok-day-skin-treatment-order, laser-treatment-korea-sun-aftercare-autumn-seoul.
 
 ## 5. 성과 판단
 

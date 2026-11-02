@@ -141,6 +141,7 @@ def extras() -> list[str]:
     try:
         from pipeline import social
         lines += social.reaction_lines(7)  # Threads·X 반응 수
+        lines += social.experiment_lines()  # 공유 실험 글 vs 기존 글
     except Exception as e:  # noqa: BLE001
         log.warning("SNS 반응 집계 실패: %s", e)
     try:
@@ -158,6 +159,11 @@ def extras() -> list[str]:
         lines += trend.report()  # 글별 지난주 대비·새 글 첫 7일·그래프
     except Exception as e:  # noqa: BLE001
         log.warning("글 추세 집계 실패: %s", e)
+    try:
+        from pipeline import search_console
+        lines += search_console.report_lines(7)  # 구글·Bing 노출·클릭·검색어·색인
+    except Exception as e:  # noqa: BLE001
+        log.warning("검색 현황 실패: %s", e)
     try:
         from pipeline import ai_traffic
         lines += ai_traffic.report_lines(7)  # AI 답변에서 온 방문·AI 봇이 읽어 간 글

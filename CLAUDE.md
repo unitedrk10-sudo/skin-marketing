@@ -2,6 +2,7 @@
 
 기획서: `docs/derm-content-automation.md` (전체 설계·법규 체크리스트의 기준 문서)
 마케팅 프레임: `docs/marketing-framework.md` (타깃·차별점·브랜드·페이지·채널·성과 지표와 결정 대기 목록 — 화면·채널 작업 전에 먼저 확인)
+AI 인용 계획: `docs/ai-citation-plan.md` · 공공 데이터 콘텐츠 전략: `docs/data-content-strategy.md` · Reddit 인수인계: `docs/reddit-ops-handoff.md`
 사례 조사: `docs/clinic-marketing-research.md` (병원·마케팅 회사 홍보 방식 조사 누적 — 비교표·가져올 것. 새 조사는 이 틀로 추가)
 
 ## 작업 규칙
@@ -35,6 +36,10 @@
 - 블로그 사이트: `python -m pipeline.site build|deploy|schedule` (site/dist → Cloudflare Workers 정적 자산). 배포 때 새 글·내용이 바뀐 글 주소를 IndexNow(`site.yaml indexnow_key`, Bing → ChatGPT 검색·Copilot)로 알리고, 내용이 바뀐 글은 수정일 표시·dateModified (`content/site/content_log.json`)
 - SNS 반응: `social.reaction_lines` — Threads 인사이트(조회·좋아요·답글·리포스트·팔로워, `threads_manage_insights` 권한 필요 → `threads-auth` 다시 연결)·X 공개 임베드(좋아요·답글). 주간 리포트에 자동 포함
 - AI 인용 점검: `python -m pipeline.citation_check [--limit N]` — `config/citation_prompts.yaml` 질문 20개를 Gemini 검색(stage `citation_check`)으로 돌려 우리 사이트가 출처로 잡히는지, 4주 점검 주의 주간 리포트에 자동 포함 (결과 `content/reports/citations/`). 사이트는 AI 용 `llms.txt`·`llms-full.txt`·글마다 `/<slug>/index.md`, robots.txt 에 AI 크롤러별 허용(Bytespider 차단)
+- 검색 현황: `python -m pipeline.search_console` — 구글(서비스 계정 `GSC_SERVICE_ACCOUNT_FILE`)·Bing(`BING_WEBMASTER_KEY`) 노출·클릭·순위·검색어·색인, 주간 리포트에 자동 포함. Bing 글 주소 직접 제출 `--bing-submit` (하루 100개). 색인 효과 = 11/2 전후 3주 구글 노출 기울기, 요청 7편 vs 비교 4편 (`effect_lines`, 11/29 판정)
+- 영어 공개 데이터: `python -m pipeline.dataset refresh|regions|show` — 심평원 원자료를 지역 단위로 합산(병원명·주소 없음, 테스트로 강제) → `/data/`·CSV, `site.yaml data_page` 로 공개(2026-11-02 켬, 분기 크론 `skin-dataset`)
+- 데이터 글: `python -m pipeline.data_notes draft|list|approve|reject`, 텔레그램 `데이터글 …` — 숫자는 코드가 계산, Claude 설명 → 숫자 대조·규칙 검사 → Gemini 검수 → 사람 승인 → `/data/notes/<id>/` (전략 `docs/data-content-strategy.md`, 자동 승인 없음)
+- SNS 공유 실험 (2026-11-03~11-30): `channels.yaml text_social.experiment`. "친구에게 보낼 만한가" 기준 share 글(`prompts/social_share.md`)을 기존 글과 칸마다 번갈아 보내고, 글별 Threads 반응을 주간 리포트에서 비교 (`social.experiment_lines`)
 - AI 유입: `python -m pipeline.ai_traffic [--days 7]` — AI 답변에서 온 방문(Web Analytics 유입 도메인)·AI 봇 실시간 조회(ChatGPT-User 등, 토큰에 Zone Analytics Read 필요). 주간 리포트에 자동 포함
 - 링크 유입 추적: `python -m pipeline.tracker add|list|report|sponsor-report` / Worker 테스트 `cd tracker && npm test` (`tracker/README.md`)
 - 숏폼 렌더링: **2026-10-10 중단** (`shortform.format: off` — 수익이 나기 전까지 블로그·Threads·X 만). `python -m pipeline.04_render_video [--id <draft_id>]` (approved → rendered). 형식은 `config/channels.yaml` `shortform.format`:
