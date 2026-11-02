@@ -2884,6 +2884,127 @@ def test_reddit_weekly_find_runs_once_a_week(env, monkeypatch):
     assert rd.weekly_message(datetime(2026, 11, 4, 11)) == ""
 
 
+def test_dataset_aggregates_without_institution_details(env, monkeypatch):
+    ds = importlib.import_module("pipeline.dataset")
+    site = importlib.import_module("pipeline.site")
+    secret = {"yadmNm": "비밀피부과의원", "addr": "SECRET-ADDR", "telno": "02-SECRET", "hospUrl": "https://secret.example", "XPos": "1", "YPos": "2"}
+    raw = [{**secret, "sidoCdNm": "서울", "sgguCdNm": "강남구", "clCdNm": "의원"},
+           {**secret, "yadmNm": "일반의원", "sidoCdNm": "서울", "sgguCdNm": "강남구", "clCdNm": "의원"},
+           {**secret, "yadmNm": "대학병원", "sidoCdNm": "부산", "sgguCdNm": "해운대구", "clCdNm": "상급종합"}]
+    calls = []
+
+    def get(params):
+        calls.append(params)
+        return {"totalCount": 3, "items": {"item": raw}}
+    monkeypatch.setattr(ds, "near_attractions", lambda: [{"name": "Coex", "radius_m": 700, "institutions": 5, "as_of": "2026-10-01"}])
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "강남구": "Gangnam-gu", "부산": "Busan", "해운대구": "Haeundae-gu"})
+    data = ds.refresh(get)
+    assert calls[0]["dgsbjtCd"] == "14" and data["totals"] == {"total": 3, "clinics": 2, "hospitals": 1, "named_dermatology": 1}
+    assert data["regions"][0]["sggu"] == "강남구" and data["regions"][0]["total"] == 2
+    cfg = {**site.config(), "data_page": True}
+    published = "\n".join([ds.data_file().read_text(encoding="utf-8"), ds.to_csv(data), site.render_data(cfg, data)])
+    for word in ("비밀", "SECRET", "secret.example", "일반의원", "대학병원"):
+        assert word not in published                                          # 공개물에 기관 정보 없음
+    assert "not counts of dermatologists" in published and '"@type": "Dataset"' in published
+    assert site.data_ready({"data_page": False}) is None                      # 켜기 전에는 공개하지 않는다
+    assert "/data/" not in site.render_sitemap({**site.config(), "data_page": False}, [])
+    with pytest.raises(ds.DatasetError):
+        ds.fetch_rows(lambda p: {"totalCount": 3, "items": {"item": raw[:1]}})  # 덜 읽으면 실패
+
+
+def test_index_effect_compares_slopes_with_control_group(env):
+    sc = importlib.import_module("pipeline.search_console")
+    assert sc.slope([1, 2, 3]) == 1 and sc.slope([5]) == 0
+    requested = next(iter(sc.INDEX_REQUESTED))
+    control = next(iter(sc.INDEX_CONTROL))
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            rows = []
+            for week, (req, ctl) in enumerate([(0, 1), (1, 1), (2, 1), (5, 1), (15, 2), (30, 3)]):
+                day = (date(2026, 10, 12) + timedelta(days=7 * week)).isoformat()
+                rows += [{"keys": [day, f"https://x/{requested}/"], "impressions": req}, {"keys": [day, f"https://x/{control}/"], "impressions": ctl},
+                         {"keys": [day, "https://x/new-post/"], "impressions": 99}]
+            return {"rows": rows}
+
+    class Session:
+        def post(self, url, json, timeout):
+            return Resp()
+    early = sc.index_effect(date(2026, 11, 12), Session())
+    assert early["done"] == 1 and "판정 전" in sc.effect_verdict(early)
+    data = sc.index_effect(date(2026, 11, 30), Session())
+    assert data["weeks"]["requested"] == [0, 1, 2, 5, 15, 30] and data["requested"]["before"] == 1 and data["requested"]["after"] == 12.5
+    assert "효과 가능성" in sc.effect_verdict(data)
+    assert "판정 불가" in sc.effect_verdict({**data, "weeks": {"requested": [0, 0, 0, 1, 2, 3], "control": [0] * 6}})
+    assert "비교군도" in sc.effect_verdict({**data, "control": {"before": 0, "after": 20}})
+    assert "변화 없음" in sc.effect_verdict({**data, "requested": {"before": 3, "after": 1}})
+
+
+def test_bing_submit_and_index_line_hide_the_key(env, monkeypatch):
+    sc = importlib.import_module("pipeline.search_console")
+    sent = []
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"d": [{"InIndex": 1, "InLinks": 0}, {"InIndex": 11, "InLinks": 2}]}'
+
+    def urlopen(req, timeout=0):
+        sent.append(req)
+        return Resp()
+    monkeypatch.setattr(sc.urllib.request, "urlopen", urlopen)
+    assert sc.bing_submit([f"https://x/{i}/" for i in range(150)], "KEY") == 100
+    assert len(json.loads(sent[0].data)["urlList"]) == 100 and "SubmitUrlBatch" in sent[0].full_url
+    assert sc.bing_index("KEY") == {"in_index": 11, "in_links": 2}
+
+    def fail(req, timeout=0):
+        raise urllib.error.URLError("https://x?apikey=KEY")
+    monkeypatch.setattr(sc.urllib.request, "urlopen", fail)
+    with pytest.raises(sc.SearchError) as e:
+        sc.bing_submit(["https://x/"], "KEY")
+    assert "KEY" not in str(e.value)
+
+
+def test_search_console_reports_changes_and_missing_setup(env, monkeypatch):
+    sc = importlib.import_module("pipeline.search_console")
+    monkeypatch.delenv("GSC_SERVICE_ACCOUNT_FILE", raising=False)
+    monkeypatch.delenv("BING_WEBMASTER_KEY", raising=False)
+    assert sc.report_lines() == ["🔍 구글 검색: 연결 안 됨", "🔍 Bing 검색: 연결 안 됨"]
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    class Session:
+        def post(self, url, json, timeout):
+            if "urlInspection" in url:
+                return Resp({"inspectionResult": {"indexStatusResult": {"coverageState": "Submitted and indexed"}}})
+            key = json["dimensions"][0]
+            recent = json["startDate"] == "2026-10-24"
+            return Resp({"rows": [{"keys": ["https://x/a/" if key == "page" else "rejuran"], "clicks": 2 if recent else 1, "impressions": 30 if recent else 10, "position": 12.5}]})
+    data = sc.gsc_stats(7, date(2026, 11, 2), Session())
+    assert data["totals"] == {"clicks": 2, "impressions": 30} and data["previous"]["impressions"] == 10
+    assert sc.index_status(["https://x/a/"], Session())["Submitted and indexed"] == 1
+    monkeypatch.setenv("GSC_SERVICE_ACCOUNT_FILE", "x.json")
+    monkeypatch.setattr(sc, "_session", Session)
+    monkeypatch.setattr(sc, "index_status", lambda urls, session=None: Counter({"Submitted and indexed": 1}))
+    monkeypatch.setattr(sc, "effect_lines", lambda today=None, session=None: [])
+    text = "\n".join(sc.report_lines(7, date(2026, 11, 2)))
+    assert "노출 10 → 30" in text and "rejuran (30)" in text and "12.5위" in text and "색인: Submitted and indexed 1" in text
+
+
 def test_trust_check_every_four_weeks(env, monkeypatch):
     report = importlib.import_module("pipeline.07_report")
     monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:

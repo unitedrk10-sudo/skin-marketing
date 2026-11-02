@@ -63,6 +63,11 @@ stages:
     search: true
     thinking: low
 
+  dataset_regions: # 지역 영문명 채우기 (pipeline/dataset.py, 새 지역이 생겼을 때만)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
   reddit_rules:    # 처음 보는 커뮤니티의 규칙 찾기 (검색 근거가 있을 때만 사용)
     provider: gemini
     model: gemini-3.8-flash

@@ -52,6 +52,8 @@ JOBS: list[tuple[str, str | None, list[dict]]] = [
     ("skin-clinics", "0 7 * * 1", [_py("pipeline.clinics", "refresh")]),
     # 월간 유입 분석 (영업용 데이터셋·리포트, 추적기 미설정·클릭 없으면 조용)
     ("skin-analytics", "0 11 1 * *", [_py("pipeline.analytics", "report")]),  # 매월 1일 11:00 (지난달)
+    # 영어 공개 데이터 분기 갱신 (심평원 전국 조회 → /data/, 다음 배포 때 반영)
+    ("skin-dataset", "0 7 1 1,4,7,10 *", [_py("pipeline.dataset", "refresh")]),
     # 점검용 (크론 아님): 크론과 같은 환경에서 키·모델·claude 확인
     ("skin-check", None, [
         {**_py("pipeline.llm", "check"), "on_fail": ""},

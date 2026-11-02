@@ -149,6 +149,11 @@ def extras() -> list[str]:
     except Exception as e:  # noqa: BLE001
         log.warning("글 추세 집계 실패: %s", e)
     try:
+        from pipeline import search_console
+        lines += search_console.report_lines(7)  # 구글·Bing 노출·클릭·검색어·색인
+    except Exception as e:  # noqa: BLE001
+        log.warning("검색 현황 실패: %s", e)
+    try:
         from pipeline import ai_traffic
         lines += ai_traffic.report_lines(7)  # AI 답변에서 온 방문·AI 봇이 읽어 간 글
     except Exception as e:  # noqa: BLE001
