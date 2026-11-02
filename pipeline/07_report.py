@@ -144,6 +144,16 @@ def extras() -> list[str]:
     except Exception as e:  # noqa: BLE001
         log.warning("SNS 반응 집계 실패: %s", e)
     try:
+        from pipeline import reddit
+        lines += reddit.report_lines(7)  # Reddit 게시·반응·삭제·정지 (docs/reddit-ops.md)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Reddit 집계 실패: %s", e)
+    try:
+        from pipeline import mentions
+        lines += mentions.report_lines(7)  # 외부 언급 장부
+    except Exception as e:  # noqa: BLE001
+        log.warning("외부 언급 집계 실패: %s", e)
+    try:
         from pipeline import trend
         lines += trend.report()  # 글별 지난주 대비·새 글 첫 7일·그래프
     except Exception as e:  # noqa: BLE001

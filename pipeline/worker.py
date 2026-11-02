@@ -384,7 +384,7 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             log.info("미리 만들기: %s", ahead.replace("\n", " | "))
         figure_ask = importlib.import_module("pipeline.figures").ask_message()  # 게시 전 그림 승인 요청 (2026-11-01)
         try:
-            reddit_candidates = "" if auth_down else importlib.import_module("pipeline.reddit").weekly_message()  # 주 1회 후보 (규칙 확인한 서브레딧이 있을 때만)
+            reddit_candidates = "" if auth_down else importlib.import_module("pipeline.reddit").weekly_message()  # 주 1회 후보 (전체 정지 중에는 안 찾음)
         except Exception as e:  # noqa: BLE001
             reddit_candidates = ""
             log.warning("Reddit 후보 찾기 실패: %s", e)

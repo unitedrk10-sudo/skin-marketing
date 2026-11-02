@@ -1,0 +1,12 @@
+# Reddit 밖 외부 언급 장부 (pipeline/mentions.py). 쓰기·신청·게시는 사람이 한다. 기준: docs/reddit-ops.md 6장
+kinds:          # 텔레그램 한국어 이름 → 종류
+  디렉터리: directory
+  기고: guest_post
+  언론: press
+  질문답변: qa
+  데이터: dataset
+  커뮤니티: forum
+  기타: other
+follow_up_days: 21   # 신청·제안 뒤 이만큼 답이 없으면 리포트에 표시
+# 코드가 막는 곳: 이해관계자 편집을 막는 곳, 병원 순위·추천 디렉터리 (이름에 아래 말이 있으면 추가하지 않음)
+blocked_names: [wikipedia, 위키백과, namuwiki, 나무위키, best clinic, top clinic, clinic ranking, 병원 순위, 병원 추천]

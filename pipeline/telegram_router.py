@@ -37,7 +37,8 @@ YES = re.compile(r"(응|네|예|ㅇㅇ|그래|좋아|실행|진행|ok|yes)[.!\s]
 NO = re.compile(r"(아니|아니요|아니오|취소|ㄴㄴ|no)[.!\s]*", re.I)
 PENDING_MINUTES = 10
 READ_ONLY = {("pipeline.figures", "list"), ("pipeline.social", "list"), ("pipeline.site", "schedule"), ("pipeline.03_review", "list"),
-             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show")}
+             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show"),
+             ("pipeline.reddit", "communities"), ("pipeline.mentions", "list")}
 EVIDENCE_LOGS = ("worker", "social", "site", "figures", "telegram", "02_draft", "02b_auto_review", "03_review", "01_topics")
 EVIDENCE_POSTS = 12
 LOG_TAIL = 80
@@ -52,7 +53,9 @@ HELP = """[명령어]
 SNS: 오늘 스레드 올려 / 오늘 2번째 스레드 올려 / 3 스레드 올려 / X·Threads 주소 붙여넣기 / 3 + 주소 / SNS 목록 / 오늘 글
 조회: 검수 목록 / 승인 목록 / 3번 보여줘 / 3번 블로그 보여줘 / 블로그 일정 / 유입 / 관광지 트렌드
 승인 글: 승인글 2 폐기 / 2 되돌리기: 내용
-Reddit: 레딧 1 방향: 내가 하고 싶은 말 (커뮤니티 말투로 영작) / 레딧 후보 찾아 / 레딧 목록 / 레딧 규칙확인 <서브레딧> [링크허용] / 레딧 1 초안 / 레딧 1 보여줘 / 레딧 1 빼기 / 레딧 1 완료 <댓글 주소> / 레딧 추가 <글 주소> <질문> / 레딧 글 주소만 보내기 → 글 내용 붙여넣기 → 답변
+Reddit (기준 docs/reddit-ops.md): 레딧 기준 / 레딧 후보 찾아 / 레딧 목록 / 레딧 1 초안 / 레딧 1 방향: 내가 하고 싶은 말 (커뮤니티 말투로 영작) / 레딧 1 사실 → 레딧 1 검사: 직접 쓴 영어 본문 (AI 글 금지 커뮤니티) / 레딧 1 보여줘 / 레딧 1 빼기 / 레딧 추가 <글 주소> <질문> / 레딧 글 주소만 보내기 → 글 내용 붙여넣기 → 답변
+Reddit 기록: 레딧 1 완료 <댓글 주소> / 레딧 1 반응 5 답글 2 / 레딧 1 삭제됨 [메모] / 레딧 경고 <서브레딧|전체> [메모] / 레딧 재개 <서브레딧|전체> / 레딧 규칙확인 <서브레딧> [링크허용] [AI금지] / 레딧 문의 <서브레딧> / 레딧 운영진답변 <서브레딧> 허용|거절 [링크허용] [AI금지] [메모] / 레딧 규칙초기화 <서브레딧>
+외부 언급: 언급 목록 / 언급 추가 <디렉터리|기고|언론|질문답변|데이터|커뮤니티|기타> <이름> [주소] [유료] / 언급 1 신청|게재 <주소>|거절|삭제됨|중단 [메모]
 스폰서: 스폰서 목록 / 스폰서 <id> | <영문 제목> | <답할 질문> (코스 글은 끝에 | 코스)
 숏폼: 숏폼 1,3 승인 / 숏폼 2 반려 / 숏폼 4 수정: 내용 / 숏폼 검수 목록
 실험: 실험 영상 넣었어 / 실험 점수 4 4 3 예 / 실험 정리
@@ -85,6 +88,15 @@ def _sns_ref(text: str) -> str:
     return "오늘"
 
 
+SUB = r"(?:r/)?([A-Za-z0-9_-]+)"
+FLAGS = r"(?:\s*(?:링크\s*허용|AI\s*금지))*"
+
+
+def _reddit_flags(text: str | None) -> list[str]:
+    text = text or ""
+    return [*(["--links"] if re.search(r"링크\s*허용", text) else []), *(["--no-ai"] if re.search(r"AI\s*금지", text, re.I) else [])]
+
+
 def parse(text: str) -> dict | None:
     """정해진 형식이면 {"args": [...]} 또는 {"reply": ...} / {"show": ...}. 아니면 None (Claude 가 답만)."""
     t = text.strip()
@@ -108,10 +120,39 @@ def parse(text: str) -> dict | None:
         return {"args": ["pipeline.reddit", "find"]}
     if re.fullmatch(r"(레딧|reddit)\s*목록", t, re.I):
         return {"args": ["pipeline.reddit", "list"]}
-    if m := re.fullmatch(r"(?:레딧|reddit)\s*규칙\s*확인\s+(?:r/|u/)?([A-Za-z0-9_-]+)(\s*링크\s*허용)?", t, re.I):
-        return {"args": ["pipeline.reddit", "allow", m.group(1), *(["--links"] if m.group(2) else [])]}
-    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*(초안|보여\s*줘|빼기)", t, re.I):
-        return {"args": ["pipeline.reddit", {"초안": "draft", "빼기": "skip"}.get(m.group(2), "show"), m.group(1)]}
+    if re.fullmatch(r"(레딧|reddit)\s*(기준|커뮤니티|규칙\s*목록)", t, re.I):
+        return {"args": ["pipeline.reddit", "communities"]}
+    if m := re.fullmatch(rf"(?:레딧|reddit)\s*규칙\s*확인\s+{SUB}({FLAGS})", t, re.I):
+        return {"args": ["pipeline.reddit", "allow", m.group(1), *_reddit_flags(m.group(2))]}
+    if m := re.fullmatch(rf"(?:레딧|reddit)\s*운영진\s*답변\s+{SUB}\s+(허용|거절)({FLAGS})(?:\s+(.+))?", t, re.I | re.S):
+        return {"args": ["pipeline.reddit", "mods", m.group(1), "allowed" if m.group(2) == "허용" else "refused", *_reddit_flags(m.group(3)),
+                         *(["--note", m.group(4).strip()] if m.group(4) else [])]}
+    if m := re.fullmatch(rf"(?:레딧|reddit)\s*(?:운영진\s*)?문의\s+{SUB}", t, re.I):
+        return {"args": ["pipeline.reddit", "asked", m.group(1)]}
+    if m := re.fullmatch(rf"(?:레딧|reddit)\s*규칙\s*초기화\s+{SUB}", t, re.I):
+        return {"args": ["pipeline.reddit", "reset", m.group(1)]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*경고\s+(?:r/)?(전체|[A-Za-z0-9_-]+)(?:\s+(.+))?", t, re.I | re.S):
+        return {"args": ["pipeline.reddit", "warn", "all" if m.group(1) == "전체" else m.group(1), *(["--note", m.group(2).strip()] if m.group(2) else [])]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*재개\s+(?:r/)?(전체|[A-Za-z0-9_-]+)", t, re.I):
+        return {"args": ["pipeline.reddit", "resume", "all" if m.group(1) == "전체" else m.group(1)]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*(초안|보여\s*줘|빼기|사실(?:\s*정리)?)", t, re.I):
+        return {"args": ["pipeline.reddit", {"초안": "draft", "빼기": "skip"}.get(m.group(2), "facts" if m.group(2).startswith("사실") else "show"), m.group(1)]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*검사\s*[:：]\s*(.+)", t, re.I | re.S):
+        return {"args": ["pipeline.reddit", "check", m.group(1), "--", m.group(2).strip()]}  # 본문이 "-" 로 시작해도 옵션으로 읽지 않게
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*반응\s+(-?\d+)\s*점?(?:\s*,?\s*답글\s*(\d+)\s*개?)?", t, re.I):
+        return {"args": ["pipeline.reddit", "react", m.group(1), m.group(2), *(["--replies", m.group(3)] if m.group(3) else [])]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*삭제\s*됨?(?:\s+(.+))?", t, re.I | re.S):
+        return {"args": ["pipeline.reddit", "removed", m.group(1), *(["--note", m.group(2).strip()] if m.group(2) else [])]}
+    if re.fullmatch(r"(외부\s*)?언급\s*목록", t):
+        return {"args": ["pipeline.mentions", "list"]}
+    if m := re.fullmatch(r"언급\s*추가\s+(\S+)\s+(.+)", t, re.S):
+        rest, url = m.group(2), re.search(r"https?://\S+", m.group(2))
+        paid = bool(re.search(r"\s유료\s*$", " " + rest))
+        name = re.sub(r"\s*유료\s*$", "", (rest.replace(url.group(0), " ") if url else rest)).strip()
+        return {"args": ["pipeline.mentions", "add", m.group(1), name, *(["--url", url.group(0)] if url else []), *(["--paid"] if paid else [])]}
+    if m := re.fullmatch(r"언급\s*(\d+)\s*번?\s*(신청|제안|게재|거절|삭제됨|삭제|중단)(?:\s+(https?://\S+))?(?:\s+(.+))?", t, re.S):
+        return {"args": ["pipeline.mentions", "set", m.group(1), m.group(2), *(["--url", m.group(3)] if m.group(3) else []),
+                         *(["--note", m.group(4).strip()] if m.group(4) else [])]}
     if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*방향\s*[:：]\s*(.+)", t, re.I | re.S):
         return {"args": ["pipeline.reddit", "direct", m.group(1), m.group(2)]}
     if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*완료\s+(https://\S+)", t, re.I):
@@ -306,7 +347,7 @@ def chat(text: str) -> str:
 
 
 def _is_memo(chunk: str) -> bool:
-    return bool(re.search(r"(수정|되돌리기)\s*:", chunk))
+    return bool(re.search(r"(수정|되돌리기|검사|방향)\s*[:：]", chunk))
 
 
 def _is_plain_review(cmd: dict | None) -> bool:
@@ -346,7 +387,7 @@ def run_one(chunk: str) -> str:
 def _reddit_request(text: str) -> list[str] | None:
     """Reddit 글 주소를 보내면 그 글에 답하자는 뜻. 주소만 왔으면 다음 메시지(글 내용)를 이어 받는다."""
     reddit = importlib.import_module("pipeline.reddit")
-    if not re.match(r"\s*(레딧|reddit)\b", text, re.I) and (m := reddit.THREAD.search(text)):
+    if not re.match(r"\s*(레딧|reddit|언급)", text, re.I) and (m := reddit.THREAD.search(text)):
         rest = (text[:m.start()] + " " + text[m.end():]).strip()
         rest = re.sub(r"\?\S*", "", rest, count=1).strip() if rest.startswith("?") else rest  # 공유 링크 꼬리 (?utm…)
         return ["pipeline.reddit", "want", m.group(0), rest]
