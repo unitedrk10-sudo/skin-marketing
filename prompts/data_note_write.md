@@ -2,7 +2,7 @@ Write a short English data note for Skinbound Korea, an independent information 
 
 TOPIC: {{topic}}
 
-NUMBERS. Use only these, exactly as written. Do not calculate, round or add any other number, year or date:
+NUMBERS. Use only these, exactly as written. Do not calculate, round or add any other number, year or date, and do not state a length of time in words such as "two-month period":
 {{numbers}}
 
 WHAT THESE NUMBERS MEAN AND DO NOT MEAN:

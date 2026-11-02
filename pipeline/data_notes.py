@@ -4,6 +4,7 @@
 Gemini 가 해석을 검수하며, 사람이 승인한 글만 공개한다 (신뢰 단계 자동 승인 없음). 병원명·병원별 수치는 넣지 않는다.
 
     python -m pipeline.data_notes draft where
+    python -m pipeline.data_notes draft changes   # 직전 기준 대비 분기 변화 → changes-<기준일>
     python -m pipeline.data_notes list
     python -m pipeline.data_notes approve where
     python -m pipeline.data_notes reject where
@@ -22,10 +23,16 @@ from pipeline.common import content_dir, get_logger, load_json, now_iso, prompt,
 log = get_logger("data_notes")
 
 NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+SPELLED_PERIOD = re.compile(r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[- ](?:day|week|month|quarter|year)s?\b", re.I)
 TOP_CHART = 12
 LIMITS = """- The count covers institutions that list a dermatology department, including many general clinics. It does not count dermatologists or specialist clinics.
 - It says nothing about quality, safety, price or which institutions treat foreign visitors.
 - The source does not explain why the numbers differ, so no cause can be stated."""
+CHANGE_LIMITS = """- HIRA publishes the counts. Skinbound Korea made this comparison from two retrievals, so never say HIRA compared, reported or found a change.
+- The figures compare two dates only, so they do not show a long-term trend.
+- A change is a net difference. It does not separate openings, closures, relocations or changes in listed departments.
+- Districts present on only one date are not compared, because they may have been renamed or reorganized."""
+TOP_CHANGES = 6
 SURFACE, INK, MUTED, GRID, BAR = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0", "#2a78d6"
 
 
@@ -64,13 +71,80 @@ def build_where(data: dict) -> dict:
             "table": [["District", "Institutions", "Share of national total"]] + [[d["label"], f"{d['value']:,}", share(d["value"])] for d in districts[:TOP_CHART]]}
 
 
+def _counts(rows: list[dict], key) -> dict:
+    out: Counter = Counter()
+    for r in rows:
+        out[key(r)] += r["total"]
+    return dict(out)
+
+
+def _english(names: dict, korean: str) -> str:
+    if korean not in names:  # 한국어 이름이 영어 글에 그대로 나가지 않게
+        raise NoteError(f"영문 지역명 없음: {korean} (python -m pipeline.dataset regions)")
+    return names[korean]
+
+
+def _direction(diff: int) -> str:
+    return f"increased by {diff:,}" if diff > 0 else f"decreased by {-diff:,}" if diff < 0 else "unchanged"
+
+
+def _compare(before: dict, after: dict, label) -> list[dict]:
+    """두 시점에 다 있는 곳만, 변화 큰 순. 한쪽에만 있는 곳은 이름 변경·개편일 수 있어 증감으로 치지 않는다."""
+    rows = [{"label": label(k), "before": before[k], "after": after[k], "value": after[k] - before[k]} for k in before.keys() & after.keys()]
+    return sorted(rows, key=lambda r: (-abs(r["value"]), r["label"]))
+
+
+def _leaders(rows: list[dict], n: int) -> tuple[list[dict], dict | None]:
+    """변화 큰 순 상위 n. 같은 값은 임의로 자르지 않는다: 몇 개 더면 함께, 너무 많으면 이름 없이 개수만."""
+    if len(rows) <= n:
+        return rows, None
+    cut = abs(rows[n - 1]["value"])
+    level = [r for r in rows if abs(r["value"]) >= cut]
+    if len(level) <= n + 2:
+        return level, None
+    above = [r for r in rows if abs(r["value"]) > cut]
+    return above, {"count": len(level) - len(above), "value": rows[n - 1]["value"]}
+
+
+def build_changes(data: dict, previous: dict) -> dict:
+    """분기 변화 글: 직전 기준과 비교. 숫자 목록·표·그래프 값을 코드가 만든다."""
+    names, then, now = dataset.regions_en(), previous["as_of"], data["as_of"]
+    pct = lambda r: f"{100 * r['value'] / r['before']:+.1f}%"
+    region = lambda rows: _counts(rows, lambda r: (r["sido"], r["sggu"]))
+    before, after = region(previous["regions"]), region(data["regions"])
+    districts = _compare(before, after, lambda k: _district(_english(names, k[1]), _english(names, k[0])))
+    provinces = _compare(_counts(previous["regions"], lambda r: r["sido"]), _counts(data["regions"], lambda r: r["sido"]), lambda k: _english(names, k))
+    ups = [d for d in districts if d["value"] > 0]
+    downs = [d for d in districts if d["value"] < 0]
+    old_total, new_total = previous["totals"]["total"], data["totals"]["total"]
+    diff = new_total - old_total
+    line = lambda r: f"{r['label']}: {_direction(r['value'])}, from {r['before']:,} to {r['after']:,} ({pct(r)})"
+    lines = [f"Latest date: {now}", f"Earlier date: {then}", "Source: Korea's Health Insurance Review & Assessment Service (HIRA)",
+             f"Institutions listing a dermatology department nationwide: {_direction(diff)}, from {old_total:,} to {new_total:,} ({diff / old_total * 100:+.1f}%)"]
+    for heading, rows in (("Provinces with the largest change", [p for p in provinces if p["value"]]), ("Districts with the largest increase", ups), ("Districts with the largest decrease", downs)):
+        shown, tied = _leaders(rows, 3)
+        lines += [f"{heading}:"] + [line(r) for r in shown]
+        if tied:
+            lines.append(f"Tied at the next level: {tied['count']}, each {_direction(tied['value'])}. The source names them; this note leaves the names out for length")
+    lines += [f"Districts compared: {len(districts)}", f"Districts that increased: {len(ups)}", f"Districts that decreased: {len(downs)}",
+              f"Districts unchanged: {len(districts) - len(ups) - len(downs)}", f"Districts present on only one date, not compared: {len(before.keys() ^ after.keys())}"]
+    picked = _leaders(ups, TOP_CHANGES)[0] + _leaders(downs, TOP_CHANGES)[0]
+    unit = "district" if picked else "province"  # 동률이 너무 많아 지역을 못 고르면 빠짐없는 시·도 표로
+    picked = sorted(picked or [p for p in provinces if p["value"]], key=lambda d: -d["value"])
+    return {"topic": f"What changed in Korea's institutions with a dermatology department between {then} and {now}", "numbers": "\n".join(lines),
+            "limits": LIMITS + "\n" + CHANGE_LIMITS, "compare_to": then,
+            "chart": {"title": f"Net change by {unit}, {then} to {now}", "signed": True, "rows": picked},
+            "table": [[unit.capitalize(), then, now, "Change", "Change %"]] + [[d["label"], f"{d['before']:,}", f"{d['after']:,}", f"{d['value']:+,}", pct(d)] for d in picked]}
+
+
 BUILDERS = {"where": build_where}
 
 
 def number_problems(text: str, numbers: str) -> list[str]:
     """목록에 없는 숫자. 글머리 번호처럼 숫자 하나로 끝나는 표기도 전부 대조한다."""
     allowed = {n.replace(",", "") for n in NUMBER.findall(numbers)}
-    return [f"목록에 없는 숫자: {n}" for n in dict.fromkeys(NUMBER.findall(text)) if n.replace(",", "") not in allowed]
+    return [f"목록에 없는 숫자: {n}" for n in dict.fromkeys(NUMBER.findall(text)) if n.replace(",", "") not in allowed] + [
+        f"목록에 없는 기간 표현: {m.group(0)}" for m in SPELLED_PERIOD.finditer(text)]
 
 
 def rule_problems(text: str) -> list[str]:
@@ -88,14 +162,22 @@ def chart(spec: dict, out) -> bool:
         log.warning("matplotlib 없음 — 그래프 없이")
         return False
     rows = spec["rows"][::-1]
+    if not rows:
+        return False
+    signed = spec.get("signed")
     plt.rcParams.update({"font.family": ["Malgun Gothic", "DejaVu Sans"], "text.color": INK, "ytick.color": MUTED})
     fig, ax = plt.subplots(figsize=(9, 6), dpi=150, facecolor=SURFACE)
     ax.set_facecolor(SURFACE)
     ax.barh([r["label"] for r in rows], [r["value"] for r in rows], 0.68, color=BAR, edgecolor=SURFACE, linewidth=2)
-    peak = max(r["value"] for r in rows)
+    peak = max(abs(r["value"]) for r in rows)
     for y, r in enumerate(rows):
-        ax.text(r["value"] + peak * 0.012, y, f"{r['value']:,}", va="center", fontsize=10)
-    ax.set_xlim(0, peak * 1.12)
+        negative = r["value"] < 0
+        ax.text(r["value"] + (-1 if negative else 1) * peak * 0.012, y, f"{r['value']:+,}" if signed else f"{r['value']:,}", va="center", ha="right" if negative else "left", fontsize=10)
+    if signed:  # 값 글자가 지역 이름과 겹치지 않게 양쪽에 같은 여백
+        ax.set_xlim(min(0, min(r["value"] for r in rows)) - peak * 0.14, max(0, max(r["value"] for r in rows)) + peak * 0.14)
+        ax.axvline(0, color=MUTED, linewidth=1)
+    else:
+        ax.set_xlim(0, peak * 1.12)
     ax.xaxis.set_visible(False)
     ax.spines[["top", "right", "bottom", "left"]].set_visible(False)
     ax.tick_params(length=0, labelsize=10)
@@ -109,12 +191,18 @@ def chart(spec: dict, out) -> bool:
 
 
 def draft(note_id: str) -> dict:
-    if note_id not in BUILDERS:
-        raise NoteError(f"없는 글: {note_id} (가능: {', '.join(BUILDERS)})")
+    if note_id != "changes" and note_id not in BUILDERS:
+        raise NoteError(f"없는 글: {note_id} (가능: {', '.join(BUILDERS)}, changes)")
     data = dataset.load()
     if not data:
         raise NoteError("데이터가 없습니다: python -m pipeline.dataset refresh")
-    spec = BUILDERS[note_id](data)
+    if note_id == "changes":  # 분기마다 새 글, 지난 분기 글은 그대로 둔다
+        previous = dataset.previous_snapshot(data["as_of"])
+        if not previous:
+            raise NoteError("비교할 이전 데이터가 없습니다. 다음 분기 갱신 뒤에 만들 수 있습니다")
+        spec, note_id = build_changes(data, previous), f"changes-{data['as_of']}"
+    else:
+        spec = BUILDERS[note_id](data)
     problems: list[str] = []
     written, ko = {}, ""
     for _ in range(2):  # 걸리면 지적을 주고 한 번 더
@@ -133,7 +221,7 @@ def draft(note_id: str) -> dict:
             break
     note = {"id": note_id, "status": "blocked" if problems else "review", "problems": problems, "as_of": data["as_of"], "created_at": now_iso(),
             "title": written.get("title", ""), "description": written.get("description", ""), "markdown": written.get("markdown", ""), "ko": ko,
-            "table": spec["table"], "numbers": spec["numbers"]}
+            "table": spec["table"], "numbers": spec["numbers"], "compare_to": spec.get("compare_to")}
     note_file(note_id).parent.mkdir(parents=True, exist_ok=True)
     note["has_chart"] = chart(spec["chart"], note_file(note_id).with_name("chart.png"))
     save_json(note_file(note_id), note)
@@ -156,7 +244,8 @@ def published() -> list[dict]:
 def review_message(note: dict) -> str:
     if note["status"] == "blocked":
         return f"[데이터 글 {note['id']}] ⛔ 검사에 걸려 승인 요청을 보내지 않았습니다\n" + "\n".join(f"- {p}" for p in note["problems"])
-    lines = [f"[데이터 글 검수] 전국 데이터 (기준 {note['as_of']})", "승인: `데이터글 승인` · 폐기: `데이터글 폐기`", "",
+    compared = f", {note['compare_to']} 대비 변화" if note.get("compare_to") else ""
+    lines = [f"[데이터 글 검수] 전국 데이터 (기준 {note['as_of']}{compared})", "승인: `데이터글 승인` · 폐기: `데이터글 폐기`", "",
              f"제목: {note['title']}", "", note.get("ko", ""), "", "📊 코드가 계산한 숫자", note["numbers"]]
     if note.get("has_chart"):
         lines += ["", f"MEDIA:`{note_file(note['id']).with_name('chart.png')}`"]
@@ -169,7 +258,7 @@ def list_message() -> str:
     current = (dataset.load() or {}).get("as_of")
     if not notes:
         return "데이터 글이 없습니다. 만들려면: `데이터글 초안 where`"
-    return "\n".join(f"- {n['id']}: {n['status']} · 기준 {n['as_of']}" + (" · ⚠️ 새 데이터 있음" if current and n["as_of"] != current else "") + f" · {n['title']}" for n in notes)
+    return "\n".join(f"- {n['id']}: {n['status']} · 기준 {n['as_of']}" + (" · ⚠️ 새 데이터 있음" if current and n["as_of"] != current and not n.get("compare_to") else "") + f" · {n['title']}" for n in notes)
 
 
 def _only_waiting() -> str:

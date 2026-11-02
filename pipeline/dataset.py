@@ -44,6 +44,10 @@ def data_file():
     return content_dir() / "site" / "dataset.json"
 
 
+def history_dir():
+    return content_dir() / "site" / "dataset_history"
+
+
 def regions_file():
     return CONFIG_DIR / "regions_en.yaml"
 
@@ -106,6 +110,9 @@ def refresh(get=None) -> dict:
     rows = aggregate(fetch_rows(get))
     data = {"as_of": date.today().isoformat(), "generated_at": now_iso(), "regions": rows, "attractions": near_attractions(),
             "totals": {f: sum(r[f] for r in rows) for f in ("total", "clinics", "hospitals", "named_dermatology")}}
+    previous = load()
+    if previous:  # 분기 변화 비교용으로 덮어쓰기 전 기준을 남긴다
+        save_json(history_dir() / f"{previous['as_of']}.json", previous)
     save_json(data_file(), data)
     try:
         fill_regions()  # 행정구역이 바뀌어 새 지역이 생기면
@@ -116,6 +123,12 @@ def refresh(get=None) -> dict:
 
 def load() -> dict | None:
     return load_json(data_file()) if data_file().exists() else None
+
+
+def previous_snapshot(as_of: str) -> dict | None:
+    """as_of 보다 앞선 기준 중 가장 최근 것 (같은 날 다시 갱신해도 자기 자신과 비교하지 않게)."""
+    files = sorted(f for f in history_dir().glob("*.json") if f.stem < as_of) if history_dir().exists() else []
+    return load_json(files[-1]) if files else None
 
 
 def fill_regions() -> list[str]:
@@ -163,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.cmd == "refresh":
         data = refresh()
+        if previous_snapshot(data["as_of"]):
+            print("분기 변화 글을 만들려면: `데이터글 초안 changes`")
     elif args.cmd == "regions":
         print(f"새 지역 {len(fill_regions())}개")
         return 0

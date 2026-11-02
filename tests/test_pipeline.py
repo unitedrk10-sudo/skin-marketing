@@ -3161,6 +3161,19 @@ def test_mentions_ledger(env):
     assert router._read_only("언급 목록")
 
 
+def test_dataset_refresh_keeps_previous_baseline(env, monkeypatch):
+    ds = importlib.import_module("pipeline.dataset")
+    common = importlib.import_module("pipeline.common")
+    monkeypatch.setattr(ds, "near_attractions", lambda: [])
+    monkeypatch.setattr(ds, "fill_regions", lambda: [])
+    old = {"as_of": "2026-11-02", "regions": [], "totals": {"total": 1}}
+    common.save_json(ds.data_file(), old)
+    raw = [{"sidoCdNm": "서울", "sgguCdNm": "강남구", "clCdNm": "의원", "yadmNm": "일반의원"}]
+    ds.refresh(lambda params: {"totalCount": 1, "items": {"item": raw}})
+    assert common.load_json(ds.history_dir() / "2026-11-02.json") == old
+    assert ds.load()["totals"]["total"] == 1 and ds.load()["regions"]
+
+
 def test_dataset_aggregates_without_institution_details(env, monkeypatch):
     ds = importlib.import_module("pipeline.dataset")
     site = importlib.import_module("pipeline.site")
@@ -3318,6 +3331,51 @@ def test_data_note_checks_numbers_and_publishes_only_after_approval(env, monkeyp
     router = importlib.import_module("pipeline.telegram_router")
     assert router.parse("데이터글 승인 where")["args"] == ["pipeline.data_notes", "approve", "where"]
     assert router.parse("데이터글 승인")["args"] == router.parse("Where 승인")["args"] == ["pipeline.data_notes", "approve"]
+
+
+def test_changes_note_compares_snapshots_by_hand_checked_numbers(env, monkeypatch):
+    dn = importlib.import_module("pipeline.data_notes")
+    ds = importlib.import_module("pipeline.dataset")
+    row = lambda sido, sggu, total: {"sido": sido, "sggu": sggu, "total": total}
+    old = {"as_of": "2026-11-02", "totals": {"total": 340}, "regions": [row("서울", "강남구", 200), row("부산", "해운대구", 100), row("경기", "분당구", 30), row("서울", "옛구", 10)]}
+    new = {"as_of": "2027-01-01", "totals": {"total": 347}, "regions": [row("서울", "강남구", 210), row("부산", "해운대구", 95), row("경기", "분당구", 30), row("서울", "새구", 12)]}
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "부산": "Busan", "경기": "Gyeonggi", "강남구": "Gangnam-gu", "해운대구": "Haeundae-gu", "분당구": "Bundang-gu", "옛구": "Old-gu", "새구": "New-gu"})
+    spec = dn.build_changes(new, old)
+    text = spec["numbers"]
+    assert "nationwide: increased by 7, from 340 to 347 (+2.1%)" in text
+    assert "Seoul: increased by 12, from 210 to 222 (+5.7%)" in text and "Busan: decreased by 5, from 100 to 95 (-5.0%)" in text
+    assert "Gangnam-gu, Seoul: increased by 10, from 200 to 210 (+5.0%)" in text and "Haeundae-gu, Busan: decreased by 5, from 100 to 95 (-5.0%)" in text
+    assert "Districts compared: 3" in text and "Districts that increased: 1" in text and "Districts that decreased: 1" in text and "Districts unchanged: 1" in text
+    assert "only one date, not compared: 2" in text and "Old-gu" not in text and "New-gu" not in text     # 이름 변경을 증감으로 치지 않는다
+    assert spec["table"][1] == ["Gangnam-gu, Seoul", "200", "210", "+10", "+5.0%"] and spec["table"][2][3] == "-5"
+
+    monkeypatch.setattr(ds, "load", lambda: new)
+    with pytest.raises(dn.NoteError, match="이전 데이터"):
+        dn.draft("changes")                                                    # 기준이 없으면 만들지 않는다
+    common.save_json(ds.history_dir() / "2026-11-02.json", old)
+    common.save_json(ds.history_dir() / "2027-01-01.json", new)                # 같은 날 다시 갱신해도
+    assert ds.previous_snapshot("2027-01-01")["as_of"] == "2026-11-02"         # 자기 자신과 비교하지 않는다
+    good = {"title": "A small net rise", "description": "From 2026-11-02 to 2027-01-01.", "markdown": "From 340 to 347 between 2026-11-02 and 2027-01-01, per HIRA."}
+    answers = {"data_note_write": good, "data_note_review": {"ok": True, "issues": [], "ko": "번역"}}
+    monkeypatch.setattr(dn.llm, "generate_json", lambda stage, text: (answers[stage], None))
+    note = dn.draft("changes")
+    assert note["id"] == "changes-2027-01-01" and note["status"] == "review" and note["compare_to"] == "2026-11-02" and "2026-11-02 대비" in dn.review_message(note)
+    answers["data_note_write"] = {**good, "markdown": "It rose by 8."}         # 틀린 증감 숫자는 차단
+    assert dn.draft("changes")["status"] == "blocked"
+    assert dn.number_problems("Over a two-month period.", "") and not dn.number_problems("It compares two dates.", "")
+    tie = lambda *values: [{"value": v} for v in values]
+    assert dn._leaders(tie(9, 5, 4, 4), 3) == (tie(9, 5, 4, 4), None)           # 동률이 조금이면 함께
+    assert dn._leaders(tie(9, 5, 1, 1, 1, 1, 1, 1), 3) == (tie(9, 5), {"count": 6, "value": 1})   # 많으면 이름 없이 개수만
+    many = [row("서울", f"구{i}", 5) for i in range(10)]
+    grown = [row("서울", f"구{i}", 6) for i in range(10)]
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", **{f"구{i}": f"Gu{i}" for i in range(10)}})
+    spec = dn.build_changes({"as_of": "2027-01-01", "totals": {"total": 60}, "regions": grown}, {"as_of": "2026-11-02", "totals": {"total": 50}, "regions": many})
+    assert "Tied at the next level: 10, each increased by 1. The source names them" in spec["numbers"] and spec["table"] == [["Province", "2026-11-02", "2027-01-01", "Change", "Change %"], ["Seoul", "50", "60", "+10", "+20.0%"]]
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "부산": "Busan", "경기": "Gyeonggi", "강남구": "Gangnam-gu", "해운대구": "Haeundae-gu", "분당구": "Bundang-gu", "옛구": "Old-gu", "새구": "New-gu"})
+    missing = {**new,"regions": new["regions"] + [row("서울", "모르는구", 1)]}
+    assert "only one date, not compared: 3" in dn.build_changes(missing, old)["numbers"]
+    with pytest.raises(dn.NoteError, match="영문 지역명"):
+        dn.build_changes({**missing, "regions": missing["regions"] + [row("서울", "모르는구2", 1)]}, {**old, "regions": old["regions"] + [row("서울", "모르는구2", 3)]})
 
 
 def test_share_experiment_alternates_and_compares_threads_stats(env, monkeypatch):
