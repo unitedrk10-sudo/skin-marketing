@@ -11,6 +11,7 @@ Return ONLY JSON:
   "self_promotion": "banned | limited | allowed | unknown",
   "operators_banned": true if posts or comments by site operators, promoters, staff or marketers are banned, otherwise false,
   "links": "banned | limited | allowed | unknown",
-  "ai_text": "banned | allowed | unknown"
+  "ai_text": "banned | allowed | unknown",
+  "treatments": "banned if discussing cosmetic procedures, plastic surgery, injectables or dermatology treatments is not allowed (for example a 'no medical advice, including plastic surgery' rule), allowed if such topics are clearly welcome, otherwise unknown"
 }
 Set "found" to false if the report says it could not find this community's rules.

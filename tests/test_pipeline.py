@@ -2808,7 +2808,7 @@ def test_reddit_stages_human_read_does_not_override_operator_ban(env, monkeypatc
     rd.reset("fresh")
     assert "fresh" not in rd.load()["subs"]
     message = rd.communities_message()
-    assert "r/NoMods: 활동" in message and "r/NoAI: 제외" in message and "운영진 거절" in message
+    assert "r/NoMods  AI ? · 링크 ○ · 시술 ○ → 활동" in message and "r/NoAI  AI ✕ · 링크 ? · 시술 ○ → 제외" in message
 
 
 def test_reddit_draft_makes_paste_only_message_and_limits(env, monkeypatch):
@@ -3053,7 +3053,9 @@ def test_reddit_real_config_sets_initial_stages(env):
                                                         "SkincareAddiction": "unverified", "PlasticSurgery": "excluded"}
     assert stages["KoreaTravelBeauty"]["writer"] == "facts" and stages["SkincareAddiction"]["writer"] == "facts"
     assert not [s for s in stages.values() if s["writer"] == "post"]          # 2026-11-02: 바로 게시할 수 있는 곳 없음
-    assert rd.standing(state, "AsianBeauty")["writer"] == "facts"              # 단계만 있고 조사 없는 곳은 규칙을 모르는 곳
+    assert rd.standing(state, "SeoulPlasticSurgery")["writer"] == "facts"      # 단계만 있고 조사 없는 곳은 규칙을 모르는 곳
+    assert rd.standing(state, "AsianBeauty")["mode"] == "excluded"               # 원문 확인: AI·시술 주제 금지
+    assert rd.check_marks(state, "AsianBeauty") == {"AI": "✕", "링크": "△", "시술": "✕"}
     assert rd.OPERATOR_LINE in rd.DISCLOSURE and rd.OPERATOR_LINE in rd.DISCLOSURE_OPERATOR
 
 
@@ -3104,6 +3106,34 @@ def test_reddit_weekly_rules_research_reports_changes(env, monkeypatch):
     rd.refresh_rules(force=True)                                             # 못 찾으면 전 조사를 지우지 않는다
     assert rd.load()["subs"]["testsub"]["research"]["found"] and rd.load()["subs"]["testsub"]["research"]["refresh_failed"]
     assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙 조사")["args"] == ["pipeline.reddit", "rules", "--force"]
+
+
+def test_reddit_treatment_topic_ban_uses_skincare_posts_only(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    posts = [{"key": "fly", "title": "Flying", "url": "https://skinboundkorea.com/fly/", "skincare": False,
+              "facts": [{"id": "F1", "text": "Swelling may last after a booster.", "url": "https://aad.org/x"}]},
+             {"key": "spf", "title": "Sunscreen", "url": "https://skinboundkorea.com/spf/", "skincare": True,
+              "facts": [{"id": "F1", "text": "Reapply sunscreen when outdoors.", "url": "https://fda.gov/x"}]}]
+    monkeypatch.setattr(rd, "_live_posts", lambda: posts)
+    _reddit_items(rd, ("beautysub", "Sunscreen for Seoul trip?"))
+    rd.allow("beautysub", True, no_treatments=True)
+    st = rd.standing(rd.load(), "beautysub")
+    assert st["treatments_banned"] and rd.check_marks(rd.load(), "beautysub") == {"AI": "?", "링크": "○", "시술": "✕"}
+    prompts = []
+    answers, _stages = _reddit_answers(rd, monkeypatch, reddit_answer={"answerable": True, "body": "Reapply sunscreen when you are outdoors.", "fact_ids": ["P1:F1"]})
+    real = rd.llm.generate_json
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), real(stage, text))[1])
+    item = rd.draft(1)
+    assert item["status"] == "ready" and "Sunscreen" in prompts[0] and "Flying" not in prompts[0]    # 화장품 글만 근거
+    item = rd.check(1, "Reapply sunscreen when you are outdoors in Seoul. A skin booster procedure needs downtime.")
+    assert item["body"] == "Reapply sunscreen when you are outdoors in Seoul." and "시술 주제 금지" in item["removed"][0]["why"]
+    monkeypatch.setattr(rd, "_live_posts", lambda: posts[:1])
+    with pytest.raises(rd.RedditError) as e:
+        rd.draft(1)
+    assert "화장품 글" in str(e.value)
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙확인 beautysub AI금지 시술금지")["args"] == [
+        "pipeline.reddit", "allow", "beautysub", "--no-ai", "--no-treatments"]
+    assert "AI 글 · 링크 · 시술 주제" in rd.communities_message()
 
 
 def test_mentions_ledger(env):
