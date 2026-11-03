@@ -15,7 +15,7 @@
 
     python -m pipeline.reddit find | list | communities | rules [--force]
     python -m pipeline.reddit add <주소> "질문 내용"
-    python -m pipeline.reddit draft <N> | direct <N> "운영자 답변 방향" | facts <N> | check <N> "운영자가 쓴 영문 본문"
+    python -m pipeline.reddit brief <N> | draft <N> | direct <N> "운영자 답변 방향" | facts <N> | check <N> "운영자가 쓴 본문 (한국어면 번역)"
     python -m pipeline.reddit show <N> | skip <N> | done <N> <댓글 주소> | react <N> <점수> [--replies 2] | removed <N> [--note …]
     python -m pipeline.reddit allow <서브레딧> [--links] [--no-ai] [--mt]
     python -m pipeline.reddit asked <서브레딧> | mods <서브레딧> allowed|refused [--links] [--no-ai] [--note …] | reset <서브레딧>
@@ -155,11 +155,11 @@ def standing(state: dict, sub: str) -> dict:
             why.append(f"원문 확인 {STALE_DAYS}일 지남, 다시 확인")
     known = _researched(c) or bool(research.get("found"))
     writer = {"active": "post", "manual": "facts"}.get(mode) or ("practice" if known and not ai_banned else "facts")
-    links = mode in ("active", "manual") and (bool(rec.get("links")) or research.get("links") == "allowed")
+    links = mode in ("active", "manual") and bool(rec.get("links"))  # 링크는 운영자가 켤 때만 (2026-11-03, 조사 결과로는 안 붙임)
     if treatments_banned(c, rec, research):
         why.append("시술 주제 금지 (화장품 글만 근거)")
     return {**_st(mode, why), "links": links, "writer": writer, "treatments_banned": treatments_banned(c, rec, research),
-            "links_from": "human" if rec.get("links") else ("ai" if links else ""),
+            "links_from": "human" if links else "",
             "mt": mode == "active" or bool(rec.get("mt_ok"))}
 
 
@@ -216,12 +216,12 @@ def disclosure(written_by: str, translated: bool = False) -> str:
 
 # ── 후보 ─────────────────────────────────────────────────────
 
-def _add(state: dict, url: str, title: str, question: str, posted: str = "") -> dict | None:
+def _add(state: dict, url: str, title: str, question: str, posted: str = "", any_sub: bool = False) -> dict | None:
     m = THREAD.match(url or "")
     if not m or any(i["thread"] == m.group(2).lower() for i in state["items"]):
         return None
     sub = m.group(1)
-    if _blocked_sub(state, sub) or CLINIC_ASK.search(f"{title}\n{question}"):
+    if (_blocked_sub(state, sub) and not any_sub) or CLINIC_ASK.search(f"{title}\n{question}"):
         return None
     item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": m.group(2).lower(), "url": m.group(0), "sub": sub,
             "title": title, "question": question, "posted": posted, "status": "candidate", "at": now_iso()}
@@ -263,6 +263,16 @@ def _posts_for(st: dict, sub: str = "") -> list[dict]:
     return posts
 
 
+def focus_subs() -> list[str]:
+    """보는 커뮤니티 (2026-11-03 운영자 결정: 본거지·보조만). 비어 있으면 제한 없음."""
+    return [str(s).removeprefix("r/") for s in (settings().get("focus") or [])]
+
+
+def in_focus(sub: str) -> bool:
+    focus = {s.lower() for s in focus_subs()}
+    return not focus or sub.lower() in focus
+
+
 def _skip_subs(state: dict) -> list[str]:
     names = [n for n, c in (settings().get("communities") or {}).items() if (c or {}).get("status") == "excluded"]
     return names + [s for s, r in state["subs"].items() if r.get("stopped") or r.get("mods") == "refused"]
@@ -276,11 +286,12 @@ def find() -> str:
     posts = _live_posts()
     data, _ = llm.generate_json("reddit_find", prompt("reddit_find", today=date.today().isoformat(), year=str(date.today().year), count=str(cfg.get("find_count", 8)),
                                                       topics="\n".join(f"- {p['title']}" for p in posts) or "(none)",
-                                                      excluded=", ".join(_skip_subs(state)) or "(none)"))
+                                                      excluded=", ".join(_skip_subs(state)) or "(none)",
+                                                      only=", ".join(f"r/{s}" for s in focus_subs()) or "any subreddit"))
     added = []
     for c in data.get("threads", []) if isinstance(data, dict) else []:
         m = THREAD.match(c.get("url", ""))
-        if m and not too_old(m.group(2)):
+        if m and in_focus(m.group(1)) and not too_old(m.group(2)):  # 보는 커뮤니티 밖의 글은 버린다
             item = _add(state, c["url"], c.get("title", ""), c.get("question", ""), f"{estimated_date(m.group(2)):%Y-%m} 무렵")
             if item:
                 added.append(item)
@@ -296,16 +307,16 @@ def _sub_line(state: dict, sub: str) -> str:
 
 def list_message(items: list[dict] | None = None, head: str = "[Reddit 후보]") -> str:
     state = load()
-    items = [i for i in state["items"] if i["status"] in ("candidate", "ready", "blocked", "manual")] if items is None else items
+    items = [i for i in state["items"] if i["status"] in ("candidate", "briefed", "ready", "blocked", "manual")] if items is None else items
     if not items:
         return "대기 중인 Reddit 후보가 없습니다"
-    label = {"candidate": "초안 전", "ready": "붙여넣기 준비됨", "blocked": "검수 걸림", "manual": "직접 작성 대기"}
+    label = {"candidate": "정리 전", "briefed": "정리됨 · 작성 대기", "ready": "붙여넣기 준비됨", "blocked": "검수 걸림", "manual": "직접 작성 대기"}
     lines = [head + " 글을 열어 날짜와 내용을 확인해 주세요 (AI 검색 결과라 틀릴 수 있음)"]
     for i in items:
         practice = " · 연습" if i.get("practice") and i["status"] == "ready" else ""
         lines += ["", f"{i['n']}. {i['title']} ({label.get(i['status'], i['status'])}{practice}{', ' + i['posted'] if i.get('posted') else ''})",
                   f"   {i['question'][:200]}", f"   {_sub_line(state, i['sub'])}", f"   {i['url']}"]
-    lines += ["", "초안: `레딧 1 초안` · 직접 쓰기: `레딧 1 사실` → `레딧 1 검사: 본문` · 제외: `레딧 1 빼기` · 기준: `레딧 기준`"]
+    lines += ["", "정리: `레딧 1 정리` → 한국어로 써서 `레딧 1 검사: 본문` · 제외: `레딧 1 빼기` · 기준: `레딧 기준`"]
     return "\n".join(lines)
 
 
@@ -350,11 +361,11 @@ def _all_subs(state: dict) -> list[str]:
 
 def refresh_rules(force: bool = False) -> list[str]:
     """주 1회 규칙 다시 조사 (2026-11-02 운영자 요청). 아는 커뮤니티(제외·정지 빼고) 전부를 Gemini 검색으로 다시 보고, 홍보·운영자 글·링크·AI 글
-    판정이 바뀐 곳과 단계가 바뀐 곳만 돌려준다. 못 찾으면 전 조사를 그대로 둔다. 조사 결과의 "링크 허용"은 직접 작성·활동 단계에서 링크를 붙이는 근거가 된다."""
+    판정이 바뀐 곳과 단계가 바뀐 곳만 돌려준다. 못 찾으면 전 조사를 그대로 둔다. 조사 결과의 "링크 허용"은 표시만 하고, 링크는 운영자가 켤 때만 붙인다 (2026-11-03)."""
     state = load()
     cutoff = (date.today() - timedelta(days=int(settings().get("rules_refresh_days", 7)))).isoformat()
     lines = []
-    for sub in _all_subs(state):
+    for sub in focus_subs() or _all_subs(state):  # 보는 커뮤니티가 정해져 있으면 그곳만
         before = standing(state, sub)
         if before["mode"] in ("excluded", "stopped", "paused"):
             continue
@@ -373,10 +384,10 @@ def refresh_rules(force: bool = False) -> list[str]:
                    for k, label in RESEARCH_FIELDS.items() if old.get("found") and old.get(k) != new.get(k)]
         rec["research"] = new
         after = standing(state, sub)
-        if changes or not old.get("found") or after["mode"] != before["mode"] or after["links"] != before["links"]:
+        if changes or not old.get("found") or after["mode"] != before["mode"]:
             lines.append(f"r/{sub}: " + ", ".join(changes or ["첫 조사"])
                          + (f" (단계 {before['label']}→{after['label']})" if after["mode"] != before["mode"] else "")
-                         + (" · 링크 붙임" if after["links"] and not before["links"] else " · 링크 안 붙임" if before["links"] and not after["links"] else ""))
+                         )
     save(state)
     return lines
 
@@ -499,6 +510,59 @@ def _finish(item: dict, problems: list[str], body: str, link: str) -> None:
     parts = [body] + ([f"More with sources: {link}"] if link else []) + [disclosure(item.get("written_by", "ai"), bool(item.get("translated")))]
     item.update(status="ready", paste="\n\n".join(parts))
     item["seal"] = seal_of(item)
+
+
+def brief(n: int) -> dict:
+    """운영자에게만 보내는 한국어 정리 (2026-11-03 운영자 요청): 질문 요약, 우리 글에 있는 사실(원문 그대로), 관련 글, 없는 부분,
+    작성 권고. 게시하는 글이 아니라 커뮤니티 규칙(AI 글 금지 등)과 상관없이 만든다. 운영자는 이걸 보고 한국어로 써서 `레딧 N 검사:` 로 보낸다."""
+    state = load()
+    item = _item(state, n)
+    posts = _live_posts()
+    facts, by_id = _facts_block(posts)
+    data, _r = llm.generate_json("reddit_brief", prompt("reddit_brief", subreddit=item["sub"], title=item["title"],
+                                                        question=item["question"], facts=facts or "(none)"))
+    data = data if isinstance(data, dict) else {}
+    covered = [c for c in (data.get("covered") or []) if isinstance(c, dict) and c.get("fact_id") in by_id][:8]
+    rel = data.get("related_post", "")
+    post = posts[int(rel[1:]) - 1] if re.fullmatch(r"P\d+", rel or "") and 0 < int(rel[1:]) <= len(posts) else None
+    item["brief"] = {"summary": data.get("summary_ko", ""), "asks": [str(a) for a in (data.get("asks_ko") or [])][:6],
+                     "covered": [{"id": c["fact_id"], "why": c.get("why_ko", ""), "text": by_id[c["fact_id"]].get("text", ""),
+                                  "url": by_id[c["fact_id"]].get("url", "")} for c in covered],
+                     "related": post["url"] if post else "", "related_title": post["title"] if post else "",
+                     "gaps": [str(g) for g in (data.get("gaps_ko") or [])][:6], "consider": [str(c) for c in (data.get("consider_ko") or [])][:8],
+                     "skip": data.get("skip_ko", ""), "at": now_iso()}
+    if item["status"] not in ("posted", "removed"):
+        item["status"] = "briefed"
+    save(state)
+    return item
+
+
+def brief_message(item: dict) -> str:
+    b = item.get("brief") or {}
+    st = standing(load(), item["sub"])
+    lines = [f"[Reddit {item['n']}번 정리] r/{item['sub']}: {item['title']}", item["url"] or "(주소 없음 — 게시한 뒤 `레딧 N 완료 <댓글 주소>` 로 기록)"]
+    if item["sub"] == "unknown":
+        lines.append(f"❔ 어느 커뮤니티 글인지 못 찾았습니다: `레딧 {item['n']} 커뮤니티 KoreaPlasticSurgery` 처럼 알려 주세요 (번역·게시 기준에 필요)")
+    if b.get("skip"):
+        lines += ["", f"⚠️ 답하지 않는 게 좋습니다: {b['skip']}"]
+    lines += ["", f"📝 질문: {b.get('summary', '')}"] + [f"- {a}" for a in b.get("asks", [])]
+    if b.get("covered"):
+        lines += ["", "✅ 우리 글에 있는 내용 (원문 그대로, 숫자는 옮기지 말 것):"]
+        for c in b["covered"]:
+            lines += [f"- {c['text']}", f"  → {c['why']}" if c.get("why") else "", f"  {c['url']}" if c.get("url") else ""]
+    else:
+        lines += ["", "✅ 우리 글에 바로 맞는 내용은 없습니다"]
+    if b.get("related"):
+        lines += ["", f"🔗 관련 글: {b.get('related_title', '')} {b['related']}" + ("" if st["links"] else " (본문 링크는 켤 때만)")]
+    if b.get("gaps"):
+        lines += ["", "❓ 우리 글에 없는 부분:"] + [f"- {g}" for g in b["gaps"]]
+    if b.get("consider"):
+        lines += ["", "💡 쓸 때 고려할 점:"] + [f"- {c}" for c in b["consider"]]
+    how = "한국어로 써도 됩니다 (Google 번역)" if st["mt"] else "영어로 써 주세요 (이 커뮤니티는 번역 허용 기록 없음)"
+    lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
+    if st["mode"] in BLOCKED_MODES or not can_post(st, "operator"):
+        lines.append(f"(참고: r/{item['sub']} 은 지금 {st['label']} 단계라 게시용 글은 만들지 않습니다)")
+    return "\n".join(x for x in lines if x != "")
 
 
 def notes(n: int) -> dict:
@@ -632,6 +696,8 @@ def paste_messages(item: dict) -> list[str]:
     st = standing(state, item["sub"])
     if item["status"] == "manual":
         return [notes_message(item, st)]
+    if item["status"] == "briefed":
+        return [brief_message(item)]
     if item["status"] != "ready" or item.get("seal") != seal_of(item):
         raise RedditError(f"{item['n']}번은 붙여넣을 수 있는 상태가 아닙니다. `레딧 {item['n']} 초안` 으로 다시 만들어 주세요")
     if item.get("practice") or not can_post(st, item.get("written_by", "ai")):
@@ -646,10 +712,8 @@ def paste_messages(item: dict) -> list[str]:
         meta += ["", "✂️ 뺀 문장: " + ("없음" if not item.get("removed") else "")] + [f"- \"{r['sentence']}\" — {r['why']}" for r in item.get("removed", [])]
         if item.get("translated"):
             meta += ["", "🌐 한국어 원문을 Google 번역했습니다. 번역문이 뜻과 맞는지 확인해 주세요 (공개 문구에 번역 표시가 붙습니다)"]
-        if item.get("related") and item["related"] in item["paste"] and st["links_from"] == "ai":
-            meta += ["", f"🔗 링크는 AI 규칙 조사(링크 허용)로 붙였습니다. 원문에서 다르면 본문에서 지워 주세요"]
         if item.get("related") and item["related"] not in item["paste"]:
-            meta += ["", f"🔗 관련 글: {item['related']}", f"이 커뮤니티는 링크 허용이 확인되지 않아 본문에 안 붙였습니다 (주 1회 규칙 조사로 갱신). 규칙상 허용이면 `레딧 규칙확인 {item['sub']} 링크허용`"]
+            meta += ["", f"🔗 관련 글: {item['related']}", f"링크는 켜 두신 커뮤니티에서만 본문에 붙습니다. 켜려면 `레딧 규칙확인 {item['sub']} 링크허용`"]
         if item.get("long"):
             meta.append(f"(참고: {settings().get('max_words', 180)}단어가 넘습니다)")
     research = _record(state, item["sub"]).get("research") or {}
@@ -700,8 +764,43 @@ def waiting_url() -> str:
     return ""
 
 
+SUB_MENTION = re.compile(r"(?<![A-Za-z0-9_/])r/([A-Za-z0-9_]{3,21})\b")
+PASTED_MIN_CHARS = 150  # Reddit 방에서 명령이 아닌 이만큼 긴 글은 붙여 넣은 Reddit 글로 본다
+
+
+def want_text(text: str) -> str:
+    """주소 없이 붙여 넣은 Reddit 글 (캡처 텍스트 추출 등, 2026-11-03) → 운영자용 정리. 커뮤니티는 본문의 r/이름으로 찾고,
+    없으면 `레딧 N 커뮤니티 <이름>` 으로 알려 달라고 한다. 게시 뒤 기록은 댓글 주소로 남긴다."""
+    text = text.strip()
+    if CLINIC_ASK.search(text):
+        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
+    state = load()
+    state.pop("waiting", None)
+    thread = "x" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
+    item = next((i for i in state["items"] if i["thread"] == thread), None)
+    if not item:
+        m = SUB_MENTION.search(text)
+        title = next((line.strip() for line in text.splitlines() if len(line.strip()) > 15 and not SUB_MENTION.fullmatch(line.strip())), text[:100])
+        item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": thread, "url": "", "sub": m.group(1) if m else "unknown",
+                "title": title[:100], "question": text, "posted": "", "status": "candidate", "at": now_iso()}
+        state["items"].append(item)
+    save(state)
+    try:
+        return send(brief(item["n"]))
+    except RedditError as e:
+        return f"⚠️ {e}"
+
+
+def set_sub(n: int, sub: str) -> str:
+    state = load()
+    item = _item(state, n)
+    item["sub"] = _name(sub)
+    save(state)
+    return f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}"
+
+
 def want(url: str, question: str = "") -> str:
-    """사람이 "이 글에 답하자" 고 보낸 글. PC 에서 Reddit 을 열 수 없어(403) 글 내용은 사람이 붙여 넣는다."""
+    """사람이 "이 글에 답하자" 고 보낸 글 → 운영자용 정리(brief, 2026-11-03). PC 에서 Reddit 을 열 수 없어(403) 글 내용은 사람이 붙여 넣는다."""
     m = THREAD.match(url)
     if not m:
         return "⚠️ Reddit 글 주소가 아닙니다"
@@ -715,12 +814,12 @@ def want(url: str, question: str = "") -> str:
     if item:
         item.update(question=question, title=question[:100])
     else:
-        item = _add(state, m.group(0), question[:100], question)
+        item = _add(state, m.group(0), question[:100], question, any_sub=True)  # 정리는 운영자만 보는 글이라 커뮤니티 단계와 상관없이
     save(state)
     if not item:
-        return "⚠️ 답변을 만들지 않았습니다: 병원 추천을 묻는 글이거나 제외·정지 커뮤니티입니다"
+        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
     try:
-        return send(draft(item["n"]))
+        return send(brief(item["n"]))
     except RedditError as e:
         state = load()
         _item(state, item["n"])["wanted"] = True
@@ -873,10 +972,13 @@ def communities_message() -> str:
     lines = ["[Reddit 커뮤니티] AI 글 · 링크 · 시술 주제 (○ 허용 △ 조건부 ✕ 금지 ? 모름) → 단계"]
     if paused:
         lines.append(f"⛔ 전체 정지 중: {paused.get('at', '')[:10]} {paused.get('note', '')}")
-    for key in sorted(names):
+    for name in focus_subs():
+        names.setdefault(name.lower(), name)
+    for key in sorted(names, key=lambda k: (not (focus_subs() and in_focus(k)), k)):
         m, st = check_marks(state, names[key]), standing(state, names[key])
-        lines.append(f"r/{names[key]}  AI {m['AI']} · 링크 {m['링크']} · 시술 {m['시술']} → {st['label']}")
-    lines += ["", "기록: `레딧 규칙확인 <이름> [링크허용] [AI금지] [시술금지]`"]
+        star = "★ " if focus_subs() and in_focus(names[key]) else ""
+        lines.append(f"{star}r/{names[key]}  AI {m['AI']} · 링크 {m['링크']} · 시술 {m['시술']} → {st['label']}")
+    lines += ["", ("★ = 보는 커뮤니티 (후보 찾기·규칙 조사 대상). " if focus_subs() else "") + "기록: `레딧 규칙확인 <이름> [링크허용] [AI금지] [시술금지]`"]
     return "\n".join(lines)
 
 
@@ -945,6 +1047,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("add")
     p.add_argument("url")
     p.add_argument("question")
+    p = sub.add_parser("want-text")
+    p.add_argument("text")
+    p = sub.add_parser("set-sub")
+    p.add_argument("n", type=int)
+    p.add_argument("sub")
     p = sub.add_parser("want")
     p.add_argument("url")
     p.add_argument("question", nargs="?", default="")
@@ -967,7 +1074,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("warn")
     p.add_argument("sub")
     p.add_argument("--note", default="")
-    for name in ("draft", "show", "skip", "facts"):
+    for name in ("draft", "show", "skip", "facts", "brief"):
         sub.add_parser(name).add_argument("n", type=int)
     for name in ("direct", "check"):
         p = sub.add_parser(name)
@@ -1021,12 +1128,18 @@ def main(argv: list[str] | None = None) -> int:
             print(resume(args.sub))
         elif args.cmd == "warn":
             print(warn(args.sub, args.note))
+        elif args.cmd == "want-text":
+            print(want_text(args.text))
+        elif args.cmd == "set-sub":
+            print(set_sub(args.n, args.sub))
         elif args.cmd == "want":
             print(want(args.url, args.question))
         elif args.cmd == "draft":
             print(send(draft(args.n)))
         elif args.cmd == "direct":
             print(send(draft(args.n, args.text)))
+        elif args.cmd == "brief":
+            print(send(brief(args.n)))
         elif args.cmd == "facts":
             print(send(notes(args.n)))
         elif args.cmd == "check":

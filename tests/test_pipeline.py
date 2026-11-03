@@ -2744,7 +2744,9 @@ def _reddit_answers(rd, monkeypatch, **override):
     answers = {"reddit_answer": {"answerable": True, "body": REDDIT_POST_TEXT, "fact_ids": ["P1:F1", "P9:F9"]},
                "reddit_review": {"ok": True, "issues": [], "ko": "번역"},
                "reddit_facts": {"answerable": True, "fact_ids": ["P1:F1"], "gaps_ko": "비행 시간은 없음"},
-               "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"}, **override}
+               "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"},
+               "reddit_brief": {"summary_ko": "시술 뒤 비행 질문", "asks_ko": ["다음 날 비행 가능?"], "covered": [{"fact_id": "P1:F1", "why_ko": "붓기 기간"}],
+                                "related_post": "P1", "gaps_ko": ["기내 기압"], "consider_ko": ["의사 확인 권고"], "skip_ko": ""}, **override}
     stages = []
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (stages.append(stage), (answers[stage], None))[1])
     return answers, stages
@@ -2978,15 +2980,15 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     assert "붙여 넣어" in rd.want(link) and rd.waiting_url() == link
     assert router._reddit_request("Can I fly after this?") == ["pipeline.reddit", "want", link, "Can I fly after this?"]
     assert router._reddit_request("1 승인") is None                          # 정해진 명령은 그대로
-    monkeypatch.setattr(rd, "draft", lambda n, direction="": (_ for _ in ()).throw(rd.RedditError("r/SomeBeauty 정지")))
-    assert "정지" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
-    assert rd.load()["items"][0]["wanted"] and "병원 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
+    monkeypatch.setattr(rd, "brief", lambda n: (_ for _ in ()).throw(rd.RedditError("정리 실패")))
+    assert "정리 실패" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
+    assert rd.load()["items"][0]["wanted"] and "병원·의사 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
     monkeypatch.undo()
     rd = _reddit_env(monkeypatch)
     _reddit_answers(rd, monkeypatch)
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m: True)
-    rd.allow("SomeBeauty", False)
-    assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"
+    assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
+    assert rd.load()["items"][0]["status"] == "briefed"
 
 
 def test_reddit_direction_keeps_opinion_but_blocks_treatment_promotion(env, monkeypatch):
@@ -3095,11 +3097,13 @@ def test_reddit_weekly_rules_research_reports_changes(env, monkeypatch):
     assert rd.refresh_rules() == [] and stages.count("reddit_rules_extract") == 3   # 7일 안에는 다시 안 본다
     answers["reddit_rules_extract"] = {**rules, "links": "allowed"}
     lines = rd.refresh_rules(force=True)
-    assert any(line.startswith("r/testsub: 링크 금지→허용") and "링크 붙임" in line for line in lines)
+    assert any(line.startswith("r/testsub: 링크 금지→허용") for line in lines)
     st = rd.standing(rd.load(), "testsub")
-    assert st["links"] and st["links_from"] == "ai"                          # 조사에서 링크 허용 → 본문에 링크
+    assert not st["links"] and rd.check_marks(rd.load(), "testsub")["링크"] == "○"   # 조사 결과는 표시만, 링크는 운영자가 켤 때만
     item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
-    assert "https://skinboundkorea.com/fly/" in item["paste"] and "AI 규칙 조사" in rd.paste_messages(item)[0]
+    assert "http" not in item["paste"] and "링크허용" in rd.paste_messages(item)[0]
+    rd.allow("testsub", True)
+    assert "https://skinboundkorea.com/fly/" in rd.check(1, "Swelling can last a while, so ask your doctor before flying.")["paste"]
     answers["reddit_rules_extract"] = {**rules, "operators_banned": True, "links": "allowed"}
     assert any("단계 활동→문의 필요" in line for line in rd.refresh_rules(force=True))   # 더 엄격해지면 바로 반영
     monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
@@ -3134,6 +3138,78 @@ def test_reddit_treatment_topic_ban_uses_skincare_posts_only(env, monkeypatch):
     assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙확인 beautysub AI금지 시술금지")["args"] == [
         "pipeline.reddit", "allow", "beautysub", "--no-ai", "--no-treatments"]
     assert "AI 글 · 링크 · 시술 주제" in rd.communities_message()
+
+
+def test_reddit_focus_limits_search_and_rules_research(env, monkeypatch):
+    rd = _reddit_env(monkeypatch, focus=["KoreaPlasticSurgery", "CosmeticSurgery"])
+    threads = [{"url": "https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0000/fly/", "title": "Fly?", "question": "Can I fly after a booster?"},
+               {"url": "https://www.reddit.com/r/SeoulPlasticSurgery/comments/1zz0001/fly/", "title": "Fly?", "question": "Can I fly?"},
+               {"url": "https://www.reddit.com/r/cosmeticsurgery/comments/1zz0002/x/", "title": "Downtime?", "question": "How long is downtime?"}]
+    prompts = []
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), ({"threads": threads}, None))[1])
+    rd.find()
+    assert [i["sub"] for i in rd.load()["items"]] == ["KoreaPlasticSurgery", "cosmeticsurgery"]      # 보는 곳 밖은 버림
+    assert "r/KoreaPlasticSurgery, r/CosmeticSurgery" in prompts[0]
+    researched = []
+    monkeypatch.setattr(rd, "look_up_rules", lambda sub: (researched.append(sub), {"found": False, "checked": "2026-11-03"})[1])
+    rd.refresh_rules(force=True)
+    assert researched == ["KoreaPlasticSurgery", "CosmeticSurgery"]                                  # 규칙 조사도 보는 곳만
+    message = rd.communities_message()
+    assert message.splitlines()[1].startswith("★ r/") and "★ = 보는 커뮤니티" in message
+
+
+def test_reddit_brief_is_private_and_ignores_community_stage(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("koreatravel", "Can I fly the next day?"))
+    state = rd.load()                                                        # 제외 커뮤니티 글도 운영자용 정리는 만든다
+    rd._add(state, "https://www.reddit.com/r/Banned/comments/abc9/x/", "Fly?", "Can I fly the next day?", any_sub=True)
+    rd.save(state)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    item = rd.brief(2)
+    assert stages == ["reddit_brief"] and item["status"] == "briefed"
+    message = rd.paste_messages(item)
+    assert len(message) == 1
+    text = message[0]
+    for part in ("시술 뒤 비행 질문", "Swelling may last 2 days.", "붓기 기간", "https://skinboundkorea.com/fly/", "기내 기압", "의사 확인 권고", "레딧 2 검사:", "제외"):
+        assert part in text, part
+    answers["reddit_brief"] = {**answers["reddit_brief"], "covered": [{"fact_id": "P9:F9", "why_ko": "없는 사실"}], "skip_ko": "병원 추천 요청"}
+    text = rd.paste_messages(rd.brief(2))[0]
+    assert "없는 사실" not in text and "답하지 않는 게 좋습니다" in text   # 목록에 없는 사실 번호는 버린다
+    assert "정리됨" in rd.list_message()
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 2 정리")["args"] == ["pipeline.reddit", "brief", "2"]
+
+
+def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    router = importlib.import_module("pipeline.telegram_router")
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: True)
+    pasted = "r/KoreaPlasticSurgery\nFlying home after skin booster in Seoul?\n" + "I had a skin booster in Gangnam and my flight is the next morning. " * 3
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER", raising=False)
+    assert router._reddit_request(pasted) is None                              # 방을 나누지 않으면 붙여 넣은 글로 보지 않는다
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009")
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009")
+    assert router._reddit_request(pasted) == ["pipeline.reddit", "want-text", "--", pasted.strip()]
+    assert router._reddit_request("왜 정리가 안 와?") is None                     # 짧은 말은 Claude 대화로
+    assert rd.want_text(pasted) == "✅ 보냈습니다" and stages == ["reddit_brief"]
+    item = rd.load()["items"][0]
+    assert item["sub"] == "KoreaPlasticSurgery" and item["url"] == "" and item["status"] == "briefed"
+    assert item["title"] == "Flying home after skin booster in Seoul?"
+    rd.want_text(pasted)
+    assert len(rd.load()["items"]) == 1                                         # 같은 글은 한 번만
+    rd.want_text("No subreddit named here. " * 8)
+    assert rd._item(rd.load(), 2)["sub"] == "unknown" and "커뮤니티 KoreaPlasticSurgery" in rd.brief_message(rd._item(rd.load(), 2))
+    assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
+    rd.set_sub(2, "CosmeticSurgery")
+    assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
+    assert "병원·의사 추천" in rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4)
+
+    seen = {}
+    monkeypatch.setattr(router, "run", lambda args: f"[{args[1]}]")
+    monkeypatch.setattr(router.llm, "generate_json", lambda stage, text: (seen.update(text=text), ({"reply": "답", "commands": []}, None))[1])
+    router.chat("2번 왜 아직 안 됐어?")
+    assert "[Reddit 방 명령어]" in seen["text"] and "[list]" in seen["text"] and "[communities]" in seen["text"]
+    assert "reddit state.json" in seen["text"] and "검수 목록" not in seen["text"].split("COMMANDS:")[1].split("CURRENT STATUS:")[0]
 
 
 def test_mentions_ledger(env):
