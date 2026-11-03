@@ -263,6 +263,16 @@ def _posts_for(st: dict, sub: str = "") -> list[dict]:
     return posts
 
 
+def focus_subs() -> list[str]:
+    """보는 커뮤니티 (2026-11-03 운영자 결정: 본거지·보조만). 비어 있으면 제한 없음."""
+    return [str(s).removeprefix("r/") for s in (settings().get("focus") or [])]
+
+
+def in_focus(sub: str) -> bool:
+    focus = {s.lower() for s in focus_subs()}
+    return not focus or sub.lower() in focus
+
+
 def _skip_subs(state: dict) -> list[str]:
     names = [n for n, c in (settings().get("communities") or {}).items() if (c or {}).get("status") == "excluded"]
     return names + [s for s, r in state["subs"].items() if r.get("stopped") or r.get("mods") == "refused"]
@@ -276,11 +286,12 @@ def find() -> str:
     posts = _live_posts()
     data, _ = llm.generate_json("reddit_find", prompt("reddit_find", today=date.today().isoformat(), year=str(date.today().year), count=str(cfg.get("find_count", 8)),
                                                       topics="\n".join(f"- {p['title']}" for p in posts) or "(none)",
-                                                      excluded=", ".join(_skip_subs(state)) or "(none)"))
+                                                      excluded=", ".join(_skip_subs(state)) or "(none)",
+                                                      only=", ".join(f"r/{s}" for s in focus_subs()) or "any subreddit"))
     added = []
     for c in data.get("threads", []) if isinstance(data, dict) else []:
         m = THREAD.match(c.get("url", ""))
-        if m and not too_old(m.group(2)):
+        if m and in_focus(m.group(1)) and not too_old(m.group(2)):  # 보는 커뮤니티 밖의 글은 버린다
             item = _add(state, c["url"], c.get("title", ""), c.get("question", ""), f"{estimated_date(m.group(2)):%Y-%m} 무렵")
             if item:
                 added.append(item)
@@ -354,7 +365,7 @@ def refresh_rules(force: bool = False) -> list[str]:
     state = load()
     cutoff = (date.today() - timedelta(days=int(settings().get("rules_refresh_days", 7)))).isoformat()
     lines = []
-    for sub in _all_subs(state):
+    for sub in focus_subs() or _all_subs(state):  # 보는 커뮤니티가 정해져 있으면 그곳만
         before = standing(state, sub)
         if before["mode"] in ("excluded", "stopped", "paused"):
             continue
@@ -873,10 +884,13 @@ def communities_message() -> str:
     lines = ["[Reddit 커뮤니티] AI 글 · 링크 · 시술 주제 (○ 허용 △ 조건부 ✕ 금지 ? 모름) → 단계"]
     if paused:
         lines.append(f"⛔ 전체 정지 중: {paused.get('at', '')[:10]} {paused.get('note', '')}")
-    for key in sorted(names):
+    for name in focus_subs():
+        names.setdefault(name.lower(), name)
+    for key in sorted(names, key=lambda k: (not (focus_subs() and in_focus(k)), k)):
         m, st = check_marks(state, names[key]), standing(state, names[key])
-        lines.append(f"r/{names[key]}  AI {m['AI']} · 링크 {m['링크']} · 시술 {m['시술']} → {st['label']}")
-    lines += ["", "기록: `레딧 규칙확인 <이름> [링크허용] [AI금지] [시술금지]`"]
+        star = "★ " if focus_subs() and in_focus(names[key]) else ""
+        lines.append(f"{star}r/{names[key]}  AI {m['AI']} · 링크 {m['링크']} · 시술 {m['시술']} → {st['label']}")
+    lines += ["", ("★ = 보는 커뮤니티 (후보 찾기·규칙 조사 대상). " if focus_subs() else "") + "기록: `레딧 규칙확인 <이름> [링크허용] [AI금지] [시술금지]`"]
     return "\n".join(lines)
 
 

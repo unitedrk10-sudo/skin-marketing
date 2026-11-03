@@ -4,6 +4,7 @@ GUIDES:
 {{topics}}
 
 Include a thread only if:
+- It is in one of these subreddits: {{only}}. Search inside them, for example with site:reddit.com/r/NAME.
 - You actually found it in search. Never invent or guess a URL. The URL must look like https://www.reddit.com/r/NAME/comments/ID/...
 - The person asks a practical question: timing, downtime, flying, sun, sauna, trip length, aftercare, how a treatment works, or labels and skincare.
 - It was posted in the last few months. Search for recent wording such as "{{year}}", and prefer the newest threads. Older threads are closed to replies, so they are useless here.

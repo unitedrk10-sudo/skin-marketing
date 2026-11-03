@@ -3136,6 +3136,24 @@ def test_reddit_treatment_topic_ban_uses_skincare_posts_only(env, monkeypatch):
     assert "AI 글 · 링크 · 시술 주제" in rd.communities_message()
 
 
+def test_reddit_focus_limits_search_and_rules_research(env, monkeypatch):
+    rd = _reddit_env(monkeypatch, focus=["KoreaPlasticSurgery", "CosmeticSurgery"])
+    threads = [{"url": "https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0000/fly/", "title": "Fly?", "question": "Can I fly after a booster?"},
+               {"url": "https://www.reddit.com/r/SeoulPlasticSurgery/comments/1zz0001/fly/", "title": "Fly?", "question": "Can I fly?"},
+               {"url": "https://www.reddit.com/r/cosmeticsurgery/comments/1zz0002/x/", "title": "Downtime?", "question": "How long is downtime?"}]
+    prompts = []
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), ({"threads": threads}, None))[1])
+    rd.find()
+    assert [i["sub"] for i in rd.load()["items"]] == ["KoreaPlasticSurgery", "cosmeticsurgery"]      # 보는 곳 밖은 버림
+    assert "r/KoreaPlasticSurgery, r/CosmeticSurgery" in prompts[0]
+    researched = []
+    monkeypatch.setattr(rd, "look_up_rules", lambda sub: (researched.append(sub), {"found": False, "checked": "2026-11-03"})[1])
+    rd.refresh_rules(force=True)
+    assert researched == ["KoreaPlasticSurgery", "CosmeticSurgery"]                                  # 규칙 조사도 보는 곳만
+    message = rd.communities_message()
+    assert message.splitlines()[1].startswith("★ r/") and "★ = 보는 커뮤니티" in message
+
+
 def test_mentions_ledger(env):
     mentions = importlib.import_module("pipeline.mentions")
     item = mentions.add("디렉터리", "Seoul travel blog list", "https://example.com/list", paid=True)
