@@ -540,7 +540,9 @@ def brief(n: int) -> dict:
 def brief_message(item: dict) -> str:
     b = item.get("brief") or {}
     st = standing(load(), item["sub"])
-    lines = [f"[Reddit {item['n']}번 정리] r/{item['sub']}: {item['title']}", item["url"]]
+    lines = [f"[Reddit {item['n']}번 정리] r/{item['sub']}: {item['title']}", item["url"] or "(주소 없음 — 게시한 뒤 `레딧 N 완료 <댓글 주소>` 로 기록)"]
+    if item["sub"] == "unknown":
+        lines.append(f"❔ 어느 커뮤니티 글인지 못 찾았습니다: `레딧 {item['n']} 커뮤니티 KoreaPlasticSurgery` 처럼 알려 주세요 (번역·게시 기준에 필요)")
     if b.get("skip"):
         lines += ["", f"⚠️ 답하지 않는 게 좋습니다: {b['skip']}"]
     lines += ["", f"📝 질문: {b.get('summary', '')}"] + [f"- {a}" for a in b.get("asks", [])]
@@ -760,6 +762,41 @@ def waiting_url() -> str:
     if wait and datetime.fromisoformat(wait["at"]) >= datetime.fromisoformat(now_iso()) - timedelta(minutes=WAIT_MINUTES):
         return wait["url"]
     return ""
+
+
+SUB_MENTION = re.compile(r"(?<![A-Za-z0-9_/])r/([A-Za-z0-9_]{3,21})\b")
+PASTED_MIN_CHARS = 150  # Reddit 방에서 명령이 아닌 이만큼 긴 글은 붙여 넣은 Reddit 글로 본다
+
+
+def want_text(text: str) -> str:
+    """주소 없이 붙여 넣은 Reddit 글 (캡처 텍스트 추출 등, 2026-11-03) → 운영자용 정리. 커뮤니티는 본문의 r/이름으로 찾고,
+    없으면 `레딧 N 커뮤니티 <이름>` 으로 알려 달라고 한다. 게시 뒤 기록은 댓글 주소로 남긴다."""
+    text = text.strip()
+    if CLINIC_ASK.search(text):
+        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
+    state = load()
+    state.pop("waiting", None)
+    thread = "x" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
+    item = next((i for i in state["items"] if i["thread"] == thread), None)
+    if not item:
+        m = SUB_MENTION.search(text)
+        title = next((line.strip() for line in text.splitlines() if len(line.strip()) > 15 and not SUB_MENTION.fullmatch(line.strip())), text[:100])
+        item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": thread, "url": "", "sub": m.group(1) if m else "unknown",
+                "title": title[:100], "question": text, "posted": "", "status": "candidate", "at": now_iso()}
+        state["items"].append(item)
+    save(state)
+    try:
+        return send(brief(item["n"]))
+    except RedditError as e:
+        return f"⚠️ {e}"
+
+
+def set_sub(n: int, sub: str) -> str:
+    state = load()
+    item = _item(state, n)
+    item["sub"] = _name(sub)
+    save(state)
+    return f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}"
 
 
 def want(url: str, question: str = "") -> str:
@@ -1010,6 +1047,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("add")
     p.add_argument("url")
     p.add_argument("question")
+    p = sub.add_parser("want-text")
+    p.add_argument("text")
+    p = sub.add_parser("set-sub")
+    p.add_argument("n", type=int)
+    p.add_argument("sub")
     p = sub.add_parser("want")
     p.add_argument("url")
     p.add_argument("question", nargs="?", default="")
@@ -1086,6 +1128,10 @@ def main(argv: list[str] | None = None) -> int:
             print(resume(args.sub))
         elif args.cmd == "warn":
             print(warn(args.sub, args.note))
+        elif args.cmd == "want-text":
+            print(want_text(args.text))
+        elif args.cmd == "set-sub":
+            print(set_sub(args.n, args.sub))
         elif args.cmd == "want":
             print(want(args.url, args.question))
         elif args.cmd == "draft":

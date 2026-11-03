@@ -40,6 +40,7 @@ READ_ONLY = {("pipeline.figures", "list"), ("pipeline.social", "list"), ("pipeli
              ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show"),
              ("pipeline.reddit", "communities"), ("pipeline.mentions", "list"), ("pipeline.data_notes", "list")}
 EVIDENCE_LOGS = ("worker", "social", "site", "figures", "telegram", "02_draft", "02b_auto_review", "03_review", "01_topics")
+REDDIT_EVIDENCE_LOGS = ("reddit", "telegram", "worker")  # Reddit 방의 Claude 답변 근거 (2026-11-03)
 EVIDENCE_POSTS = 12
 LOG_TAIL = 80
 LINE_CHARS = 300
@@ -54,7 +55,7 @@ SNS: 오늘 스레드 올려 / 오늘 2번째 스레드 올려 / 3 스레드 올
 조회: 검수 목록 / 승인 목록 / 3번 보여줘 / 3번 블로그 보여줘 / 블로그 일정 / 유입 / 관광지 트렌드
 승인 글: 승인글 2 폐기 / 2 되돌리기: 내용
 데이터 글: 데이터글 목록 / 데이터글 승인 / 데이터글 폐기 (검수 대기 글에 적용, 지역을 고르는 명령이 아님) / 데이터글 초안 where / 데이터글 초안 changes (분기 변화)
-Reddit (기준 docs/reddit-ops.md): 레딧 글 주소 + 글 내용 보내기 → 정리(질문 요약·우리 글 근거·작성 권고) → 레딧 1 검사: 한국어 본문 → 번역·검사 / 레딧 1 정리 / 레딧 기준 / 레딧 후보 찾아 / 레딧 목록 / 레딧 1 초안 / 레딧 1 방향: 내가 하고 싶은 말 (커뮤니티 말투로 영작) / 레딧 1 사실 → 레딧 1 검사: 직접 쓴 본문 (영어, 번역 허용된 곳은 한국어도 — Google 번역, 숫자는 빼고) / 레딧 1 보여줘 / 레딧 1 빼기 / 레딧 추가 <글 주소> <질문> / 레딧 글 주소만 보내기 → 글 내용 붙여넣기 → 답변
+Reddit (기준 docs/reddit-ops.md): 레딧 글 주소 + 글 내용 보내기 (주소 없이 본문만 붙여 넣어도 됨, Reddit 방) → 정리(질문 요약·우리 글 근거·작성 권고) → 레딧 1 검사: 한국어 본문 → 번역·검사 / 레딧 1 정리 / 레딧 1 커뮤니티 <이름> / 레딧 기준 / 레딧 후보 찾아 / 레딧 목록 / 레딧 1 초안 / 레딧 1 방향: 내가 하고 싶은 말 (커뮤니티 말투로 영작) / 레딧 1 사실 → 레딧 1 검사: 직접 쓴 본문 (영어, 번역 허용된 곳은 한국어도 — Google 번역, 숫자는 빼고) / 레딧 1 보여줘 / 레딧 1 빼기 / 레딧 추가 <글 주소> <질문> / 레딧 글 주소만 보내기 → 글 내용 붙여넣기 → 답변
 Reddit 기록: 레딧 1 완료 <댓글 주소> / 레딧 1 반응 5 답글 2 / 레딧 1 삭제됨 [메모] / 레딧 경고 <서브레딧|전체> [메모] / 레딧 재개 <서브레딧|전체> / 레딧 규칙확인 <서브레딧> [링크허용] [AI금지] [번역허용] [시술금지] / 레딧 문의 <서브레딧> / 레딧 운영진답변 <서브레딧> 허용|거절 [링크허용] [AI금지] [번역허용] [시술금지] [메모] / 레딧 규칙초기화 <서브레딧> / 레딧 규칙 조사 (주 1회 자동)
 외부 언급: 언급 목록 / 언급 추가 <디렉터리|기고|언론|질문답변|데이터|커뮤니티|기타> <이름> [주소] [유료] / 언급 1 신청|게재 <주소>|거절|삭제됨|중단 [메모]
 스폰서: 스폰서 목록 / 스폰서 <id> | <영문 제목> | <답할 질문> (코스 글은 끝에 | 코스)
@@ -149,6 +150,8 @@ def parse(text: str) -> dict | None:
         word = m.group(2)
         cmd = "facts" if word.startswith("사실") else "brief" if word.startswith("정리") else {"초안": "draft", "빼기": "skip"}.get(word, "show")
         return {"args": ["pipeline.reddit", cmd, m.group(1)]}
+    if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*커뮤니티\s+(?:r/)?([A-Za-z0-9_-]+)", t, re.I):
+        return {"args": ["pipeline.reddit", "set-sub", m.group(1), m.group(2)]}
     if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*검사\s*[:：]\s*(.+)", t, re.I | re.S):
         return {"args": ["pipeline.reddit", "check", m.group(1), "--", m.group(2).strip()]}  # 본문이 "-" 로 시작해도 옵션으로 읽지 않게
     if m := re.fullmatch(r"(?:레딧|reddit)\s*(\d+)\s*번?\s*반응\s+(-?\d+)\s*점?(?:\s*,?\s*답글\s*(\d+)\s*개?)?", t, re.I):
@@ -301,7 +304,15 @@ def remember(text: str, reply: str) -> None:
 
 
 def snapshot() -> str:
-    """Claude 답변용 현재 상태 (읽기 전용)."""
+    """Claude 답변용 현재 상태 (읽기 전용). Reddit 방에서는 Reddit 후보·커뮤니티 기준."""
+    if room() == "reddit":
+        parts = []
+        for name, args in (("Reddit 후보", ["pipeline.reddit", "list"]), ("Reddit 커뮤니티", ["pipeline.reddit", "communities"])):
+            try:
+                parts.append(f"[{name}]\n{run(args)[:2500]}")
+            except (OSError, subprocess.TimeoutExpired) as e:
+                parts.append(f"[{name}] 읽지 못함: {type(e).__name__}")
+        return "\n\n".join(parts)
     parts = []
     for name, args in (("블로그 일정", ["pipeline.site", "schedule"]), ("검수 대기", ["pipeline.03_review", "list"]), ("데이터 글", ["pipeline.data_notes", "list"])):
         try:
@@ -329,6 +340,10 @@ def _json_text(path: Path) -> str:
 
 def evidence() -> str:
     """Claude 답변 근거. 저장소 경로·도구를 주지 않고 코드가 고른 기록만, 값처럼 보이는 것은 지워서 프롬프트로 넣는다."""
+    if room() == "reddit":
+        parts = [(f"log {n}", _log_tail(n)) for n in REDDIT_EVIDENCE_LOGS]
+        parts.append(("reddit state.json", _json_text(content_dir() / "reddit" / "state.json")))
+        return scrub("\n\n".join(f"--- {title} ---\n{body}" for title, body in parts if body))[:EVIDENCE_CHARS]
     parts = [(f"log {n}", _log_tail(n)) for n in EVIDENCE_LOGS]
     parts += [("schedule.json", _json_text(content_dir() / "site" / "schedule.json")),
               ("sns daily.json", _json_text(content_dir() / "social" / "daily.json"))]
@@ -371,7 +386,8 @@ def _read_only(chunk: str) -> bool:
 def chat(text: str) -> str:
     history = "\n".join(f"사람: {h['user']}\n봇: {h['bot']}" for h in load_history()) or "(없음)"
     try:
-        data, _ = llm.generate_json("telegram_chat", prompt("telegram_chat", help=HELP, status=snapshot(), history=history,
+        data, _ = llm.generate_json("telegram_chat", prompt("telegram_chat", help=REDDIT_HELP if room() == "reddit" else HELP,
+                                                            status=snapshot(), history=history,
                                                             message=text, evidence=evidence()))
     except llm.RateLimited as e:
         log.warning("telegram_chat 한도: %s", e)
@@ -449,6 +465,9 @@ def _reddit_request(text: str) -> list[str] | None:
         return ["pipeline.reddit", "want", m.group(0), rest]
     if split_commands(text) is None and (url := reddit.waiting_url()):
         return ["pipeline.reddit", "want", url, text.strip()]
+    if room() == "reddit" and split_commands(text) is None and len(text.strip()) >= reddit.PASTED_MIN_CHARS \
+            and not YES.fullmatch(text.strip()) and not NO.fullmatch(text.strip()):
+        return ["pipeline.reddit", "want-text", "--", text.strip()]  # 주소 없이 붙여 넣은 글 (캡처 텍스트 추출 등)
     return None
 
 

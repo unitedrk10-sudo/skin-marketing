@@ -3179,6 +3179,39 @@ def test_reddit_brief_is_private_and_ignores_community_stage(env, monkeypatch):
     assert importlib.import_module("pipeline.telegram_router").parse("레딧 2 정리")["args"] == ["pipeline.reddit", "brief", "2"]
 
 
+def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    router = importlib.import_module("pipeline.telegram_router")
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: True)
+    pasted = "r/KoreaPlasticSurgery\nFlying home after skin booster in Seoul?\n" + "I had a skin booster in Gangnam and my flight is the next morning. " * 3
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER", raising=False)
+    assert router._reddit_request(pasted) is None                              # 방을 나누지 않으면 붙여 넣은 글로 보지 않는다
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009")
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009")
+    assert router._reddit_request(pasted) == ["pipeline.reddit", "want-text", "--", pasted.strip()]
+    assert router._reddit_request("왜 정리가 안 와?") is None                     # 짧은 말은 Claude 대화로
+    assert rd.want_text(pasted) == "✅ 보냈습니다" and stages == ["reddit_brief"]
+    item = rd.load()["items"][0]
+    assert item["sub"] == "KoreaPlasticSurgery" and item["url"] == "" and item["status"] == "briefed"
+    assert item["title"] == "Flying home after skin booster in Seoul?"
+    rd.want_text(pasted)
+    assert len(rd.load()["items"]) == 1                                         # 같은 글은 한 번만
+    rd.want_text("No subreddit named here. " * 8)
+    assert rd._item(rd.load(), 2)["sub"] == "unknown" and "커뮤니티 KoreaPlasticSurgery" in rd.brief_message(rd._item(rd.load(), 2))
+    assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
+    rd.set_sub(2, "CosmeticSurgery")
+    assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
+    assert "병원·의사 추천" in rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4)
+
+    seen = {}
+    monkeypatch.setattr(router, "run", lambda args: f"[{args[1]}]")
+    monkeypatch.setattr(router.llm, "generate_json", lambda stage, text: (seen.update(text=text), ({"reply": "답", "commands": []}, None))[1])
+    router.chat("2번 왜 아직 안 됐어?")
+    assert "[Reddit 방 명령어]" in seen["text"] and "[list]" in seen["text"] and "[communities]" in seen["text"]
+    assert "reddit state.json" in seen["text"] and "검수 목록" not in seen["text"].split("COMMANDS:")[1].split("CURRENT STATUS:")[0]
+
+
 def test_mentions_ledger(env):
     mentions = importlib.import_module("pipeline.mentions")
     item = mentions.add("디렉터리", "Seoul travel blog list", "https://example.com/list", paid=True)
