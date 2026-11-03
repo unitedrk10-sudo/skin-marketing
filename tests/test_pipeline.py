@@ -2744,7 +2744,9 @@ def _reddit_answers(rd, monkeypatch, **override):
     answers = {"reddit_answer": {"answerable": True, "body": REDDIT_POST_TEXT, "fact_ids": ["P1:F1", "P9:F9"]},
                "reddit_review": {"ok": True, "issues": [], "ko": "번역"},
                "reddit_facts": {"answerable": True, "fact_ids": ["P1:F1"], "gaps_ko": "비행 시간은 없음"},
-               "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"}, **override}
+               "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"},
+               "reddit_brief": {"summary_ko": "시술 뒤 비행 질문", "asks_ko": ["다음 날 비행 가능?"], "covered": [{"fact_id": "P1:F1", "why_ko": "붓기 기간"}],
+                                "related_post": "P1", "gaps_ko": ["기내 기압"], "consider_ko": ["의사 확인 권고"], "skip_ko": ""}, **override}
     stages = []
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (stages.append(stage), (answers[stage], None))[1])
     return answers, stages
@@ -2978,15 +2980,15 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     assert "붙여 넣어" in rd.want(link) and rd.waiting_url() == link
     assert router._reddit_request("Can I fly after this?") == ["pipeline.reddit", "want", link, "Can I fly after this?"]
     assert router._reddit_request("1 승인") is None                          # 정해진 명령은 그대로
-    monkeypatch.setattr(rd, "draft", lambda n, direction="": (_ for _ in ()).throw(rd.RedditError("r/SomeBeauty 정지")))
-    assert "정지" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
-    assert rd.load()["items"][0]["wanted"] and "병원 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
+    monkeypatch.setattr(rd, "brief", lambda n: (_ for _ in ()).throw(rd.RedditError("정리 실패")))
+    assert "정리 실패" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
+    assert rd.load()["items"][0]["wanted"] and "병원·의사 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
     monkeypatch.undo()
     rd = _reddit_env(monkeypatch)
     _reddit_answers(rd, monkeypatch)
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m: True)
-    rd.allow("SomeBeauty", False)
-    assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"
+    assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
+    assert rd.load()["items"][0]["status"] == "briefed"
 
 
 def test_reddit_direction_keeps_opinion_but_blocks_treatment_promotion(env, monkeypatch):
@@ -3154,6 +3156,27 @@ def test_reddit_focus_limits_search_and_rules_research(env, monkeypatch):
     assert researched == ["KoreaPlasticSurgery", "CosmeticSurgery"]                                  # 규칙 조사도 보는 곳만
     message = rd.communities_message()
     assert message.splitlines()[1].startswith("★ r/") and "★ = 보는 커뮤니티" in message
+
+
+def test_reddit_brief_is_private_and_ignores_community_stage(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("koreatravel", "Can I fly the next day?"))
+    state = rd.load()                                                        # 제외 커뮤니티 글도 운영자용 정리는 만든다
+    rd._add(state, "https://www.reddit.com/r/Banned/comments/abc9/x/", "Fly?", "Can I fly the next day?", any_sub=True)
+    rd.save(state)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    item = rd.brief(2)
+    assert stages == ["reddit_brief"] and item["status"] == "briefed"
+    message = rd.paste_messages(item)
+    assert len(message) == 1
+    text = message[0]
+    for part in ("시술 뒤 비행 질문", "Swelling may last 2 days.", "붓기 기간", "https://skinboundkorea.com/fly/", "기내 기압", "의사 확인 권고", "레딧 2 검사:", "제외"):
+        assert part in text, part
+    answers["reddit_brief"] = {**answers["reddit_brief"], "covered": [{"fact_id": "P9:F9", "why_ko": "없는 사실"}], "skip_ko": "병원 추천 요청"}
+    text = rd.paste_messages(rd.brief(2))[0]
+    assert "없는 사실" not in text and "답하지 않는 게 좋습니다" in text   # 목록에 없는 사실 번호는 버린다
+    assert "정리됨" in rd.list_message()
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 2 정리")["args"] == ["pipeline.reddit", "brief", "2"]
 
 
 def test_mentions_ledger(env):

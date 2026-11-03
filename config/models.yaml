@@ -99,6 +99,11 @@ stages:
     tools: []
     timeout_sec: 300
 
+  reddit_brief:    # 질문 정리·우리 글 근거·작성 권고 — 운영자에게만 보내는 한국어 브리핑 (게시 안 함, 2026-11-03)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
   reddit_facts:    # 직접 작성용 사실 고르기 (AI 글 금지 커뮤니티) — 고르기만, 사실 문장은 코드가 목록에서 원문 그대로
     provider: claude_cli
     tools: []

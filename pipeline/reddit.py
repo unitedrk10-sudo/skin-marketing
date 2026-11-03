@@ -15,7 +15,7 @@
 
     python -m pipeline.reddit find | list | communities | rules [--force]
     python -m pipeline.reddit add <주소> "질문 내용"
-    python -m pipeline.reddit draft <N> | direct <N> "운영자 답변 방향" | facts <N> | check <N> "운영자가 쓴 영문 본문"
+    python -m pipeline.reddit brief <N> | draft <N> | direct <N> "운영자 답변 방향" | facts <N> | check <N> "운영자가 쓴 본문 (한국어면 번역)"
     python -m pipeline.reddit show <N> | skip <N> | done <N> <댓글 주소> | react <N> <점수> [--replies 2] | removed <N> [--note …]
     python -m pipeline.reddit allow <서브레딧> [--links] [--no-ai] [--mt]
     python -m pipeline.reddit asked <서브레딧> | mods <서브레딧> allowed|refused [--links] [--no-ai] [--note …] | reset <서브레딧>
@@ -216,12 +216,12 @@ def disclosure(written_by: str, translated: bool = False) -> str:
 
 # ── 후보 ─────────────────────────────────────────────────────
 
-def _add(state: dict, url: str, title: str, question: str, posted: str = "") -> dict | None:
+def _add(state: dict, url: str, title: str, question: str, posted: str = "", any_sub: bool = False) -> dict | None:
     m = THREAD.match(url or "")
     if not m or any(i["thread"] == m.group(2).lower() for i in state["items"]):
         return None
     sub = m.group(1)
-    if _blocked_sub(state, sub) or CLINIC_ASK.search(f"{title}\n{question}"):
+    if (_blocked_sub(state, sub) and not any_sub) or CLINIC_ASK.search(f"{title}\n{question}"):
         return None
     item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": m.group(2).lower(), "url": m.group(0), "sub": sub,
             "title": title, "question": question, "posted": posted, "status": "candidate", "at": now_iso()}
@@ -307,16 +307,16 @@ def _sub_line(state: dict, sub: str) -> str:
 
 def list_message(items: list[dict] | None = None, head: str = "[Reddit 후보]") -> str:
     state = load()
-    items = [i for i in state["items"] if i["status"] in ("candidate", "ready", "blocked", "manual")] if items is None else items
+    items = [i for i in state["items"] if i["status"] in ("candidate", "briefed", "ready", "blocked", "manual")] if items is None else items
     if not items:
         return "대기 중인 Reddit 후보가 없습니다"
-    label = {"candidate": "초안 전", "ready": "붙여넣기 준비됨", "blocked": "검수 걸림", "manual": "직접 작성 대기"}
+    label = {"candidate": "정리 전", "briefed": "정리됨 · 작성 대기", "ready": "붙여넣기 준비됨", "blocked": "검수 걸림", "manual": "직접 작성 대기"}
     lines = [head + " 글을 열어 날짜와 내용을 확인해 주세요 (AI 검색 결과라 틀릴 수 있음)"]
     for i in items:
         practice = " · 연습" if i.get("practice") and i["status"] == "ready" else ""
         lines += ["", f"{i['n']}. {i['title']} ({label.get(i['status'], i['status'])}{practice}{', ' + i['posted'] if i.get('posted') else ''})",
                   f"   {i['question'][:200]}", f"   {_sub_line(state, i['sub'])}", f"   {i['url']}"]
-    lines += ["", "초안: `레딧 1 초안` · 직접 쓰기: `레딧 1 사실` → `레딧 1 검사: 본문` · 제외: `레딧 1 빼기` · 기준: `레딧 기준`"]
+    lines += ["", "정리: `레딧 1 정리` → 한국어로 써서 `레딧 1 검사: 본문` · 제외: `레딧 1 빼기` · 기준: `레딧 기준`"]
     return "\n".join(lines)
 
 
@@ -512,6 +512,57 @@ def _finish(item: dict, problems: list[str], body: str, link: str) -> None:
     item["seal"] = seal_of(item)
 
 
+def brief(n: int) -> dict:
+    """운영자에게만 보내는 한국어 정리 (2026-11-03 운영자 요청): 질문 요약, 우리 글에 있는 사실(원문 그대로), 관련 글, 없는 부분,
+    작성 권고. 게시하는 글이 아니라 커뮤니티 규칙(AI 글 금지 등)과 상관없이 만든다. 운영자는 이걸 보고 한국어로 써서 `레딧 N 검사:` 로 보낸다."""
+    state = load()
+    item = _item(state, n)
+    posts = _live_posts()
+    facts, by_id = _facts_block(posts)
+    data, _r = llm.generate_json("reddit_brief", prompt("reddit_brief", subreddit=item["sub"], title=item["title"],
+                                                        question=item["question"], facts=facts or "(none)"))
+    data = data if isinstance(data, dict) else {}
+    covered = [c for c in (data.get("covered") or []) if isinstance(c, dict) and c.get("fact_id") in by_id][:8]
+    rel = data.get("related_post", "")
+    post = posts[int(rel[1:]) - 1] if re.fullmatch(r"P\d+", rel or "") and 0 < int(rel[1:]) <= len(posts) else None
+    item["brief"] = {"summary": data.get("summary_ko", ""), "asks": [str(a) for a in (data.get("asks_ko") or [])][:6],
+                     "covered": [{"id": c["fact_id"], "why": c.get("why_ko", ""), "text": by_id[c["fact_id"]].get("text", ""),
+                                  "url": by_id[c["fact_id"]].get("url", "")} for c in covered],
+                     "related": post["url"] if post else "", "related_title": post["title"] if post else "",
+                     "gaps": [str(g) for g in (data.get("gaps_ko") or [])][:6], "consider": [str(c) for c in (data.get("consider_ko") or [])][:8],
+                     "skip": data.get("skip_ko", ""), "at": now_iso()}
+    if item["status"] not in ("posted", "removed"):
+        item["status"] = "briefed"
+    save(state)
+    return item
+
+
+def brief_message(item: dict) -> str:
+    b = item.get("brief") or {}
+    st = standing(load(), item["sub"])
+    lines = [f"[Reddit {item['n']}번 정리] r/{item['sub']}: {item['title']}", item["url"]]
+    if b.get("skip"):
+        lines += ["", f"⚠️ 답하지 않는 게 좋습니다: {b['skip']}"]
+    lines += ["", f"📝 질문: {b.get('summary', '')}"] + [f"- {a}" for a in b.get("asks", [])]
+    if b.get("covered"):
+        lines += ["", "✅ 우리 글에 있는 내용 (원문 그대로, 숫자는 옮기지 말 것):"]
+        for c in b["covered"]:
+            lines += [f"- {c['text']}", f"  → {c['why']}" if c.get("why") else "", f"  {c['url']}" if c.get("url") else ""]
+    else:
+        lines += ["", "✅ 우리 글에 바로 맞는 내용은 없습니다"]
+    if b.get("related"):
+        lines += ["", f"🔗 관련 글: {b.get('related_title', '')} {b['related']}" + ("" if st["links"] else " (본문 링크는 켤 때만)")]
+    if b.get("gaps"):
+        lines += ["", "❓ 우리 글에 없는 부분:"] + [f"- {g}" for g in b["gaps"]]
+    if b.get("consider"):
+        lines += ["", "💡 쓸 때 고려할 점:"] + [f"- {c}" for c in b["consider"]]
+    how = "한국어로 써도 됩니다 (Google 번역)" if st["mt"] else "영어로 써 주세요 (이 커뮤니티는 번역 허용 기록 없음)"
+    lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
+    if st["mode"] in BLOCKED_MODES or not can_post(st, "operator"):
+        lines.append(f"(참고: r/{item['sub']} 은 지금 {st['label']} 단계라 게시용 글은 만들지 않습니다)")
+    return "\n".join(x for x in lines if x != "")
+
+
 def notes(n: int) -> dict:
     """사실 정리: 직접 쓸 운영자에게 질문에 맞는 사실을 원문 그대로 준다. Claude(reddit_facts)는 고르기만 하고 사실 문장은 코드가 목록에서 꺼낸다."""
     state, item, st = _prepare(n)
@@ -643,6 +694,8 @@ def paste_messages(item: dict) -> list[str]:
     st = standing(state, item["sub"])
     if item["status"] == "manual":
         return [notes_message(item, st)]
+    if item["status"] == "briefed":
+        return [brief_message(item)]
     if item["status"] != "ready" or item.get("seal") != seal_of(item):
         raise RedditError(f"{item['n']}번은 붙여넣을 수 있는 상태가 아닙니다. `레딧 {item['n']} 초안` 으로 다시 만들어 주세요")
     if item.get("practice") or not can_post(st, item.get("written_by", "ai")):
@@ -710,7 +763,7 @@ def waiting_url() -> str:
 
 
 def want(url: str, question: str = "") -> str:
-    """사람이 "이 글에 답하자" 고 보낸 글. PC 에서 Reddit 을 열 수 없어(403) 글 내용은 사람이 붙여 넣는다."""
+    """사람이 "이 글에 답하자" 고 보낸 글 → 운영자용 정리(brief, 2026-11-03). PC 에서 Reddit 을 열 수 없어(403) 글 내용은 사람이 붙여 넣는다."""
     m = THREAD.match(url)
     if not m:
         return "⚠️ Reddit 글 주소가 아닙니다"
@@ -724,12 +777,12 @@ def want(url: str, question: str = "") -> str:
     if item:
         item.update(question=question, title=question[:100])
     else:
-        item = _add(state, m.group(0), question[:100], question)
+        item = _add(state, m.group(0), question[:100], question, any_sub=True)  # 정리는 운영자만 보는 글이라 커뮤니티 단계와 상관없이
     save(state)
     if not item:
-        return "⚠️ 답변을 만들지 않았습니다: 병원 추천을 묻는 글이거나 제외·정지 커뮤니티입니다"
+        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
     try:
-        return send(draft(item["n"]))
+        return send(brief(item["n"]))
     except RedditError as e:
         state = load()
         _item(state, item["n"])["wanted"] = True
@@ -979,7 +1032,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("warn")
     p.add_argument("sub")
     p.add_argument("--note", default="")
-    for name in ("draft", "show", "skip", "facts"):
+    for name in ("draft", "show", "skip", "facts", "brief"):
         sub.add_parser(name).add_argument("n", type=int)
     for name in ("direct", "check"):
         p = sub.add_parser(name)
@@ -1039,6 +1092,8 @@ def main(argv: list[str] | None = None) -> int:
             print(send(draft(args.n)))
         elif args.cmd == "direct":
             print(send(draft(args.n, args.text)))
+        elif args.cmd == "brief":
+            print(send(brief(args.n)))
         elif args.cmd == "facts":
             print(send(notes(args.n)))
         elif args.cmd == "check":
