@@ -155,11 +155,11 @@ def standing(state: dict, sub: str) -> dict:
             why.append(f"원문 확인 {STALE_DAYS}일 지남, 다시 확인")
     known = _researched(c) or bool(research.get("found"))
     writer = {"active": "post", "manual": "facts"}.get(mode) or ("practice" if known and not ai_banned else "facts")
-    links = mode in ("active", "manual") and (bool(rec.get("links")) or research.get("links") == "allowed")
+    links = mode in ("active", "manual") and bool(rec.get("links"))  # 링크는 운영자가 켤 때만 (2026-11-03, 조사 결과로는 안 붙임)
     if treatments_banned(c, rec, research):
         why.append("시술 주제 금지 (화장품 글만 근거)")
     return {**_st(mode, why), "links": links, "writer": writer, "treatments_banned": treatments_banned(c, rec, research),
-            "links_from": "human" if rec.get("links") else ("ai" if links else ""),
+            "links_from": "human" if links else "",
             "mt": mode == "active" or bool(rec.get("mt_ok"))}
 
 
@@ -361,7 +361,7 @@ def _all_subs(state: dict) -> list[str]:
 
 def refresh_rules(force: bool = False) -> list[str]:
     """주 1회 규칙 다시 조사 (2026-11-02 운영자 요청). 아는 커뮤니티(제외·정지 빼고) 전부를 Gemini 검색으로 다시 보고, 홍보·운영자 글·링크·AI 글
-    판정이 바뀐 곳과 단계가 바뀐 곳만 돌려준다. 못 찾으면 전 조사를 그대로 둔다. 조사 결과의 "링크 허용"은 직접 작성·활동 단계에서 링크를 붙이는 근거가 된다."""
+    판정이 바뀐 곳과 단계가 바뀐 곳만 돌려준다. 못 찾으면 전 조사를 그대로 둔다. 조사 결과의 "링크 허용"은 표시만 하고, 링크는 운영자가 켤 때만 붙인다 (2026-11-03)."""
     state = load()
     cutoff = (date.today() - timedelta(days=int(settings().get("rules_refresh_days", 7)))).isoformat()
     lines = []
@@ -384,10 +384,10 @@ def refresh_rules(force: bool = False) -> list[str]:
                    for k, label in RESEARCH_FIELDS.items() if old.get("found") and old.get(k) != new.get(k)]
         rec["research"] = new
         after = standing(state, sub)
-        if changes or not old.get("found") or after["mode"] != before["mode"] or after["links"] != before["links"]:
+        if changes or not old.get("found") or after["mode"] != before["mode"]:
             lines.append(f"r/{sub}: " + ", ".join(changes or ["첫 조사"])
                          + (f" (단계 {before['label']}→{after['label']})" if after["mode"] != before["mode"] else "")
-                         + (" · 링크 붙임" if after["links"] and not before["links"] else " · 링크 안 붙임" if before["links"] and not after["links"] else ""))
+                         )
     save(state)
     return lines
 
@@ -657,10 +657,8 @@ def paste_messages(item: dict) -> list[str]:
         meta += ["", "✂️ 뺀 문장: " + ("없음" if not item.get("removed") else "")] + [f"- \"{r['sentence']}\" — {r['why']}" for r in item.get("removed", [])]
         if item.get("translated"):
             meta += ["", "🌐 한국어 원문을 Google 번역했습니다. 번역문이 뜻과 맞는지 확인해 주세요 (공개 문구에 번역 표시가 붙습니다)"]
-        if item.get("related") and item["related"] in item["paste"] and st["links_from"] == "ai":
-            meta += ["", f"🔗 링크는 AI 규칙 조사(링크 허용)로 붙였습니다. 원문에서 다르면 본문에서 지워 주세요"]
         if item.get("related") and item["related"] not in item["paste"]:
-            meta += ["", f"🔗 관련 글: {item['related']}", f"이 커뮤니티는 링크 허용이 확인되지 않아 본문에 안 붙였습니다 (주 1회 규칙 조사로 갱신). 규칙상 허용이면 `레딧 규칙확인 {item['sub']} 링크허용`"]
+            meta += ["", f"🔗 관련 글: {item['related']}", f"링크는 켜 두신 커뮤니티에서만 본문에 붙습니다. 켜려면 `레딧 규칙확인 {item['sub']} 링크허용`"]
         if item.get("long"):
             meta.append(f"(참고: {settings().get('max_words', 180)}단어가 넘습니다)")
     research = _record(state, item["sub"]).get("research") or {}

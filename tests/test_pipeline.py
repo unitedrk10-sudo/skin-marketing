@@ -3095,11 +3095,13 @@ def test_reddit_weekly_rules_research_reports_changes(env, monkeypatch):
     assert rd.refresh_rules() == [] and stages.count("reddit_rules_extract") == 3   # 7일 안에는 다시 안 본다
     answers["reddit_rules_extract"] = {**rules, "links": "allowed"}
     lines = rd.refresh_rules(force=True)
-    assert any(line.startswith("r/testsub: 링크 금지→허용") and "링크 붙임" in line for line in lines)
+    assert any(line.startswith("r/testsub: 링크 금지→허용") for line in lines)
     st = rd.standing(rd.load(), "testsub")
-    assert st["links"] and st["links_from"] == "ai"                          # 조사에서 링크 허용 → 본문에 링크
+    assert not st["links"] and rd.check_marks(rd.load(), "testsub")["링크"] == "○"   # 조사 결과는 표시만, 링크는 운영자가 켤 때만
     item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
-    assert "https://skinboundkorea.com/fly/" in item["paste"] and "AI 규칙 조사" in rd.paste_messages(item)[0]
+    assert "http" not in item["paste"] and "링크허용" in rd.paste_messages(item)[0]
+    rd.allow("testsub", True)
+    assert "https://skinboundkorea.com/fly/" in rd.check(1, "Swelling can last a while, so ask your doctor before flying.")["paste"]
     answers["reddit_rules_extract"] = {**rules, "operators_banned": True, "links": "allowed"}
     assert any("단계 활동→문의 필요" in line for line in rd.refresh_rules(force=True))   # 더 엄격해지면 바로 반영
     monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
