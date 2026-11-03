@@ -559,10 +559,36 @@ def brief_message(item: dict) -> str:
     if b.get("consider"):
         lines += ["", "💡 쓸 때 고려할 점:"] + [f"- {c}" for c in b["consider"]]
     how = "한국어로 써도 됩니다 (Google 번역)" if st["mt"] else "영어로 써 주세요 (이 커뮤니티는 번역 허용 기록 없음)"
-    lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
+    if will_draft(item, st):
+        lines += ["", "✍️ 초안을 이어서 보냅니다. 직접 쓰고 싶으면 "
+                      f"`레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
+    else:
+        lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
     if st["mode"] in BLOCKED_MODES or not can_post(st, "operator"):
         lines.append(f"(참고: r/{item['sub']} 은 지금 {st['label']} 단계라 게시용 글은 만들지 않습니다)")
     return "\n".join(x for x in lines if x != "")
+
+
+def will_draft(item: dict, st: dict) -> bool:
+    """정리 뒤에 초안까지 이어서 쓰는가 (2026-11-03 운영자 요청). AI 글을 올릴 수 있는 활동 단계에서만, 답하지 말라는 정리가 아닐 때."""
+    return (bool(settings().get("auto_draft", True)) and st["writer"] == "post" and item["sub"] != "unknown"
+            and not (item.get("brief") or {}).get("skip"))
+
+
+def brief_and_draft(n: int) -> str:
+    """정리를 보내고, 활동 단계면 초안도 보낸다. 초안이 안 되면(한도·답할 사실 없음·LLM 실패) 정리는 그대로 두고 이유만 알린다."""
+    item = brief(n)
+    out = [send(item)]
+    if will_draft(item, standing(load(), item["sub"])):
+        try:
+            out.append(send(draft(n)))
+        except RedditError as e:
+            out.append(f"초안은 만들지 않았습니다: {e}")
+        except llm.LLMError as e:
+            log.warning("Reddit %s번 초안 실패: %s", n, e)
+            out.append(f"초안을 만들지 못했습니다 (나중에 `레딧 {n} 초안`): {str(e)[:120]}")
+    rest = [o for o in out if o != "✅ 보냈습니다"]
+    return "\n\n".join(rest) if rest else "✅ 보냈습니다"
 
 
 def notes(n: int) -> dict:
@@ -691,7 +717,8 @@ def paste_messages(item: dict) -> list[str]:
     head = f"[Reddit {item['n']}번] r/{item['sub']}: {item['title']}"
     if item["status"] == "blocked":
         return [f"{head}\n⛔ 붙여넣을 글을 만들지 않았습니다\n" + "\n".join(f"- {p}" for p in item.get("problems", []))
-                + (f"\n고쳐서 다시: `레딧 {item['n']} 검사: 본문`" if item.get("written_by") == "operator" else "")]
+                + (f"\n고쳐서 다시: `레딧 {item['n']} 검사: 본문`" if item.get("written_by") == "operator"
+                   else f"\n직접 써서: `레딧 {item['n']} 검사: 본문` · 방향만 주고 다시: `레딧 {item['n']} 방향: 원하는 내용`")]
     state = load()
     st = standing(state, item["sub"])
     if item["status"] == "manual":
@@ -708,6 +735,8 @@ def paste_messages(item: dict) -> list[str]:
     meta = [head, item["url"], "",
             "1. 글을 열어 날짜·질문·현재 규칙을 확인", "2. 다음 메시지를 복사해 말투를 다듬고 직접 게시 (공개 문구는 지우지 않기)",
             f"3. `레딧 {item['n']} 완료 <댓글 주소>`", "", f"🇰🇷 {item.get('ko', '')}"]
+    if item.get("written_by", "ai") == "ai":
+        meta += ["", f"✏️ 다르게 쓰려면 `레딧 {item['n']} 방향: 원하는 내용(한국어 가능)` — 그 방향으로 다시 씁니다"]
     if item.get("written_by") == "operator":
         meta += ["", "✂️ 뺀 문장: " + ("없음" if not item.get("removed") else "")] + [f"- \"{r['sentence']}\" — {r['why']}" for r in item.get("removed", [])]
         if item.get("translated"):
@@ -786,7 +815,7 @@ def want_text(text: str) -> str:
         state["items"].append(item)
     save(state)
     try:
-        return send(brief(item["n"]))
+        return brief_and_draft(item["n"])
     except RedditError as e:
         return f"⚠️ {e}"
 
@@ -796,7 +825,9 @@ def set_sub(n: int, sub: str) -> str:
     item = _item(state, n)
     item["sub"] = _name(sub)
     save(state)
-    return f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}"
+    st = standing(state, item["sub"])
+    more = f"\n초안이 필요하면 `레딧 {n} 초안`" if will_draft(item, st) and item["status"] == "briefed" else ""
+    return f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}{more}"
 
 
 def want(url: str, question: str = "") -> str:
@@ -819,7 +850,7 @@ def want(url: str, question: str = "") -> str:
     if not item:
         return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
     try:
-        return send(brief(item["n"]))
+        return brief_and_draft(item["n"])
     except RedditError as e:
         state = load()
         _item(state, item["n"])["wanted"] = True

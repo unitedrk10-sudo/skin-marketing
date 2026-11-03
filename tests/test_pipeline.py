@@ -2980,15 +2980,43 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     assert "붙여 넣어" in rd.want(link) and rd.waiting_url() == link
     assert router._reddit_request("Can I fly after this?") == ["pipeline.reddit", "want", link, "Can I fly after this?"]
     assert router._reddit_request("1 승인") is None                          # 정해진 명령은 그대로
+    real_brief = rd.brief
     monkeypatch.setattr(rd, "brief", lambda n: (_ for _ in ()).throw(rd.RedditError("정리 실패")))
     assert "정리 실패" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
     assert rd.load()["items"][0]["wanted"] and "병원·의사 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
-    monkeypatch.undo()
-    rd = _reddit_env(monkeypatch)
-    _reddit_answers(rd, monkeypatch)
-    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m: True)
+    monkeypatch.setattr(rd, "brief", real_brief)          # monkeypatch.undo() 는 임시 content 폴더 설정까지 풀어 실제 state.json 에 쓴다
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
     assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
-    assert rd.load()["items"][0]["status"] == "briefed"
+    assert rd.load()["items"][0]["status"] == "briefed" and stages == ["reddit_brief"]  # 규칙 모르는 곳은 초안 없음
+    assert "직접 써서 보내 주세요" in sent[0]
+
+
+def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rd.allow("KoreaPlasticSurgery", False)                                   # 활동 단계 (AI 글 허용)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+    link = "https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0000/fly/"
+    assert rd.want(link, "Can I fly the next day after a skin booster?") == "✅ 보냈습니다"
+    assert stages == ["reddit_brief", "reddit_answer", "reddit_review"]
+    item = rd.load()["items"][0]
+    assert item["status"] == "ready" and item["brief"]["summary"] and rd.DISCLOSURE in item["paste"]   # AI 초안 = AI-assisted 표시
+    assert len(sent) == 3 and "초안을 이어서 보냅니다" in sent[0] and sent[2] == item["paste"] and "레딧 1 방향:" in sent[1]
+    answers["reddit_answer"] = {"answerable": False, "reason": "사실 없음"}            # 초안이 막혀도 정리는 그대로 가고 이유를 알린다
+    sent.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0001/x/", "What should I pack for Seoul?")
+    assert len(sent) == 2 and "레딧 2 검사:" in sent[1]
+    answers["reddit_brief"] = {**answers["reddit_brief"], "skip_ko": "병원 추천 요청"}   # 답하지 말라는 정리면 초안 없음
+    stages.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0002/x/", "Where should I get a booster?")
+    assert stages == ["reddit_brief"]
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "auto_draft": False})
+    stages.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0003/x/", "Can I sauna after a booster?")
+    assert stages == ["reddit_brief"]
 
 
 def test_reddit_direction_keeps_opinion_but_blocks_treatment_promotion(env, monkeypatch):
