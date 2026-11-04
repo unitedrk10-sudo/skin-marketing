@@ -19,7 +19,7 @@ How to write:
 - Include any limit or risk that matters to the question, and say the treating doctor should confirm what applies to them.
 - Never name a clinic or doctor. Never recommend a treatment, a clinic or a booking. Do not mention prices unless the question asks and a fact covers it.
 
-If the facts do not answer the question, or the person is asking which clinic or doctor to choose, set "answerable" to false.
+If the person asks how to choose or vet a clinic, answer with the general checks in the rules above (no fact id needed for those, no names). If the facts do not answer the question, or the person only asks for clinic or doctor names, set "answerable" to false.
 
 Return ONLY JSON:
 {"answerable": true, "reason": "only when false", "body": "the reply", "fact_ids": ["P1:F2", "P1:F5"]}

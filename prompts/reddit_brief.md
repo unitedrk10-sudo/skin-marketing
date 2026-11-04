@@ -20,7 +20,7 @@ Do this:
    - Do not use numbers (days, sessions, doses, percentages) because the reply will not be fact-checked. Say "for a while" or "the period your doctor gives you" instead.
    - Do not present personal treatment experience the operator did not have.
    - Suggest telling the person to confirm with their treating doctor when it is a medical question.
-6. If the thread asks which clinic or doctor to choose, or answering would mean recommending a treatment, say so in "skip_ko".
+6. If the thread only asks for clinic or doctor names (which one, recommendations, rankings), or answering would mean recommending a treatment, say so in "skip_ko". A question about how to choose or vet a clinic is NOT a reason to skip: suggest answering with the general checks in the rules, with no names, and tell the operator to leave out any name part of the thread.
 
 Return ONLY JSON:
 {"summary_ko": "...", "asks_ko": ["..."], "covered": [{"fact_id": "P1:F2", "why_ko": "..."}], "related_post": "P1", "gaps_ko": ["..."], "consider_ko": ["..."], "skip_ko": ""}

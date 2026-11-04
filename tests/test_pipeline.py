@@ -2983,7 +2983,7 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     real_brief = rd.brief
     monkeypatch.setattr(rd, "brief", lambda n: (_ for _ in ()).throw(rd.RedditError("정리 실패")))
     assert "정리 실패" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
-    assert rd.load()["items"][0]["wanted"] and "병원·의사 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
+    assert rd.load()["items"][0]["wanted"] and "병원·의사 이름" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
     monkeypatch.setattr(rd, "brief", real_brief)          # monkeypatch.undo() 는 임시 content 폴더 설정까지 풀어 실제 state.json 에 쓴다
     _answers, stages = _reddit_answers(rd, monkeypatch)
     sent = []
@@ -3230,7 +3230,7 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
     rd.set_sub(2, "CosmeticSurgery")
     assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
-    assert "병원·의사 추천" in rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4)
+    assert "병원·의사 이름" in rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4)
 
     seen = {}
     monkeypatch.setattr(router, "run", lambda args: f"[{args[1]}]")
@@ -3238,6 +3238,26 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     router.chat("2번 왜 아직 안 됐어?")
     assert "[Reddit 방 명령어]" in seen["text"] and "[list]" in seen["text"] and "[communities]" in seen["text"]
     assert "reddit state.json" in seen["text"] and "검수 목록" not in seen["text"].split("COMMANDS:")[1].split("CURRENT STATUS:")[0]
+
+
+def test_reddit_rules_are_separate_and_how_to_choose_is_not_a_recommendation(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rules = common.read_prompt("_reddit_rules")
+    assert "clinic" in rules and "medicalkorea.or.kr" in rules and "How do I choose" in rules
+    for name in ("reddit_answer", "reddit_brief", "reddit_direct", "reddit_facts"):        # 블로그 규칙 대신 Reddit 규칙
+        text = rd.prompt(name, subreddit="s", title="t", question="q", facts="f", direction="d")
+        assert "REDDIT RULES" in text and "Olive Young" not in text, name
+    for text in ("Which clinic is best for skin boosters in Seoul?", "Need Korean skin clinic recs", "Any good derms in Gangnam?", "What clinic did you go to?"):
+        assert rd.asks_clinic_names(text), text                                  # 이름을 묻는 글은 거른다
+    for text in ("How do I choose a clinic for Rejuran? Any red flags?", "What should I look for in a good clinic in Seoul?",
+                 "Tips for choosing a dermatologist in Seoul", "What did your doctor say about flying?"):
+        assert not rd.asks_clinic_names(text), text                              # 고르는 기준·일반 질문은 정리한다
+    rd.allow("KoreaSeoulBeauty", False)
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_answer={"answerable": True, "fact_ids": [],
+        "body": "Check that the clinic is on Medical Korea's registered list, and ask for a written quote before paying. Your doctor can confirm what suits you."})
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: True)
+    rd.want("https://www.reddit.com/r/KoreaSeoulBeauty/comments/1zz0000/x/", "How do I choose a clinic for skin boosters? Any red flags?")
+    assert rd.load()["items"][0]["status"] == "ready"                            # 기준 답변은 사실 번호 없이도 된다
 
 
 def test_mentions_ledger(env):

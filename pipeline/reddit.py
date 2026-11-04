@@ -32,14 +32,30 @@ from datetime import date, datetime, timedelta
 
 from pipeline import llm
 from pipeline import machine_translate as mt
-from pipeline.common import content_dir, get_logger, load_draft, load_env_file, load_json, load_yaml, now_iso, prompt, run_cli, save_json
+from pipeline import common
+from pipeline.common import content_dir, get_logger, load_draft, load_env_file, load_json, load_yaml, now_iso, run_cli, save_json
 
 log = get_logger("reddit")
 
 THREAD = re.compile(r"https://(?:www\.|old\.|new\.)?reddit\.com/(?:r|u|user)/([A-Za-z0-9_-]+)/(?:comments|s)/([a-z0-9]+)(?:/[^\s?#)\]]*)?", re.I)  # /s/ = 앱의 공유 링크
 COMMENT_HOSTS = ("reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com")
-CLINIC_ASK = re.compile(r"(which|what|best|good|recommend\w*|suggest\w*|any)\b[^.?!\n]{0,40}\b(clinics?|dermatologists?|doctors?|derms?|hospitals?)\b"
-                        r"|\b(clinics?|dermatologists?|derms?)\b[^.?!\n]{0,20}\b(recommendations?|recs?|suggestions?)\b", re.I)
+# 병원·의사 이름을 묻는 글 (추천·순위·"어디서 했어요?"). "어떻게 고르나요?" 같은 선정 방식 질문은 막지 않는다 (2026-11-04 운영자 요청)
+CLINIC_ASK = re.compile(r"\b(which|best|good|great|reputable|trusted|trustworthy|recommend\w*|suggest\w*)\b[^.?!\n]{0,30}\b(clinics?|dermatologists?|derms?|doctors?|hospitals?|surgeons?)\b"
+                        r"|\b(clinics?|dermatologists?|derms?|doctors?|surgeons?)\b[^.?!\n]{0,20}\b(recommendations?|recs?|suggestions?)\b"
+                        r"|\bany\s+(?:good\s+)?(clinics?|derms?|dermatologists?|surgeons?)\b|\bwhat\s+(clinic|hospital|derm\w*)\b", re.I)
+HOW_TO_CHOOSE = re.compile(r"\bhow\b[^.?!\n]{0,25}\b(choose|pick|find|vet|select|evaluate|tell|know|check|spot|avoid|research)\b"
+                           r"|\bwhat\b[^.?!\n]{0,20}\blook\s+(?:for|out)\b|\bred\s+flags?\b|\bwarning\s+signs?\b|\bquestions?\s+(?:to|should\s+I)\s+ask\b"
+                           r"|\bcriteria\b|\btips?\s+(?:for|on)\s+(?:choosing|picking|finding|vetting)\b", re.I)
+
+
+def asks_clinic_names(text: str) -> bool:
+    """이름만 묻는 글이면 True. 고르는 기준(확인할 것·위험 신호·물어볼 질문)을 묻는 글은 답할 수 있다 — 이름 없이 기준만."""
+    return bool(CLINIC_ASK.search(text)) and not HOW_TO_CHOOSE.search(text)
+
+
+def prompt(name: str, **values) -> str:
+    """Reddit 프롬프트는 블로그 규칙(_rules.md) 대신 Reddit 규칙(_reddit_rules.md)을 쓴다 (2026-11-04 운영자 요청)."""
+    return common.prompt(name, rules=common.read_prompt("_reddit_rules"), **values)
 ID_ANCHOR, ID_ANCHOR_DATE = "1nm0000", date(2025, 9, 20)
 ID_PER_DAY = (int("1nm0000", 36) - int("1cx0000", 36)) / 487  # 487일 = 2024-05-21 ~ 2025-09-20
 # 운영자 공개 문구 — 코드가 항상 붙이고 설정으로 끌 수 없다. "AI-assisted" 줄만 설정(disclosure_ai_label)을 따른다 (2026-11-02)
@@ -221,7 +237,7 @@ def _add(state: dict, url: str, title: str, question: str, posted: str = "", any
     if not m or any(i["thread"] == m.group(2).lower() for i in state["items"]):
         return None
     sub = m.group(1)
-    if (_blocked_sub(state, sub) and not any_sub) or CLINIC_ASK.search(f"{title}\n{question}"):
+    if (_blocked_sub(state, sub) and not any_sub) or asks_clinic_names(f"{title}\n{question}"):
         return None
     item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": m.group(2).lower(), "url": m.group(0), "sub": sub,
             "title": title, "question": question, "posted": posted, "status": "candidate", "at": now_iso()}
@@ -466,6 +482,7 @@ def draft(n: int, direction: str = "") -> dict:
     numbers = _numbers(by_id, item["question"])
     problems: list[str] = []
     stage = "reddit_direct" if direction else "reddit_answer"
+    choosing = bool(HOW_TO_CHOOSE.search(f"{item['title']}\n{item['question']}"))
     item.update(direction=direction, written_by="ai", practice=st["writer"] == "practice")
     cosmetic = importlib.import_module("pipeline.02b_auto_review").COSMETIC_PATTERNS
     for _ in range(WRITE_TRIES):  # 검사·검수에 걸리면 지적을 주고 한 번 더 쓴다
@@ -479,7 +496,7 @@ def draft(n: int, direction: str = "") -> dict:
         body = (data.get("body") or "").strip()
         used = [by_id[k] for k in data.get("fact_ids", []) if k in by_id]
         problems = social.text_problems(body, numbers)
-        if not used and not direction:
+        if not used and not direction and not choosing:  # 병원 고르는 기준(등록 명단·면허 확인 등)은 의료 사실이 아니라 근거 없이도 된다
             problems.append("근거 사실 없음")
         if direction:
             problems += [f"시술·주사제 추천으로 보임: {m.group(0)}" for m in PROMOTES_TREATMENT.finditer(body)]
@@ -801,8 +818,8 @@ def want_text(text: str) -> str:
     """주소 없이 붙여 넣은 Reddit 글 (캡처 텍스트 추출 등, 2026-11-03) → 운영자용 정리. 커뮤니티는 본문의 r/이름으로 찾고,
     없으면 `레딧 N 커뮤니티 <이름>` 으로 알려 달라고 한다. 게시 뒤 기록은 댓글 주소로 남긴다."""
     text = text.strip()
-    if CLINIC_ASK.search(text):
-        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
+    if asks_clinic_names(text):
+        return "⚠️ 정리하지 않았습니다: 병원·의사 이름을 묻는 글입니다 (고르는 기준을 묻는 글은 정리합니다)"
     state = load()
     state.pop("waiting", None)
     thread = "x" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
@@ -848,7 +865,7 @@ def want(url: str, question: str = "") -> str:
         item = _add(state, m.group(0), question[:100], question, any_sub=True)  # 정리는 운영자만 보는 글이라 커뮤니티 단계와 상관없이
     save(state)
     if not item:
-        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
+        return "⚠️ 정리하지 않았습니다: 병원·의사 이름을 묻는 글입니다 (고르는 기준을 묻는 글은 정리합니다)"
     try:
         return brief_and_draft(item["n"])
     except RedditError as e:
