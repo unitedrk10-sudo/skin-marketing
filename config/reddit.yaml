@@ -16,8 +16,8 @@ disclosure_ai_label: ai_only
 # 한국어로 쓴 글은 Google 번역(GOOGLE_TRANSLATE_API_KEY) — 활동 단계나 `번역허용` 기록이 있는 곳만, 공개 문구에 "Written in Korean and machine-translated." 가 붙는다
 
 # 보는 커뮤니티 (2026-11-03 운영자 결정) — 화요일 후보 찾기·주간 규칙 조사는 이곳만. 비우면 제한 없음
-# 본거지 KoreaPlasticSurgery(주간 방문 약 2.9만, 한국 시술 전용), 보조 CosmeticSurgery(약 6.9만, 전 세계 — 한국 관련 질문만)
-focus: [KoreaPlasticSurgery, CosmeticSurgery]
+# 2026-11-04: 본거지 KoreaSeoulBeauty(한국 피부·성형·미용 상담, 피부과 시술 질문이 모이는 곳 — last30days 조사), 보조 KoreaPlasticSurgery(새 글 적음, 필러 등)·CosmeticSurgery(전 세계 — 한국 관련만)
+focus: [KoreaSeoulBeauty, KoreaPlasticSurgery, CosmeticSurgery]
 
 # 커뮤니티 기준 (2026-11-02, 조사는 AI 검색 요약 — 원문은 운영자가 확인 후 `레딧 규칙확인`)
 #   status: excluded = 활동 안 함 / ask_mods = 운영진 허락이 있어야 게시 / unverified = 원문 확인 전 (기본)
@@ -56,6 +56,12 @@ communities:
     note: 커뮤니티 규칙 없음 (원문 확인), 전 세계 대상 — 한국 관련 질문만
   SeoulPlasticSurgery:        # KoreaPlasticSurgery 의 하위 커뮤니티, 보류
     status: unverified
+  KoreaSeoulBeauty:           # 2026-11-04 운영자가 규칙 원문을 붙여 확인
+    status: unverified
+    ai_text: allowed
+    links: limited
+    treatments: allowed
+    note: 한국 관련 성형·피부·미용 상담 글 허용, AI 규칙 없음. 병원·대행사·통역·서비스 업체는 고정글 [Posting Rules for Guides, Translators, Clinics, & Agencies] 를 따르고 직접 홍보·DM·홍보성 댓글 금지(요청받은 경우만) — 고정글 확인 전, 링크 없이 답만
   AsianBeauty:               # 2026-11-02 운영자가 규칙 원문을 붙여 확인
     status: excluded
     ai_text: banned
