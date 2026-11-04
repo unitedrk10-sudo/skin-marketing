@@ -2,7 +2,7 @@
 
 기획서: `docs/derm-content-automation.md` (전체 설계·법규 체크리스트의 기준 문서)
 마케팅 프레임: `docs/marketing-framework.md` (타깃·차별점·브랜드·페이지·채널·성과 지표와 결정 대기 목록 — 화면·채널 작업 전에 먼저 확인)
-AI 인용 계획: `docs/ai-citation-plan.md` · 공공 데이터 콘텐츠 전략: `docs/data-content-strategy.md` · Reddit 인수인계: `docs/reddit-ops-handoff.md`
+AI 인용 계획: `docs/ai-citation-plan.md` · 공공 데이터 콘텐츠 전략: `docs/data-content-strategy.md` · Reddit 인수인계: `docs/reddit-ops-handoff.md` · 숏폼 인수인계: `docs/shortform-ops-handoff.md`
 사례 조사: `docs/clinic-marketing-research.md` (병원·마케팅 회사 홍보 방식 조사 누적 — 비교표·가져올 것. 새 조사는 이 틀로 추가)
 
 ## 작업 규칙
