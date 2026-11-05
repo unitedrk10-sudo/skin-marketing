@@ -3247,7 +3247,7 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     rd.want_text(pasted)
     assert len(rd.load()["items"]) == 1                                         # 같은 글은 한 번만
     rd.want_text("No subreddit named here. " * 8)
-    assert rd._item(rd.load(), 2)["sub"] == "unknown" and "커뮤니티 KoreaPlasticSurgery" in rd.brief_message(rd._item(rd.load(), 2))
+    assert rd._item(rd.load(), 2)["sub"] == "unknown" and "커뮤니티 KoreaSeoulBeauty" in rd.brief_message(rd._item(rd.load(), 2))
     assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
     rd.set_sub(2, "CosmeticSurgery")
     assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
@@ -3315,6 +3315,24 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
     assert item["status"] == "ready" and "https://pubmed.ncbi.nlm.nih.gov/123/" in item["sources"]
     assert "skinboundkorea.com" not in item["paste"]                                 # 조사 출처는 관련 글 링크가 아니다
     assert importlib.import_module("pipeline.telegram_router").parse("레딧 1 조사")["args"] == ["pipeline.reddit", "research", "1"]
+
+
+def test_reddit_pasted_text_without_subreddit_uses_home_and_set_sub_continues(env, monkeypatch):
+    rd = _reddit_env(monkeypatch, focus=["KoreaSeoulBeauty", "KoreaPlasticSurgery"])
+    rd.allow("KoreaSeoulBeauty", False)
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+    rd.want_text("Ultherapy vs Ultherapy Prime, anyone done both? I had it once four years ago and want it redone. " * 3)
+    item = rd.load()["items"][0]
+    assert item["sub"] == "KoreaSeoulBeauty" and "본거지 r/KoreaSeoulBeauty 글로 봤습니다" in sent[0]   # r/이름이 없으면 본거지
+    assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"] and item["status"] == "ready"
+    state = rd.load()                                                                # 정리만 받은 글에 커뮤니티를 알려 주면 바로 조사 → 초안
+    state["items"].append({**item, "n": 2, "thread": "x2", "sub": "unknown", "status": "briefed"})
+    rd.save(state)
+    stages.clear()
+    rd.set_sub(2, "KoreaSeoulBeauty")
+    assert stages == ["reddit_research", "reddit_answer", "reddit_review"] and rd._item(rd.load(), 2)["status"] == "ready"
 
 
 def test_mentions_ledger(env):

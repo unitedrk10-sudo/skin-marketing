@@ -568,7 +568,9 @@ def brief_message(item: dict) -> str:
     st = standing(load(), item["sub"])
     lines = [f"[Reddit {item['n']}번 정리] r/{item['sub']}: {item['title']}", item["url"] or "(주소 없음 — 게시한 뒤 `레딧 N 완료 <댓글 주소>` 로 기록)"]
     if item["sub"] == "unknown":
-        lines.append(f"❔ 어느 커뮤니티 글인지 못 찾았습니다: `레딧 {item['n']} 커뮤니티 KoreaPlasticSurgery` 처럼 알려 주세요 (번역·게시 기준에 필요)")
+        lines.append(f"❔ 어느 커뮤니티 글인지 못 찾았습니다: `레딧 {item['n']} 커뮤니티 KoreaSeoulBeauty` 처럼 알려 주세요 (번역·게시 기준에 필요)")
+    elif item.get("guessed_sub"):
+        lines.append(f"❔ 본문에 커뮤니티 이름이 없어 본거지 r/{item['sub']} 글로 봤습니다. 다른 곳이면 `레딧 {item['n']} 커뮤니티 <이름>`")
     if b.get("skip"):
         lines += ["", f"⚠️ 답하지 않는 게 좋습니다: {b['skip']}"]
     lines += ["", f"📝 질문: {b.get('summary', '')}"] + [f"- {a}" for a in b.get("asks", [])]
@@ -667,23 +669,31 @@ def no_draft_reason(item: dict, st: dict) -> str:
     return ""
 
 
+def continue_draft(n: int) -> list[str] | str:
+    """② 조사 → ③ 초안. 조사는 어떤 이유로 실패해도 우리 글로 초안을 쓴다."""
+    out = []
+    try:
+        out.append(_deliver(research_message(research(n))))
+    except Exception as e:  # noqa: BLE001 — 검색·페이지 받기·JSON 오류 모두 초안을 막지 않게
+        log.warning("Reddit %s번 조사 실패: %s: %s", n, type(e).__name__, e)
+        out.append(_deliver(f"[Reddit {n}번 조사] 조사를 하지 못해 우리 글 내용으로만 씁니다 ({type(e).__name__})"))
+    try:
+        out.append(send(draft(n)))
+    except RedditError as e:
+        out.append(f"초안은 만들지 않았습니다: {e}")
+    except llm.LLMError as e:
+        log.warning("Reddit %s번 초안 실패: %s", n, e)
+        out.append(f"초안을 만들지 못했습니다 (나중에 `레딧 {n} 초안`): {str(e)[:120]}")
+    rest = [o for o in out if o != "✅ 보냈습니다"]
+    return "\n\n".join(rest) if rest else "✅ 보냈습니다"
+
+
 def brief_and_draft(n: int) -> str:
     """정리를 보내고, 활동 단계면 초안도 보낸다. 초안이 안 되면(한도·답할 사실 없음·LLM 실패) 정리는 그대로 두고 이유만 알린다."""
     item = brief(n)
     out = [send(item)]
     if will_draft(item, standing(load(), item["sub"])):
-        try:  # ② 조사 — 어떤 이유로 실패해도 우리 글로 초안은 쓴다
-            out.append(_deliver(research_message(research(n))))
-        except Exception as e:  # noqa: BLE001 — 검색·페이지 받기·JSON 오류 모두 초안을 막지 않게
-            log.warning("Reddit %s번 조사 실패: %s: %s", n, type(e).__name__, e)
-            out.append(_deliver(f"[Reddit {n}번 조사] 조사를 하지 못해 우리 글 내용으로만 씁니다 ({type(e).__name__})"))
-        try:  # ③ 초안
-            out.append(send(draft(n)))
-        except RedditError as e:
-            out.append(f"초안은 만들지 않았습니다: {e}")
-        except llm.LLMError as e:
-            log.warning("Reddit %s번 초안 실패: %s", n, e)
-            out.append(f"초안을 만들지 못했습니다 (나중에 `레딧 {n} 초안`): {str(e)[:120]}")
+        out.append(continue_draft(n))
     else:
         why = no_draft_reason(item, standing(load(), item["sub"]))
         if why:
@@ -906,9 +916,10 @@ def want_text(text: str) -> str:
     item = next((i for i in state["items"] if i["thread"] == thread), None)
     if not item:
         m = SUB_MENTION.search(text)
+        home = (focus_subs() or ["unknown"])[0]  # r/이름이 없으면 본거지 글로 본다 (2026-11-05, 대부분 본거지에서 복사)
         title = next((line.strip() for line in text.splitlines() if len(line.strip()) > 15 and not SUB_MENTION.fullmatch(line.strip())), text[:100])
-        item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": thread, "url": "", "sub": m.group(1) if m else "unknown",
-                "title": title[:100], "question": text, "posted": "", "status": "candidate", "at": now_iso()}
+        item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": thread, "url": "", "sub": m.group(1) if m else home,
+                "guessed_sub": not m, "title": title[:100], "question": text, "posted": "", "status": "candidate", "at": now_iso()}
         state["items"].append(item)
     save(state)
     try:
@@ -921,10 +932,13 @@ def set_sub(n: int, sub: str) -> str:
     state = load()
     item = _item(state, n)
     item["sub"] = _name(sub)
+    item.pop("guessed_sub", None)
     save(state)
-    st = standing(state, item["sub"])
-    more = f"\n초안이 필요하면 `레딧 {n} 초안`" if will_draft(item, st) and item["status"] == "briefed" else ""
-    return f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}{more}"
+    line = f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}"
+    if not (will_draft(item, standing(state, item["sub"])) and item["status"] == "briefed"):
+        return line
+    _deliver(line)  # 정리만 받은 글이면 바로 조사 → 초안으로 이어 간다 (2026-11-05)
+    return continue_draft(n)
 
 
 def want(url: str, question: str = "") -> str:
