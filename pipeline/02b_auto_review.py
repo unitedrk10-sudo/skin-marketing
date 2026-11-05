@@ -33,6 +33,7 @@ from pipeline.common import (
     find_draft,
     get_logger,
     load_draft,
+    load_yaml,
     now_iso,
     prompt,
     read_prompt,
@@ -71,8 +72,18 @@ RULE_PATTERNS: list[tuple[str, str, re.Pattern]] = [
     ("booking", "예약·메신저 연락처",
      re.compile(r"(?:pf|open)\.kakao\.com|(?:wa|line)\.me/|kakao(?:talk)?\s*(?:id|channel)\b|whatsapp\s*[:+]\s*\d"
                 r"|https?://\S*(?:/book|/reserv|booking)", re.I)),
-    ("credential", "자격·감수 표기 (허위 위험)",
-     re.compile(r"board[- ]certified|medically reviewed|reviewed by (?:a )?(?:dr|doctor|dermatologist)|전문의 감수", re.I)),
+    # 우리가 자격을 내세우는 표현만 (2026-11-05 운영자 결정) — "설문 대상 235명의 board-certified dermatologists",
+    # "board-certified 의사에게 상담하라" 같은 제3자 설명·권고는 허용
+    ("credential", "우리 자격·감수 표기 (허위 위험)",
+     re.compile(r"medically[- ]reviewed"
+                r"|\b(?:this|our)\s+(?:article|post|guide|page|content|information)\s+(?:was|is|has\s+been)\s+(?:\w+\s+)?"
+                r"(?:reviewed|written|checked|verified|approved)\s+by\b"
+                r"|\b(?:reviewed|written|checked|verified|approved)\s+by\s+(?:our\b|(?:a\s+)?board[- ]certified)"
+                r"|\b(?:our|we(?:'re|\s+are))\s+(?:own\s+|in-house\s+)?(?:(?:board[- ]certified|licensed)\s+)?"
+                r"(?:doctors?|dermatologists?|physicians?|surgeons?|nurses?|medical\s+(?:team|staff|experts?|advisors?|board))\b"
+                r"|\bas\s+(?:an?\s+)?(?:(?:board[- ]certified|licensed)\s+)?(?:doctors?|dermatologists?|physicians?|nurses?"
+                r"|medical\s+professionals?)\s*,\s*(?:we|I)\b"
+                r"|(?:전문의|의사|의료진)\s?감수|감수\s?[:：]|(?:저희|우리)\s?(?:의사|전문의|의료진|원장)", re.I)),
     ("testimonial", "1인칭 체험담",
      re.compile(r"\bI\s+(?:got|tried|had|did|received|booked|went)\b|\bmy\s+(?:skin|treatment|experience|results?|face)\b"
                 r"|\bwhen I\b|제가\s?받아", re.I)),
@@ -108,20 +119,61 @@ NEGATABLE = re.compile(r"guarantee|risk[- ]?free|painless|permanent|cure|miracle
 PRICE = re.compile(r"[$₩฿]|\b(?:USD|KRW|SGD|THB|CAD|won|dollars?)\b|\bprice|\bcost", re.I)
 
 
-def load_banned(path: Path | None = None) -> list[tuple[str, re.Pattern]]:
+def _rank_targets() -> re.Pattern:
+    """순위·최상급 표현이 금지되는 대상 = 시술·병원·의료인 (2026-11-05 운영자 결정).
+    일반 명사 + procedures.yaml 시술 키워드 (화장품·여행 분류는 제외)."""
+    words = ["clinics?", "hospitals?", "dermatologists?", "doctors?", "physicians?", "surgeons?", "practitioners?", "injectors?",
+             "derms?", "medspas?", "med spas?", "treatments?", "procedures?", "lasers?", "injections?", "injectables?", "fillers?",
+             "boosters?", "peels?", "facials?", "therap(?:y|ies)", "lifting", "lifts?"]
+    for key, proc in (load_yaml("procedures.yaml").get("procedures") or {}).items():
+        if key not in ("skincare", "travel"):
+            words += [re.escape(k) for k in proc.get("keywords") or []]
+    return re.compile(r"\b(?:" + "|".join(words) + r")\b|병원|의원|피부과|클리닉|시술|레이저|주사|필러|보톡스|의사|원장|의료진", re.I)
+
+
+class RankPattern:
+    """순위·최상급 표현: 같은 문장 안 가까이(앞뒤 RANK_WINDOW 자)에 시술·병원이 있을 때만 걸린다.
+    "best korean sunscreen", "the best time to visit" 는 허용, "the best clinic", "Seoul's #1 Rejuran" 은 차단.
+    search/finditer 만 쓰므로 02b·social·reddit·sponsors 가 그대로 쓴다."""
+    WINDOW = 60
+
+    def __init__(self, pattern: re.Pattern, targets: re.Pattern):
+        self.pattern, self.targets = pattern, targets
+
+    def _near(self, text: str, m: re.Match) -> bool:
+        before = re.split(r"[.!?\n]", text[max(0, m.start() - self.WINDOW):m.start()])[-1]
+        after = re.split(r"[.!?\n]", text[m.end():m.end() + self.WINDOW])[0]
+        return bool(self.targets.search(before) or self.targets.search(after))
+
+    def finditer(self, text: str):
+        return (m for m in self.pattern.finditer(text) if self._near(text, m))
+
+    def search(self, text: str):
+        return next(self.finditer(text), None)
+
+
+def load_banned(path: Path | None = None) -> list[tuple[str, re.Pattern | RankPattern]]:
+    """"rank:" 로 시작하는 항목은 시술·병원 순위일 때만 금지 (RankPattern). 그 뒤는 일반 항목처럼 "re:" 또는 문구."""
     out = []
+    targets = None
     for raw in (path or CONFIG_DIR / "banned_terms.txt").read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        rank = line.startswith("rank:")
+        line = line.removeprefix("rank:")
         if line.startswith("re:"):
-            out.append((line[3:], re.compile(line[3:], re.I)))
+            term, pat = line[3:], re.compile(line[3:], re.I)
         else:
             esc = re.escape(line)
             # 단어 문자로 시작/끝나는 항목만 경계 적용 (한글·기호 포함 항목은 부분 일치)
             left = r"\b" if re.match(r"[A-Za-z0-9]", line) else ""
             right = r"\b" if re.search(r"[A-Za-z0-9]$", line) and not line.endswith("%") else ""
-            out.append((line, re.compile(left + esc + right, re.I)))
+            term, pat = line, re.compile(left + esc + right, re.I)
+        if rank:
+            targets = targets or _rank_targets()
+            pat = RankPattern(pat, targets)
+        out.append((term, pat))
     return out
 
 

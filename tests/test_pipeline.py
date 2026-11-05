@@ -407,7 +407,11 @@ def test_clean_draft_has_no_rule_findings():
     ("See before and after photos.", "금지 표현"),
     ("Real patients' results, before and after.", "금지 표현"),
     ("The result is guaranteed, not a guess.", "금지 표현"),  # 부정어가 뒤에 있으면 그대로 차단
-    ("No other way: it is the best option.", "금지 표현"),     # 최상급은 부정문 예외 없음
+    ("No other way: it is the best laser option.", "금지 표현"),  # 최상급은 부정문 예외 없음
+    ("Gangnam has the #1 Rejuran provider.", "금지 표현"),        # 시술 순위
+    ("Which clinic is the safest?", "금지 표현"),                 # 병원 순위 (대상이 앞에)
+    ("Our dermatologists explain each step.", "자격"),            # 우리 자격을 내세움
+    ("This guide was medically reviewed.", "자격"),
     ("Visit Seoul Glow Dermatology today.", "병원명"),
 ])
 def test_rule_violations_block(voice, expected):
@@ -427,6 +431,11 @@ def test_rule_violations_block(voice, expected):
     "The fall foliage is at its best in late October.",  # 관용 표현
     "That part is best confirmed directly with your treating clinic.",  # 권고 (best + 과거분사)
     "None of this is a guarantee of a pain-free session.",  # none 부정문
+    # 시술·병원 순위가 아닌 최상급, 제3자 자격 설명은 허용 (2026-11-05 운영자 결정)
+    "Travelers often search for the best korean sunscreen for sensitive skin.",
+    "Olive Young is one of the best places to shop for sunscreen.",
+    "The survey covered 235 Korean board-certified dermatologists.",
+    "Ask whether the doctor is a board-certified dermatologist.",
 ])
 def test_allowed_phrases_pass(voice):
     msgs, _ = rules_for(script={"voice": voice})
@@ -564,7 +573,7 @@ def test_approve_all_holds_caution_without_confirm(env):
     out = human_mod.apply("전체 승인")
     assert (common.content_dir("approved") / first).exists()
     assert (common.content_dir("drafts") / second).exists()
-    assert any("재확인" in line for line in out)
+    assert any("번호로 골라 승인" in line for line in out)
     human_mod.apply("전체 승인", confirm=True)
     assert (common.content_dir("approved") / second).exists()
 
@@ -1050,6 +1059,8 @@ def test_sponsored_approval_requires_current_clinic_confirmation(sponsored):
     draft_mod.revise(draft_id, "tone")  # 내용이 바뀌면 병원 확인 무효
     assert "병원 확인 전" in human_mod.apply("1 승인", confirm=True)[0]
     human_mod.apply("1 병원확인")
+    common.save_json(path / "review.json", {"grade": "block", "findings": []})
+    assert "스폰서 글 자동검수 차단" in human_mod.apply("1 승인")[0] and path.exists()   # 스폰서 ⛔ 만 재확인 (2026-11-05)
     human_mod.apply("1 승인", confirm=True)
     assert (common.content_dir("approved") / draft_id / "sponsor_approval.json").exists()
 
@@ -2595,8 +2606,8 @@ def test_reopen_unpublished_post_keeps_its_slot_and_block_needs_confirm(env, mon
         f.unlink()                                                                      # 워커가 수정 요청을 처리한 뒤
     common.save_json(common.content_dir("drafts") / "2026-W41-07-a" / "review.json", {"grade": "block", "findings": []})
     human.build_batch("drafts")
-    assert "⛔ 자동검수 차단" in human.apply("1 승인")[0]                             # 번호로 골라도 ⛔ 는 재확인
-    assert "승인 → approved" in human.apply("1 승인", confirm=True)[0]
+    out = human.apply("1 승인")[0]                                                  # 번호로 고르면 ⛔ 도 승인 (2026-11-05)
+    assert "승인 → approved" in out and "⛔ 걸린 항목 그대로" in out
     assert common.load_json(site_mod.schedule_file())["2026-W41-07-a"]["date"] == "2026-10-12"   # 같은 날 유지
     human.build_batch("approved")
     common.save_json(site_mod.state_file(), {"hash": "h", "slugs": ["2026-w41-07-a"]})
@@ -2629,7 +2640,7 @@ def test_review_message_in_korean_with_stable_post_number(env):
     draft["blog"]["markdown"] += "\nNew sentence."                                       # 내용이 바뀌면 다시 번역
     common.save_json(path / "draft.json", draft)
     assert translate.cached(path) is None
-    assert "승인 → approved" in human_mod.apply("W40-01 승인", confirm=True)[0]             # 글번호로 답해도 된다
+    assert "승인 → approved" in human_mod.apply("w40 01 승인", confirm=True)[0]             # 글번호로 답해도 된다 (띄어 써도)
 
 
 def test_shortform_off_hides_script_everywhere(env, monkeypatch):

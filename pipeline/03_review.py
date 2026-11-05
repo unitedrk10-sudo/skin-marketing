@@ -5,7 +5,7 @@ approved→rejected (승인 철회 — 영상 렌더링·블로그 게시 전에
 
     python -m pipeline.03_review list [--stage drafts|rendered|approved]   # 검수 요청 메시지 출력 + 번호표 저장
     python -m pipeline.03_review apply "2 폐기" --stage approved            # 승인 철회 (먼저 list --stage approved)
-    python -m pipeline.03_review apply "1,3,4 승인" [--stage drafts]
+    python -m pipeline.03_review apply "1,3,4 승인" [--stage drafts]   # 번호·글번호(W46-03)로 고르면 ⛔ 도 승인 (스폰서 ⛔ 만 --confirm)
     python -m pipeline.03_review apply "2 수정: 가격 출처 다시"
     python -m pipeline.03_review apply "5 폐기"
     python -m pipeline.03_review apply "전체 승인" [--confirm]           # ⚠️/⛔ 건은 --confirm 있어야 승인
@@ -454,7 +454,9 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
     """답장을 처리하고 텔레그램으로 돌려줄 결과 줄들을 반환한다."""
     batch = load_batch(stage)
     codes = {code(d).upper(): str(i) for i, d in enumerate(batch, 1)}
-    reply = re.sub(r"(?i)\bW\d{2}-\d{2}\b", lambda m: codes.get(m.group(0).upper(), m.group(0)), reply)
+    # 글번호로 답해도 된다: W46-03 / w46 03 / W4603 (2026-11-05 — 띄어 쓴 답장이 해석 실패)
+    reply = re.sub(r"(?i)\bW(\d{2})[-\s]?(\d{2})\b",
+                   lambda m: codes.get(f"W{m.group(1)}-{m.group(2)}", m.group(0)), reply)
     commands = parse_reply(reply)
     # 전부 검증한 뒤에 실행한다 (한 줄이 틀려 일부만 처리되는 일이 없도록)
     stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered", "approved"}, "publish_ok": {"rendered"},
@@ -492,18 +494,21 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             if grade == "pending" and not confirm:  # 번호로 골라도 Claude Code 검수 전에는 보류
                 out.append(f"- {draft_id}: ⏳ Claude Code 검수 대기 — 결과 반영 후 다시 승인하거나 `--confirm`")
                 continue
-            if grade == "block" and not confirm:  # 번호로 골라도 차단(⛔)은 한 번 더 확인
-                out.append(f"- {draft_id}: ⛔ 자동검수 차단 — 걸린 내용을 확인했고 그래도 승인하려면 '재확인 승인'(--confirm), "
+            # 번호·글번호로 고른 승인은 ⛔ 여도 사람의 결정으로 승인한다 (2026-11-05 운영자 결정 — 검수 메시지에서 걸린 항목을 보고 고른 것).
+            # 스폰서 글의 ⛔(광고 표시·계약·심의번호)만 한 번 더 확인 — 스폰서 트랙 분리를 약하게 하지 않는다
+            if grade == "block" and not confirm and load_draft(path).get("sponsor"):
+                out.append(f"- {draft_id}: ⛔ 스폰서 글 자동검수 차단 — 걸린 내용을 확인했고 그래도 승인하려면 '재확인 N 승인', "
                            "고치려면 `N 수정: …`")
                 continue
             if not cmd.numbers and grade != "pass" and not confirm:
-                out.append(f"- {draft_id}: {GRADE_ICON[grade]} 자동검수 {grade or '미실시'} — 번호로 따로 승인하거나 `전체 승인` 재확인 필요")
+                out.append(f"- {draft_id}: {GRADE_ICON[grade]} 자동검수 {grade or '미실시'} — `전체 승인` 에서는 빠집니다. 번호로 골라 승인해 주세요")
                 continue
             moved = move(draft_id, "drafts", "approved")
             record_agreement(draft_id, grade, "approve")
             # 검수 메시지에 첨부해 보여 준 그림은 초안 승인으로 같이 승인 (2026-11-01)
             n_figs = importlib.import_module("pipeline.figures").approve(moved, "draft_review")
-            out.append(f"- {draft_id}: 승인 → approved" + (f" (첨부한 그림 {n_figs}개 포함)" if n_figs else ""))
+            out.append(f"- {draft_id}: 승인 → approved" + (f" (첨부한 그림 {n_figs}개 포함)" if n_figs else "")
+                       + (" — ⛔ 걸린 항목 그대로" if grade == "block" else ""))
         elif cmd.action == "reject":
             _note_undone(path, grade)
             move(draft_id, stage, "rejected")
