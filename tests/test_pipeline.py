@@ -2780,7 +2780,7 @@ def test_reddit_find_filters_and_unknown_rules_give_facts_only(env, monkeypatch)
     prompts = []
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), ({"threads": threads}, None))[1])
     message = rd.find()
-    assert [i["thread"] for i in rd.load()["items"]] == [new] and "미확인" in message and "Banned" in prompts[0]
+    assert [i["thread"] for i in rd.load()["items"]] == [new, new2] and "미확인" in message and "Banned" in prompts[0]  # 병원 질문도 후보 (기준으로 답함)
     monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="NOT FOUND", model="m", stage=stage, grounding_urls=[]))
     _answers, stages = _reddit_answers(rd, monkeypatch)
     item = rd.draft(1)                                                     # 규칙을 모르는 곳: AI 글 없이 사실 정리만
@@ -2989,15 +2989,43 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     assert "붙여 넣어" in rd.want(link) and rd.waiting_url() == link
     assert router._reddit_request("Can I fly after this?") == ["pipeline.reddit", "want", link, "Can I fly after this?"]
     assert router._reddit_request("1 승인") is None                          # 정해진 명령은 그대로
+    real_brief = rd.brief
     monkeypatch.setattr(rd, "brief", lambda n: (_ for _ in ()).throw(rd.RedditError("정리 실패")))
     assert "정리 실패" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
-    assert rd.load()["items"][0]["wanted"] and "병원·의사 추천" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
-    monkeypatch.undo()
-    rd = _reddit_env(monkeypatch)
-    _reddit_answers(rd, monkeypatch)
-    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m: True)
+    assert rd.load()["items"][0]["wanted"] and "정리 실패" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")  # 병원 질문도 정리한다
+    monkeypatch.setattr(rd, "brief", real_brief)          # monkeypatch.undo() 는 임시 content 폴더 설정까지 풀어 실제 state.json 에 쓴다
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
     assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
-    assert rd.load()["items"][0]["status"] == "briefed"
+    assert rd.load()["items"][0]["status"] == "briefed" and stages == ["reddit_brief"]  # 규칙 모르는 곳은 초안 없음
+    assert "직접 써서 보내 주세요" in sent[0]
+
+
+def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rd.allow("KoreaPlasticSurgery", False)                                   # 활동 단계 (AI 글 허용)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+    link = "https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0000/fly/"
+    assert rd.want(link, "Can I fly the next day after a skin booster?") == "✅ 보냈습니다"
+    assert stages == ["reddit_brief", "reddit_answer", "reddit_review"]
+    item = rd.load()["items"][0]
+    assert item["status"] == "ready" and item["brief"]["summary"] and rd.DISCLOSURE in item["paste"]   # AI 초안 = AI-assisted 표시
+    assert len(sent) == 3 and "초안을 이어서 보냅니다" in sent[0] and sent[2] == item["paste"] and "레딧 1 방향:" in sent[1]
+    answers["reddit_answer"] = {"answerable": False, "reason": "사실 없음"}            # 초안이 막혀도 정리는 그대로 가고 이유를 알린다
+    sent.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0001/x/", "What should I pack for Seoul?")
+    assert len(sent) == 2 and "레딧 2 검사:" in sent[1]
+    answers["reddit_brief"] = {**answers["reddit_brief"], "skip_ko": "병원 추천 요청"}   # 답하지 말라는 정리면 초안 없음
+    stages.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0002/x/", "Where should I get a booster?")
+    assert stages == ["reddit_brief"]
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "auto_draft": False})
+    stages.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0003/x/", "Can I sauna after a booster?")
+    assert stages == ["reddit_brief"]
 
 
 def test_reddit_direction_keeps_opinion_but_blocks_treatment_promotion(env, monkeypatch):
@@ -3211,7 +3239,7 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
     rd.set_sub(2, "CosmeticSurgery")
     assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
-    assert "병원·의사 추천" in rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4)
+    assert rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4) == "✅ 보냈습니다"           # 병원 질문도 정리 (이름 없이 기준으로)
 
     seen = {}
     monkeypatch.setattr(router, "run", lambda args: f"[{args[1]}]")
@@ -3219,6 +3247,26 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     router.chat("2번 왜 아직 안 됐어?")
     assert "[Reddit 방 명령어]" in seen["text"] and "[list]" in seen["text"] and "[communities]" in seen["text"]
     assert "reddit state.json" in seen["text"] and "검수 목록" not in seen["text"].split("COMMANDS:")[1].split("CURRENT STATUS:")[0]
+
+
+def test_reddit_rules_are_separate_and_clinic_questions_get_criteria(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rules = common.read_prompt("_reddit_rules")
+    assert "clinic" in rules and "medicalkorea.or.kr" in rules and "how do I choose" in rules
+    for name in ("reddit_answer", "reddit_brief", "reddit_direct", "reddit_facts"):        # 블로그 규칙 대신 Reddit 규칙
+        text = rd.prompt(name, subreddit="s", title="t", question="q", facts="f", direction="d")
+        assert "REDDIT RULES" in text and "Olive Young" not in text, name
+    for text in ("Which clinic is best for skin boosters in Seoul?", "Need Korean skin clinic recs", "Any good derms in Gangnam?",
+                 "How do I choose a clinic for Rejuran? Any red flags?", "Tips for choosing a dermatologist in Seoul"):
+        assert rd.clinic_question(text), text                                    # 병원 질문은 거르지 않고 기준으로 답한다
+    assert not rd.clinic_question("What did your doctor say about flying?")
+    assert "Answer any question" in rules and "do not rank them or end with a pick" in rules
+    rd.allow("KoreaSeoulBeauty", False)
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_answer={"answerable": True, "fact_ids": [],
+        "body": "Check that the clinic is on Medical Korea's registered list, and ask for a written quote before paying. Your doctor can confirm what suits you."})
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: True)
+    rd.want("https://www.reddit.com/r/KoreaSeoulBeauty/comments/1zz0000/x/", "How do I choose a clinic for skin boosters? Any red flags?")
+    assert rd.load()["items"][0]["status"] == "ready"                            # 기준 답변은 사실 번호 없이도 된다
 
 
 def test_mentions_ledger(env):

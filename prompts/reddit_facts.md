@@ -11,7 +11,7 @@ FACTS (ids in brackets):
 {{rules}}
 
 Pick up to 8 facts that directly help answer the question, most useful first. Include any fact about a limit or risk that matters to the question. Do not pick facts only loosely related.
-Set "answerable" to false if no fact helps, or if the person is asking which clinic or doctor to choose.
+Set "answerable" to false only if no fact helps. Clinic-name requests are still answered by the operator with general criteria, never names.
 In "gaps_ko", say in one short Korean sentence what part of the question the facts do not cover (empty if none).
 
 Return ONLY JSON:

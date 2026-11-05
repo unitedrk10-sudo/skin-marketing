@@ -17,9 +17,9 @@ How to write:
 - Keep each fact's strength: "usually" stays "usually", "may" stays "may", and a single study stays "one study".
 - Do not write a personal experience or imply you had a treatment. Write "guidance I've seen" or "sources say", not "when I did it".
 - Include any limit or risk that matters to the question, and say the treating doctor should confirm what applies to them.
-- Never name a clinic or doctor. Never recommend a treatment, a clinic or a booking. Do not mention prices unless the question asks and a fact covers it.
+- Never name a clinic or doctor. Never push one treatment, clinic or booking; follow "Answer any question" in the rules above. Do not mention prices unless the question asks and a fact covers it.
 
-If the facts do not answer the question, or the person is asking which clinic or doctor to choose, set "answerable" to false.
+Clinic questions get the general clinic criteria from the rules (no fact id needed for those, no names). Comparisons get even pros and cons from the facts and end with "depends on your skin, decide with your doctor". Set "answerable" to false only when you cannot say anything useful within these rules.
 
 Return ONLY JSON:
 {"answerable": true, "reason": "only when false", "body": "the reply", "fact_ids": ["P1:F2", "P1:F5"]}

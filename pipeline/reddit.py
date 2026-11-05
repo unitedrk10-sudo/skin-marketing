@@ -32,14 +32,30 @@ from datetime import date, datetime, timedelta
 
 from pipeline import llm
 from pipeline import machine_translate as mt
-from pipeline.common import content_dir, get_logger, load_draft, load_env_file, load_json, load_yaml, now_iso, prompt, run_cli, save_json
+from pipeline import common
+from pipeline.common import content_dir, get_logger, load_draft, load_env_file, load_json, load_yaml, now_iso, run_cli, save_json
 
 log = get_logger("reddit")
 
 THREAD = re.compile(r"https://(?:www\.|old\.|new\.)?reddit\.com/(?:r|u|user)/([A-Za-z0-9_-]+)/(?:comments|s)/([a-z0-9]+)(?:/[^\s?#)\]]*)?", re.I)  # /s/ = 앱의 공유 링크
 COMMENT_HOSTS = ("reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com")
-CLINIC_ASK = re.compile(r"(which|what|best|good|recommend\w*|suggest\w*|any)\b[^.?!\n]{0,40}\b(clinics?|dermatologists?|doctors?|derms?|hospitals?)\b"
-                        r"|\b(clinics?|dermatologists?|derms?)\b[^.?!\n]{0,20}\b(recommendations?|recs?|suggestions?)\b", re.I)
+# 병원 질문 (이름·추천·"어떻게 고르나요?"). 거르지 않고 이름 없이 고르는 기준으로 답한다 (2026-11-05 운영자 결정)
+CLINIC_ASK = re.compile(r"\b(which|best|good|great|reputable|trusted|trustworthy|recommend\w*|suggest\w*)\b[^.?!\n]{0,30}\b(clinics?|dermatologists?|derms?|doctors?|hospitals?|surgeons?)\b"
+                        r"|\b(clinics?|dermatologists?|derms?|doctors?|surgeons?)\b[^.?!\n]{0,20}\b(recommendations?|recs?|suggestions?)\b"
+                        r"|\bany\s+(?:good\s+)?(clinics?|derms?|dermatologists?|surgeons?)\b|\bwhat\s+(clinic|hospital|derm\w*)\b", re.I)
+HOW_TO_CHOOSE = re.compile(r"\bhow\b[^.?!\n]{0,25}\b(choose|pick|find|vet|select|evaluate|tell|know|check|spot|avoid|research)\b"
+                           r"|\bwhat\b[^.?!\n]{0,20}\blook\s+(?:for|out)\b|\bred\s+flags?\b|\bwarning\s+signs?\b|\bquestions?\s+(?:to|should\s+I)\s+ask\b"
+                           r"|\bcriteria\b|\btips?\s+(?:for|on)\s+(?:choosing|picking|finding|vetting)\b", re.I)
+
+
+def clinic_question(text: str) -> bool:
+    """병원을 묻거나 고르는 법을 묻는 글. 답은 이름 없이 고르는 기준(등록 명단·면허·견적서 등) — 의료 사실이 아니라 사실 번호 없이도 된다."""
+    return bool(CLINIC_ASK.search(text) or HOW_TO_CHOOSE.search(text))
+
+
+def prompt(name: str, **values) -> str:
+    """Reddit 프롬프트는 블로그 규칙(_rules.md) 대신 Reddit 규칙(_reddit_rules.md)을 쓴다 (2026-11-04 운영자 요청)."""
+    return common.prompt(name, rules=common.read_prompt("_reddit_rules"), **values)
 ID_ANCHOR, ID_ANCHOR_DATE = "1nm0000", date(2025, 9, 20)
 ID_PER_DAY = (int("1nm0000", 36) - int("1cx0000", 36)) / 487  # 487일 = 2024-05-21 ~ 2025-09-20
 # 운영자 공개 문구 — 코드가 항상 붙이고 설정으로 끌 수 없다. "AI-assisted" 줄만 설정(disclosure_ai_label)을 따른다 (2026-11-02)
@@ -221,7 +237,7 @@ def _add(state: dict, url: str, title: str, question: str, posted: str = "", any
     if not m or any(i["thread"] == m.group(2).lower() for i in state["items"]):
         return None
     sub = m.group(1)
-    if (_blocked_sub(state, sub) and not any_sub) or CLINIC_ASK.search(f"{title}\n{question}"):
+    if _blocked_sub(state, sub) and not any_sub:
         return None
     item = {"n": max((i["n"] for i in state["items"]), default=0) + 1, "thread": m.group(2).lower(), "url": m.group(0), "sub": sub,
             "title": title, "question": question, "posted": posted, "status": "candidate", "at": now_iso()}
@@ -466,6 +482,7 @@ def draft(n: int, direction: str = "") -> dict:
     numbers = _numbers(by_id, item["question"])
     problems: list[str] = []
     stage = "reddit_direct" if direction else "reddit_answer"
+    choosing = clinic_question(f"{item['title']}\n{item['question']}")
     item.update(direction=direction, written_by="ai", practice=st["writer"] == "practice")
     cosmetic = importlib.import_module("pipeline.02b_auto_review").COSMETIC_PATTERNS
     for _ in range(WRITE_TRIES):  # 검사·검수에 걸리면 지적을 주고 한 번 더 쓴다
@@ -479,7 +496,7 @@ def draft(n: int, direction: str = "") -> dict:
         body = (data.get("body") or "").strip()
         used = [by_id[k] for k in data.get("fact_ids", []) if k in by_id]
         problems = social.text_problems(body, numbers)
-        if not used and not direction:
+        if not used and not direction and not choosing:  # 병원 고르는 기준(등록 명단·면허 확인 등)은 의료 사실이 아니라 근거 없이도 된다
             problems.append("근거 사실 없음")
         if direction:
             problems += [f"시술·주사제 추천으로 보임: {m.group(0)}" for m in PROMOTES_TREATMENT.finditer(body)]
@@ -559,10 +576,36 @@ def brief_message(item: dict) -> str:
     if b.get("consider"):
         lines += ["", "💡 쓸 때 고려할 점:"] + [f"- {c}" for c in b["consider"]]
     how = "한국어로 써도 됩니다 (Google 번역)" if st["mt"] else "영어로 써 주세요 (이 커뮤니티는 번역 허용 기록 없음)"
-    lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
+    if will_draft(item, st):
+        lines += ["", "✍️ 초안을 이어서 보냅니다. 직접 쓰고 싶으면 "
+                      f"`레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
+    else:
+        lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
     if st["mode"] in BLOCKED_MODES or not can_post(st, "operator"):
         lines.append(f"(참고: r/{item['sub']} 은 지금 {st['label']} 단계라 게시용 글은 만들지 않습니다)")
     return "\n".join(x for x in lines if x != "")
+
+
+def will_draft(item: dict, st: dict) -> bool:
+    """정리 뒤에 초안까지 이어서 쓰는가 (2026-11-03 운영자 요청). AI 글을 올릴 수 있는 활동 단계에서만, 답하지 말라는 정리가 아닐 때."""
+    return (bool(settings().get("auto_draft", True)) and st["writer"] == "post" and item["sub"] != "unknown"
+            and not (item.get("brief") or {}).get("skip"))
+
+
+def brief_and_draft(n: int) -> str:
+    """정리를 보내고, 활동 단계면 초안도 보낸다. 초안이 안 되면(한도·답할 사실 없음·LLM 실패) 정리는 그대로 두고 이유만 알린다."""
+    item = brief(n)
+    out = [send(item)]
+    if will_draft(item, standing(load(), item["sub"])):
+        try:
+            out.append(send(draft(n)))
+        except RedditError as e:
+            out.append(f"초안은 만들지 않았습니다: {e}")
+        except llm.LLMError as e:
+            log.warning("Reddit %s번 초안 실패: %s", n, e)
+            out.append(f"초안을 만들지 못했습니다 (나중에 `레딧 {n} 초안`): {str(e)[:120]}")
+    rest = [o for o in out if o != "✅ 보냈습니다"]
+    return "\n\n".join(rest) if rest else "✅ 보냈습니다"
 
 
 def notes(n: int) -> dict:
@@ -691,7 +734,8 @@ def paste_messages(item: dict) -> list[str]:
     head = f"[Reddit {item['n']}번] r/{item['sub']}: {item['title']}"
     if item["status"] == "blocked":
         return [f"{head}\n⛔ 붙여넣을 글을 만들지 않았습니다\n" + "\n".join(f"- {p}" for p in item.get("problems", []))
-                + (f"\n고쳐서 다시: `레딧 {item['n']} 검사: 본문`" if item.get("written_by") == "operator" else "")]
+                + (f"\n고쳐서 다시: `레딧 {item['n']} 검사: 본문`" if item.get("written_by") == "operator"
+                   else f"\n직접 써서: `레딧 {item['n']} 검사: 본문` · 방향만 주고 다시: `레딧 {item['n']} 방향: 원하는 내용`")]
     state = load()
     st = standing(state, item["sub"])
     if item["status"] == "manual":
@@ -708,6 +752,8 @@ def paste_messages(item: dict) -> list[str]:
     meta = [head, item["url"], "",
             "1. 글을 열어 날짜·질문·현재 규칙을 확인", "2. 다음 메시지를 복사해 말투를 다듬고 직접 게시 (공개 문구는 지우지 않기)",
             f"3. `레딧 {item['n']} 완료 <댓글 주소>`", "", f"🇰🇷 {item.get('ko', '')}"]
+    if item.get("written_by", "ai") == "ai":
+        meta += ["", f"✏️ 다르게 쓰려면 `레딧 {item['n']} 방향: 원하는 내용(한국어 가능)` — 그 방향으로 다시 씁니다"]
     if item.get("written_by") == "operator":
         meta += ["", "✂️ 뺀 문장: " + ("없음" if not item.get("removed") else "")] + [f"- \"{r['sentence']}\" — {r['why']}" for r in item.get("removed", [])]
         if item.get("translated"):
@@ -772,8 +818,6 @@ def want_text(text: str) -> str:
     """주소 없이 붙여 넣은 Reddit 글 (캡처 텍스트 추출 등, 2026-11-03) → 운영자용 정리. 커뮤니티는 본문의 r/이름으로 찾고,
     없으면 `레딧 N 커뮤니티 <이름>` 으로 알려 달라고 한다. 게시 뒤 기록은 댓글 주소로 남긴다."""
     text = text.strip()
-    if CLINIC_ASK.search(text):
-        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
     state = load()
     state.pop("waiting", None)
     thread = "x" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
@@ -786,7 +830,7 @@ def want_text(text: str) -> str:
         state["items"].append(item)
     save(state)
     try:
-        return send(brief(item["n"]))
+        return brief_and_draft(item["n"])
     except RedditError as e:
         return f"⚠️ {e}"
 
@@ -796,7 +840,9 @@ def set_sub(n: int, sub: str) -> str:
     item = _item(state, n)
     item["sub"] = _name(sub)
     save(state)
-    return f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}"
+    st = standing(state, item["sub"])
+    more = f"\n초안이 필요하면 `레딧 {n} 초안`" if will_draft(item, st) and item["status"] == "briefed" else ""
+    return f"{n}번 커뮤니티: r/{item['sub']} — {_sub_line(state, item['sub'])}{more}"
 
 
 def want(url: str, question: str = "") -> str:
@@ -817,9 +863,9 @@ def want(url: str, question: str = "") -> str:
         item = _add(state, m.group(0), question[:100], question, any_sub=True)  # 정리는 운영자만 보는 글이라 커뮤니티 단계와 상관없이
     save(state)
     if not item:
-        return "⚠️ 정리하지 않았습니다: 병원·의사 추천을 묻는 글입니다"
+        return "⚠️ 글을 기록하지 못했습니다 (주소를 확인해 주세요)"
     try:
-        return send(brief(item["n"]))
+        return brief_and_draft(item["n"])
     except RedditError as e:
         state = load()
         _item(state, item["n"])["wanted"] = True
