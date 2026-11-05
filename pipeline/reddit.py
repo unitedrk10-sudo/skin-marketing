@@ -613,30 +613,31 @@ def research(n: int) -> dict:
               for x in ((data or {}).get("sources") or []) if isinstance(x, dict)] if isinstance(data, dict) else []
     grounded = [{"url": g["url"], "title": g.get("title", "")} for g in (result.grounding_urls if result else [])]
     sources = drafting.fetch_sources(picked + grounded)[:RESEARCH_PAGES]
-    facts = []
+    facts, missing = [], []
     if sources:
         pages = "\n\n".join(f"[{x['id']}] {x['title'] or x['url']}\nURL: {x['url']}\n<page>\n{x['text'][:RESEARCH_CHARS]}\n</page>" for x in sources)
         raw, _r = llm.generate_json("reddit_research_read", prompt("reddit_research_read", subreddit=item["sub"], title=item["title"],
                                                                    question=item["question"], pages=pages))
+        missing = [str(m) for m in ((raw or {}).get("missing_ko") or [])][:6] if isinstance(raw, dict) else []
         raw = (raw or {}).get("facts", []) if isinstance(raw, dict) else []
         facts = [f for f in drafting.verify_facts(raw, sources) if f.get("kind") != "practice"]
     state = load()
     item = _item(state, n)
     item["research"] = {"facts": [{"id": f["id"], "text": f["text"], "url": f["url"], "title": f.get("source_title", "")} for f in facts],
-                        "pages": len(sources), "at": now_iso()}
+                        "missing": missing, "pages": len(sources), "at": now_iso()}
     save(state)
     return item
 
 
 def research_message(item: dict) -> str:
+    """보강이 필요한 내용만 (2026-11-05 운영자 요청 — 출처를 하나하나 설명하지 않는다)."""
     r = item.get("research") or {}
-    head = f"[Reddit {item['n']}번 조사] r/{item['sub']}: {item['title']}"
+    head = f"[Reddit {item['n']}번 조사]"
     if not r.get("facts"):
-        return f"{head}\n🔎 쓸 만한 출처를 찾지 못했습니다 (읽은 페이지 {r.get('pages', 0)}개). 우리 글 내용으로만 씁니다."
-    lines = [head, f"🔎 출처 {len({f['url'] for f in r['facts']})}곳에서 찾은 내용 {len(r['facts'])}개 — 병원·대행사 사이트는 빼고, 원문 인용을 페이지와 대조했습니다"]
-    for f in r["facts"]:
-        lines += [f"- {f['text']}", f"  {f['url']}"]
-    lines += ["", "다음 메시지의 초안은 이 내용과 우리 글 내용으로 씁니다."]
+        lines = [f"{head} 쓸 만한 자료를 찾지 못해 우리 글 내용으로만 씁니다."]
+    else:
+        lines = [f"{head} 확인된 내용 {len(r['facts'])}개를 초안에 넣었습니다."]
+    lines += (["", "보강 필요:"] + [f"- {m}" for m in r["missing"]]) if r.get("missing") else ["보강 필요한 내용은 없습니다."]
     return "\n".join(lines)
 
 
@@ -830,8 +831,6 @@ def paste_messages(item: dict) -> list[str]:
     research = _record(state, item["sub"]).get("research") or {}
     if research.get("found"):
         meta += ["", f"📜 r/{item['sub']} 규칙 (AI 검색 요약)", _rule_lines(research)]
-    if item.get("sources"):
-        meta += ["", "출처:", *item["sources"]]
     return ["\n".join(meta), item["paste"]]
 
 

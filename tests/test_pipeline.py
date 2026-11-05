@@ -2842,7 +2842,7 @@ def test_reddit_draft_makes_paste_only_message_and_limits(env, monkeypatch):
     item = rd.draft(1)
     assert item["status"] == "ready" and not item["practice"] and rd.DISCLOSURE in item["paste"] and "skinboundkorea" not in item["paste"]
     meta, paste = rd.paste_messages(item)
-    assert paste == item["paste"] and item["url"] in meta and "번역" in meta and "aad.org" in meta
+    assert paste == item["paste"] and item["url"] in meta and "번역" in meta and "aad.org" not in meta  # 출처 나열 없음 (2026-11-05)
     rd.allow("testsub", True)
     assert "https://skinboundkorea.com/fly/" in rd.draft(1)["paste"]        # 허용한 곳만 링크
 
@@ -3025,7 +3025,7 @@ def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
     assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"]
     item = rd.load()["items"][0]
     assert item["status"] == "ready" and item["brief"]["summary"] and rd.DISCLOSURE in item["paste"]   # AI 초안 = AI-assisted 표시
-    assert len(sent) == 4 and "② 조사" in sent[0] and "쓸 만한 출처를 찾지 못했습니다" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
+    assert len(sent) == 4 and "② 조사" in sent[0] and "찾지 못해" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
     answers["reddit_answer"] = {"answerable": False, "reason": "사실 없음"}            # 초안이 막혀도 정리는 그대로 가고 이유를 알린다
     sent.clear()
     rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0001/x/", "What should I pack for Seoul?")
@@ -3295,7 +3295,7 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
             reddit_research_read={"facts": [
                 {"id": "F1", "text": "Mild swelling and redness may last a few days after Rejuran.", "source": "S1",
                  "quote": "Mild swelling and redness may last a few days after treatment."},
-                {"id": "F2", "text": "Rejuran is painless.", "source": "S1", "quote": "Rejuran is painless."}]},
+                {"id": "F2", "text": "Rejuran is painless.", "source": "S1", "quote": "Rejuran is painless."}], "missing_ko": ["Prime 통증 비교는 병원 홍보 자료뿐"]},
             reddit_answer={"answerable": True, "fact_ids": ["R:F1"], "body": "Mild swelling and redness may last a few days after Rejuran, so ask your doctor what applies to you."})
         sent = []
         monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
@@ -3306,7 +3306,7 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
     assert stages == ["reddit_brief", "reddit_research", "reddit_research_read", "reddit_answer", "reddit_review"]
     assert "https://www.seoulskinclinic.com/rejuran" not in fetched                 # 병원 사이트는 출처로 받지 않는다
     assert [f["id"] for f in item["research"]["facts"]] == ["F1"]                    # 인용이 페이지에 없는 사실은 버린다
-    assert "[Reddit 1번 조사]" in sent[1] and "pubmed.ncbi.nlm.nih.gov/123" in sent[1]
+    assert "[Reddit 1번 조사]" in sent[1] and "http" not in sent[1] and "Prime 통증 비교" in sent[1]   # 출처 나열 없이 보강 필요만
     assert item["status"] == "ready" and "https://pubmed.ncbi.nlm.nih.gov/123/" in item["sources"]
     assert "skinboundkorea.com" not in item["paste"]                                 # 조사 출처는 관련 글 링크가 아니다
     assert importlib.import_module("pipeline.telegram_router").parse("레딧 1 조사")["args"] == ["pipeline.reddit", "research", "1"]
