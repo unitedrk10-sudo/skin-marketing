@@ -3327,6 +3327,11 @@ def test_reddit_pasted_text_without_subreddit_uses_home_and_set_sub_continues(en
     item = rd.load()["items"][0]
     assert item["sub"] == "KoreaSeoulBeauty" and "본거지 글로 봄" in sent[0]   # r/이름이 없으면 본거지
     assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"] and item["status"] == "ready"
+    state = rd.load()                                                                # 예전에 r/unknown 으로 기록된 같은 글을 다시 보내면 본거지로
+    state["items"][0].update(sub="unknown", status="briefed")
+    rd.save(state)
+    rd.want_text("Ultherapy vs Ultherapy Prime, anyone done both? I had it once four years ago and want it redone. " * 3)
+    assert rd.load()["items"][0]["sub"] == "KoreaSeoulBeauty"
     state = rd.load()                                                                # 정리만 받은 글에 커뮤니티를 알려 주면 바로 조사 → 초안
     state["items"].append({**item, "n": 2, "thread": "x2", "sub": "unknown", "status": "briefed"})
     rd.save(state)
