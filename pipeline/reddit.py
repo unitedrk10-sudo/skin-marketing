@@ -548,14 +548,14 @@ def brief(n: int) -> dict:
     data, _r = llm.generate_json("reddit_brief", prompt("reddit_brief", subreddit=item["sub"], title=item["title"],
                                                         question=item["question"], facts=facts or "(none)"))
     data = data if isinstance(data, dict) else {}
-    covered = [c for c in (data.get("covered") or []) if isinstance(c, dict) and c.get("fact_id") in by_id][:8]
+    covered = [c for c in (data.get("covered") or []) if isinstance(c, dict) and c.get("fact_id") in by_id][:4]
     rel = data.get("related_post", "")
     post = posts[int(rel[1:]) - 1] if re.fullmatch(r"P\d+", rel or "") and 0 < int(rel[1:]) <= len(posts) else None
-    item["brief"] = {"summary": data.get("summary_ko", ""), "asks": [str(a) for a in (data.get("asks_ko") or [])][:6],
+    item["brief"] = {"summary": data.get("summary_ko", ""), "asks": [str(a) for a in (data.get("asks_ko") or [])][:3],
                      "covered": [{"id": c["fact_id"], "why": c.get("why_ko", ""), "text": by_id[c["fact_id"]].get("text", ""),
                                   "url": by_id[c["fact_id"]].get("url", "")} for c in covered],
                      "related": post["url"] if post else "", "related_title": post["title"] if post else "",
-                     "gaps": [str(g) for g in (data.get("gaps_ko") or [])][:6], "consider": [str(c) for c in (data.get("consider_ko") or [])][:8],
+                     "gaps": [str(g) for g in (data.get("gaps_ko") or [])][:3], "consider": [str(c) for c in (data.get("consider_ko") or [])][:3],
                      "skip": data.get("skip_ko", ""), "at": now_iso()}
     if item["status"] not in ("posted", "removed"):
         item["status"] = "briefed"
@@ -566,34 +566,30 @@ def brief(n: int) -> dict:
 def brief_message(item: dict) -> str:
     b = item.get("brief") or {}
     st = standing(load(), item["sub"])
-    lines = [f"[Reddit {item['n']}번 정리] r/{item['sub']}: {item['title']}", item["url"] or "(주소 없음 — 게시한 뒤 `레딧 N 완료 <댓글 주소>` 로 기록)"]
+    lines = [f"[Reddit {item['n']}번 정리] r/{item['sub']}: {item['title']}", item["url"]]
     if item["sub"] == "unknown":
         lines.append(f"❔ 어느 커뮤니티 글인지 못 찾았습니다: `레딧 {item['n']} 커뮤니티 KoreaSeoulBeauty` 처럼 알려 주세요 (번역·게시 기준에 필요)")
     elif item.get("guessed_sub"):
-        lines.append(f"❔ 본문에 커뮤니티 이름이 없어 본거지 r/{item['sub']} 글로 봤습니다. 다른 곳이면 `레딧 {item['n']} 커뮤니티 <이름>`")
+        lines.append(f"(본거지 글로 봄 — 다른 곳이면 `레딧 {item['n']} 커뮤니티 <이름>`)")
     if b.get("skip"):
         lines += ["", f"⚠️ 답하지 않는 게 좋습니다: {b['skip']}"]
-    lines += ["", f"📝 질문: {b.get('summary', '')}"] + [f"- {a}" for a in b.get("asks", [])]
-    if b.get("covered"):
-        lines += ["", "✅ 우리 글에 있는 내용 (원문 그대로, 숫자는 옮기지 말 것):"]
-        for c in b["covered"]:
-            lines += [f"- {c['text']}", f"  → {c['why']}" if c.get("why") else "", f"  {c['url']}" if c.get("url") else ""]
-    else:
-        lines += ["", "✅ 우리 글에 바로 맞는 내용은 없습니다"]
+    lines += ["", f"📝 {b.get('summary', '')}"] + [f"- {a}" for a in b.get("asks", [])]
+    # 짧게 (2026-11-05 운영자 요청): 우리 글 사실은 영어 원문·주소 없이 "어느 부분에 답하는지"만
+    lines.append("✅ 우리 글: " + ("; ".join(c["why"] for c in b["covered"] if c.get("why")) or f"{len(b['covered'])}개") if b.get("covered")
+                 else "✅ 우리 글: 바로 맞는 내용 없음")
     if b.get("related"):
-        lines += ["", f"🔗 관련 글: {b.get('related_title', '')} {b['related']}" + ("" if st["links"] else " (본문 링크는 켤 때만)")]
+        lines.append(f"🔗 {b['related']}" + ("" if st["links"] else " (본문 링크는 켤 때만)"))
     if b.get("gaps"):
-        lines += ["", "❓ 우리 글에 없는 부분:"] + [f"- {g}" for g in b["gaps"]]
+        lines.append("❓ 없는 부분: " + "; ".join(b["gaps"]))
     if b.get("consider"):
-        lines += ["", "💡 쓸 때 고려할 점:"] + [f"- {c}" for c in b["consider"]]
-    how = "한국어로 써도 됩니다 (Google 번역)" if st["mt"] else "영어로 써 주세요 (이 커뮤니티는 번역 허용 기록 없음)"
+        lines += ["💡"] + [f"- {c}" for c in b["consider"]]
     if will_draft(item, st):
-        lines += ["", "✍️ 이어서 ② 조사(출처 찾기·사실 확인) → ③ 초안을 보냅니다. 직접 쓰고 싶으면 "
-                      f"`레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
+        lines += ["", f"✍️ 이어서 조사·초안을 보냅니다 (직접 쓰려면 `레딧 {item['n']} 검사: 본문`)"]
     else:
-        lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
-    if st["mode"] in BLOCKED_MODES or not can_post(st, "operator"):
-        lines.append(f"(참고: r/{item['sub']} 은 지금 {st['label']} 단계라 게시용 글은 만들지 않습니다)")
+        how = "한국어 가능" if st["mt"] else "영어로"
+        lines += ["", f"✍️ 직접 써서: `레딧 {item['n']} 검사: 본문` ({how})"]
+        if st["mode"] in BLOCKED_MODES or not can_post(st, "operator"):
+            lines.append(f"(r/{item['sub']} 은 지금 {st['label']} 단계라 게시용 글은 만들지 않습니다)")
     return "\n".join(x for x in lines if x != "")
 
 
@@ -620,7 +616,7 @@ def research(n: int) -> dict:
         pages = "\n\n".join(f"[{x['id']}] {x['title'] or x['url']}\nURL: {x['url']}\n<page>\n{x['text'][:RESEARCH_CHARS]}\n</page>" for x in sources)
         raw, _r = llm.generate_json("reddit_research_read", prompt("reddit_research_read", subreddit=item["sub"], title=item["title"],
                                                                    question=item["question"], pages=pages))
-        missing = [str(m) for m in ((raw or {}).get("missing_ko") or [])][:6] if isinstance(raw, dict) else []
+        missing = [str(m) for m in ((raw or {}).get("missing_ko") or [])][:3] if isinstance(raw, dict) else []
         raw = (raw or {}).get("facts", []) if isinstance(raw, dict) else []
         facts = [f for f in drafting.verify_facts(raw, sources) if f.get("kind") != "practice"]
     state = load()

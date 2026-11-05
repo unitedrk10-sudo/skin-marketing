@@ -3011,7 +3011,7 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
     assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
     assert rd.load()["items"][0]["status"] == "briefed" and stages == ["reddit_brief"]  # 규칙 모르는 곳은 초안 없음
-    assert "직접 써서 보내 주세요" in sent[0] and "초안은 만들지 않았습니다" in sent[1] and "미확인" in sent[1]   # 초안이 없으면 이유를 알린다
+    assert "직접 써서" in sent[0] and "초안은 만들지 않았습니다" in sent[1] and "미확인" in sent[1]   # 초안이 없으면 이유를 알린다
 
 
 def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
@@ -3025,7 +3025,7 @@ def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
     assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"]
     item = rd.load()["items"][0]
     assert item["status"] == "ready" and item["brief"]["summary"] and rd.DISCLOSURE in item["paste"]   # AI 초안 = AI-assisted 표시
-    assert len(sent) == 4 and "② 조사" in sent[0] and "찾지 못해" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
+    assert len(sent) == 4 and "이어서 조사·초안" in sent[0] and "찾지 못해" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
     answers["reddit_answer"] = {"answerable": False, "reason": "사실 없음"}            # 초안이 막혀도 정리는 그대로 가고 이유를 알린다
     sent.clear()
     rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0001/x/", "What should I pack for Seoul?")
@@ -3219,7 +3219,7 @@ def test_reddit_brief_is_private_and_ignores_community_stage(env, monkeypatch):
     message = rd.paste_messages(item)
     assert len(message) == 1
     text = message[0]
-    for part in ("시술 뒤 비행 질문", "Swelling may last 2 days.", "붓기 기간", "https://skinboundkorea.com/fly/", "기내 기압", "의사 확인 권고", "레딧 2 검사:", "제외"):
+    for part in ("시술 뒤 비행 질문", "붓기 기간", "https://skinboundkorea.com/fly/", "기내 기압", "의사 확인 권고", "레딧 2 검사:", "제외"):
         assert part in text, part
     answers["reddit_brief"] = {**answers["reddit_brief"], "covered": [{"fact_id": "P9:F9", "why_ko": "없는 사실"}], "skip_ko": "병원 추천 요청"}
     text = rd.paste_messages(rd.brief(2))[0]
@@ -3325,7 +3325,7 @@ def test_reddit_pasted_text_without_subreddit_uses_home_and_set_sub_continues(en
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
     rd.want_text("Ultherapy vs Ultherapy Prime, anyone done both? I had it once four years ago and want it redone. " * 3)
     item = rd.load()["items"][0]
-    assert item["sub"] == "KoreaSeoulBeauty" and "본거지 r/KoreaSeoulBeauty 글로 봤습니다" in sent[0]   # r/이름이 없으면 본거지
+    assert item["sub"] == "KoreaSeoulBeauty" and "본거지 글로 봄" in sent[0]   # r/이름이 없으면 본거지
     assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"] and item["status"] == "ready"
     state = rd.load()                                                                # 정리만 받은 글에 커뮤니티를 알려 주면 바로 조사 → 초안
     state["items"].append({**item, "n": 2, "thread": "x2", "sub": "unknown", "status": "briefed"})
