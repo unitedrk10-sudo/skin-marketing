@@ -653,16 +653,30 @@ def will_draft(item: dict, st: dict) -> bool:
             and not (item.get("brief") or {}).get("skip"))
 
 
+def no_draft_reason(item: dict, st: dict) -> str:
+    """정리 뒤 초안을 이어서 쓰지 않는 이유 (운영자가 '초안이 안 온다'고 헷갈리지 않게, 2026-11-05)."""
+    if not settings().get("auto_draft", True):
+        return "설정에서 자동 초안이 꺼져 있습니다 (`config/reddit.yaml auto_draft`)"
+    if item["sub"] == "unknown":
+        return f"어느 커뮤니티 글인지 몰라서입니다 — `레딧 {item['n']} 커뮤니티 KoreaSeoulBeauty` 처럼 알려 준 뒤 `레딧 {item['n']} 초안`"
+    if (item.get("brief") or {}).get("skip"):
+        return "정리에서 답하지 않는 게 좋다고 봤습니다"
+    if st["writer"] != "post":
+        return (f"r/{item['sub']} 이 지금 '{st['label']}' 단계라서입니다 (초안은 활동 단계만) — `레딧 기준` 으로 확인, "
+                f"원문을 읽었으면 `레딧 규칙확인 {item['sub']}`")
+    return ""
+
+
 def brief_and_draft(n: int) -> str:
     """정리를 보내고, 활동 단계면 초안도 보낸다. 초안이 안 되면(한도·답할 사실 없음·LLM 실패) 정리는 그대로 두고 이유만 알린다."""
     item = brief(n)
     out = [send(item)]
     if will_draft(item, standing(load(), item["sub"])):
-        try:  # ② 조사 — 실패해도 우리 글로 초안은 쓴다
+        try:  # ② 조사 — 어떤 이유로 실패해도 우리 글로 초안은 쓴다
             out.append(_deliver(research_message(research(n))))
-        except llm.LLMError as e:
-            log.warning("Reddit %s번 조사 실패: %s", n, e)
-            out.append(f"조사를 하지 못했습니다 (우리 글 내용으로만 씁니다): {str(e)[:120]}")
+        except Exception as e:  # noqa: BLE001 — 검색·페이지 받기·JSON 오류 모두 초안을 막지 않게
+            log.warning("Reddit %s번 조사 실패: %s: %s", n, type(e).__name__, e)
+            out.append(_deliver(f"[Reddit {n}번 조사] 조사를 하지 못해 우리 글 내용으로만 씁니다 ({type(e).__name__})"))
         try:  # ③ 초안
             out.append(send(draft(n)))
         except RedditError as e:
@@ -670,6 +684,10 @@ def brief_and_draft(n: int) -> str:
         except llm.LLMError as e:
             log.warning("Reddit %s번 초안 실패: %s", n, e)
             out.append(f"초안을 만들지 못했습니다 (나중에 `레딧 {n} 초안`): {str(e)[:120]}")
+    else:
+        why = no_draft_reason(item, standing(load(), item["sub"]))
+        if why:
+            out.append(_deliver(f"[Reddit {n}번] 초안은 만들지 않았습니다: {why}"))
     rest = [o for o in out if o != "✅ 보냈습니다"]
     return "\n\n".join(rest) if rest else "✅ 보냈습니다"
 

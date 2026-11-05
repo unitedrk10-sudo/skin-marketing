@@ -3011,7 +3011,7 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
     assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
     assert rd.load()["items"][0]["status"] == "briefed" and stages == ["reddit_brief"]  # 규칙 모르는 곳은 초안 없음
-    assert "직접 써서 보내 주세요" in sent[0]
+    assert "직접 써서 보내 주세요" in sent[0] and "초안은 만들지 않았습니다" in sent[1] and "미확인" in sent[1]   # 초안이 없으면 이유를 알린다
 
 
 def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
@@ -3304,6 +3304,11 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
         web.set_fetcher(None)
     item = rd.load()["items"][0]
     assert stages == ["reddit_brief", "reddit_research", "reddit_research_read", "reddit_answer", "reddit_review"]
+    router = importlib.import_module("pipeline.telegram_router")
+    seen = {}
+    monkeypatch.setattr(router.subprocess, "run", lambda *a, **k: (seen.update(k), subprocess.CompletedProcess(a, 0, "ok", ""))[1])
+    router.run(["pipeline.reddit", "want", "x", "y"])
+    assert seen["timeout"] == router.LONG_RUN_TIMEOUT > router.RUN_TIMEOUT                   # 정리→조사→초안은 10분을 넘길 수 있다
     assert "https://www.seoulskinclinic.com/rejuran" not in fetched                 # 병원 사이트는 출처로 받지 않는다
     assert [f["id"] for f in item["research"]["facts"]] == ["F1"]                    # 인용이 페이지에 없는 사실은 버린다
     assert "[Reddit 1번 조사]" in sent[1] and "http" not in sent[1] and "Prime 통증 비교" in sent[1]   # 출처 나열 없이 보강 필요만
