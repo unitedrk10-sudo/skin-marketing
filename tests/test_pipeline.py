@@ -2771,7 +2771,7 @@ def test_reddit_find_filters_and_unknown_rules_give_facts_only(env, monkeypatch)
     prompts = []
     monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), ({"threads": threads}, None))[1])
     message = rd.find()
-    assert [i["thread"] for i in rd.load()["items"]] == [new] and "미확인" in message and "Banned" in prompts[0]
+    assert [i["thread"] for i in rd.load()["items"]] == [new, new2] and "미확인" in message and "Banned" in prompts[0]  # 병원 질문도 후보 (기준으로 답함)
     monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="NOT FOUND", model="m", stage=stage, grounding_urls=[]))
     _answers, stages = _reddit_answers(rd, monkeypatch)
     item = rd.draft(1)                                                     # 규칙을 모르는 곳: AI 글 없이 사실 정리만
@@ -2983,7 +2983,7 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     real_brief = rd.brief
     monkeypatch.setattr(rd, "brief", lambda n: (_ for _ in ()).throw(rd.RedditError("정리 실패")))
     assert "정리 실패" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
-    assert rd.load()["items"][0]["wanted"] and "병원·의사 이름" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")
+    assert rd.load()["items"][0]["wanted"] and "정리 실패" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")  # 병원 질문도 정리한다
     monkeypatch.setattr(rd, "brief", real_brief)          # monkeypatch.undo() 는 임시 content 폴더 설정까지 풀어 실제 state.json 에 쓴다
     _answers, stages = _reddit_answers(rd, monkeypatch)
     sent = []
@@ -3230,7 +3230,7 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
     rd.set_sub(2, "CosmeticSurgery")
     assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
-    assert "병원·의사 이름" in rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4)
+    assert rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4) == "✅ 보냈습니다"           # 병원 질문도 정리 (이름 없이 기준으로)
 
     seen = {}
     monkeypatch.setattr(router, "run", lambda args: f"[{args[1]}]")
@@ -3240,18 +3240,18 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     assert "reddit state.json" in seen["text"] and "검수 목록" not in seen["text"].split("COMMANDS:")[1].split("CURRENT STATUS:")[0]
 
 
-def test_reddit_rules_are_separate_and_how_to_choose_is_not_a_recommendation(env, monkeypatch):
+def test_reddit_rules_are_separate_and_clinic_questions_get_criteria(env, monkeypatch):
     rd = _reddit_env(monkeypatch)
     rules = common.read_prompt("_reddit_rules")
-    assert "clinic" in rules and "medicalkorea.or.kr" in rules and "How do I choose" in rules
+    assert "clinic" in rules and "medicalkorea.or.kr" in rules and "how do I choose" in rules
     for name in ("reddit_answer", "reddit_brief", "reddit_direct", "reddit_facts"):        # 블로그 규칙 대신 Reddit 규칙
         text = rd.prompt(name, subreddit="s", title="t", question="q", facts="f", direction="d")
         assert "REDDIT RULES" in text and "Olive Young" not in text, name
-    for text in ("Which clinic is best for skin boosters in Seoul?", "Need Korean skin clinic recs", "Any good derms in Gangnam?", "What clinic did you go to?"):
-        assert rd.asks_clinic_names(text), text                                  # 이름을 묻는 글은 거른다
-    for text in ("How do I choose a clinic for Rejuran? Any red flags?", "What should I look for in a good clinic in Seoul?",
-                 "Tips for choosing a dermatologist in Seoul", "What did your doctor say about flying?"):
-        assert not rd.asks_clinic_names(text), text                              # 고르는 기준·일반 질문은 정리한다
+    for text in ("Which clinic is best for skin boosters in Seoul?", "Need Korean skin clinic recs", "Any good derms in Gangnam?",
+                 "How do I choose a clinic for Rejuran? Any red flags?", "Tips for choosing a dermatologist in Seoul"):
+        assert rd.clinic_question(text), text                                    # 병원 질문은 거르지 않고 기준으로 답한다
+    assert not rd.clinic_question("What did your doctor say about flying?")
+    assert "Answer any question" in rules and "do not rank them or end with a pick" in rules
     rd.allow("KoreaSeoulBeauty", False)
     answers, stages = _reddit_answers(rd, monkeypatch, reddit_answer={"answerable": True, "fact_ids": [],
         "body": "Check that the clinic is on Medical Korea's registered list, and ask for a written quote before paying. Your doctor can confirm what suits you."})
