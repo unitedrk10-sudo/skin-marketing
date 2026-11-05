@@ -3011,7 +3011,7 @@ def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
     assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
     assert rd.load()["items"][0]["status"] == "briefed" and stages == ["reddit_brief"]  # 규칙 모르는 곳은 초안 없음
-    assert "직접 써서 보내 주세요" in sent[0]
+    assert "직접 써서" in sent[0] and "초안은 만들지 않았습니다" in sent[1] and "미확인" in sent[1]   # 초안이 없으면 이유를 알린다
 
 
 def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
@@ -3025,7 +3025,7 @@ def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
     assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"]
     item = rd.load()["items"][0]
     assert item["status"] == "ready" and item["brief"]["summary"] and rd.DISCLOSURE in item["paste"]   # AI 초안 = AI-assisted 표시
-    assert len(sent) == 4 and "② 조사" in sent[0] and "찾지 못해" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
+    assert len(sent) == 4 and "이어서 조사·초안" in sent[0] and "찾지 못해" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
     answers["reddit_answer"] = {"answerable": False, "reason": "사실 없음"}            # 초안이 막혀도 정리는 그대로 가고 이유를 알린다
     sent.clear()
     rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0001/x/", "What should I pack for Seoul?")
@@ -3219,7 +3219,7 @@ def test_reddit_brief_is_private_and_ignores_community_stage(env, monkeypatch):
     message = rd.paste_messages(item)
     assert len(message) == 1
     text = message[0]
-    for part in ("시술 뒤 비행 질문", "Swelling may last 2 days.", "붓기 기간", "https://skinboundkorea.com/fly/", "기내 기압", "의사 확인 권고", "레딧 2 검사:", "제외"):
+    for part in ("시술 뒤 비행 질문", "붓기 기간", "https://skinboundkorea.com/fly/", "기내 기압", "의사 확인 권고", "레딧 2 검사:", "제외"):
         assert part in text, part
     answers["reddit_brief"] = {**answers["reddit_brief"], "covered": [{"fact_id": "P9:F9", "why_ko": "없는 사실"}], "skip_ko": "병원 추천 요청"}
     text = rd.paste_messages(rd.brief(2))[0]
@@ -3247,7 +3247,7 @@ def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
     rd.want_text(pasted)
     assert len(rd.load()["items"]) == 1                                         # 같은 글은 한 번만
     rd.want_text("No subreddit named here. " * 8)
-    assert rd._item(rd.load(), 2)["sub"] == "unknown" and "커뮤니티 KoreaPlasticSurgery" in rd.brief_message(rd._item(rd.load(), 2))
+    assert rd._item(rd.load(), 2)["sub"] == "unknown" and "커뮤니티 KoreaSeoulBeauty" in rd.brief_message(rd._item(rd.load(), 2))
     assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
     rd.set_sub(2, "CosmeticSurgery")
     assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
@@ -3304,12 +3304,35 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
         web.set_fetcher(None)
     item = rd.load()["items"][0]
     assert stages == ["reddit_brief", "reddit_research", "reddit_research_read", "reddit_answer", "reddit_review"]
+    router = importlib.import_module("pipeline.telegram_router")
+    seen = {}
+    monkeypatch.setattr(router.subprocess, "run", lambda *a, **k: (seen.update(k), subprocess.CompletedProcess(a, 0, "ok", ""))[1])
+    router.run(["pipeline.reddit", "want", "x", "y"])
+    assert seen["timeout"] == router.LONG_RUN_TIMEOUT > router.RUN_TIMEOUT                   # 정리→조사→초안은 10분을 넘길 수 있다
     assert "https://www.seoulskinclinic.com/rejuran" not in fetched                 # 병원 사이트는 출처로 받지 않는다
     assert [f["id"] for f in item["research"]["facts"]] == ["F1"]                    # 인용이 페이지에 없는 사실은 버린다
     assert "[Reddit 1번 조사]" in sent[1] and "http" not in sent[1] and "Prime 통증 비교" in sent[1]   # 출처 나열 없이 보강 필요만
     assert item["status"] == "ready" and "https://pubmed.ncbi.nlm.nih.gov/123/" in item["sources"]
     assert "skinboundkorea.com" not in item["paste"]                                 # 조사 출처는 관련 글 링크가 아니다
     assert importlib.import_module("pipeline.telegram_router").parse("레딧 1 조사")["args"] == ["pipeline.reddit", "research", "1"]
+
+
+def test_reddit_pasted_text_without_subreddit_uses_home_and_set_sub_continues(env, monkeypatch):
+    rd = _reddit_env(monkeypatch, focus=["KoreaSeoulBeauty", "KoreaPlasticSurgery"])
+    rd.allow("KoreaSeoulBeauty", False)
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+    rd.want_text("Ultherapy vs Ultherapy Prime, anyone done both? I had it once four years ago and want it redone. " * 3)
+    item = rd.load()["items"][0]
+    assert item["sub"] == "KoreaSeoulBeauty" and "본거지 글로 봄" in sent[0]   # r/이름이 없으면 본거지
+    assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"] and item["status"] == "ready"
+    state = rd.load()                                                                # 정리만 받은 글에 커뮤니티를 알려 주면 바로 조사 → 초안
+    state["items"].append({**item, "n": 2, "thread": "x2", "sub": "unknown", "status": "briefed"})
+    rd.save(state)
+    stages.clear()
+    rd.set_sub(2, "KoreaSeoulBeauty")
+    assert stages == ["reddit_research", "reddit_answer", "reddit_review"] and rd._item(rd.load(), 2)["status"] == "ready"
 
 
 def test_mentions_ledger(env):

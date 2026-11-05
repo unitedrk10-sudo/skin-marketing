@@ -27,6 +27,8 @@ from pipeline.common import ROOT, content_dir, get_logger, load_env_file, load_j
 log = get_logger("telegram")
 
 RUN_TIMEOUT = 600
+LONG_RUN_TIMEOUT = 1500  # Reddit 정리 → 조사 → 초안은 LLM 을 여러 번 불러 10분을 넘길 수 있다 (2026-11-05, 플러그인 TIMEOUT 1800 보다 짧게)
+LONG_COMMANDS = {("pipeline.reddit", c) for c in ("want", "want-text", "research", "draft", "direct", "brief")}
 HISTORY_KEEP = 6
 X_URL = re.compile(r"https://(?:www\.|mobile\.)?(?:x|twitter)\.com/\S+/status/\d+\S*", re.I)
 THREADS_URL = re.compile(r"https://(?:www\.)?threads\.(?:com|net)/\S+", re.I)
@@ -220,8 +222,9 @@ def scrub(text: str) -> str:
 
 
 def run(args: list[str]) -> str:
+    timeout = LONG_RUN_TIMEOUT if tuple(args[:2]) in LONG_COMMANDS else RUN_TIMEOUT
     proc = subprocess.run([sys.executable, "-m", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=RUN_TIMEOUT, check=False,
+                          errors="replace", timeout=timeout, check=False,
                           env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
     out = proc.stdout.strip()
     if out:
