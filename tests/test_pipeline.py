@@ -2765,6 +2765,7 @@ def _reddit_answers(rd, monkeypatch, **override):
                "reddit_review": {"ok": True, "issues": [], "ko": "번역"},
                "reddit_facts": {"answerable": True, "fact_ids": ["P1:F1"], "gaps_ko": "비행 시간은 없음"},
                "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"},
+               "reddit_research": {"sources": []}, "reddit_research_read": {"facts": []},
                "reddit_brief": {"summary_ko": "시술 뒤 비행 질문", "asks_ko": ["다음 날 비행 가능?"], "covered": [{"fact_id": "P1:F1", "why_ko": "붓기 기간"}],
                                 "related_post": "P1", "gaps_ko": ["기내 기압"], "consider_ko": ["의사 확인 권고"], "skip_ko": ""}, **override}
     stages = []
@@ -3021,14 +3022,14 @@ def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
     link = "https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0000/fly/"
     assert rd.want(link, "Can I fly the next day after a skin booster?") == "✅ 보냈습니다"
-    assert stages == ["reddit_brief", "reddit_answer", "reddit_review"]
+    assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"]
     item = rd.load()["items"][0]
     assert item["status"] == "ready" and item["brief"]["summary"] and rd.DISCLOSURE in item["paste"]   # AI 초안 = AI-assisted 표시
-    assert len(sent) == 3 and "초안을 이어서 보냅니다" in sent[0] and sent[2] == item["paste"] and "레딧 1 방향:" in sent[1]
+    assert len(sent) == 4 and "② 조사" in sent[0] and "쓸 만한 출처를 찾지 못했습니다" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
     answers["reddit_answer"] = {"answerable": False, "reason": "사실 없음"}            # 초안이 막혀도 정리는 그대로 가고 이유를 알린다
     sent.clear()
     rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0001/x/", "What should I pack for Seoul?")
-    assert len(sent) == 2 and "레딧 2 검사:" in sent[1]
+    assert len(sent) == 3 and "레딧 2 검사:" in sent[2]
     answers["reddit_brief"] = {**answers["reddit_brief"], "skip_ko": "병원 추천 요청"}   # 답하지 말라는 정리면 초안 없음
     stages.clear()
     rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0002/x/", "Where should I get a booster?")
@@ -3278,6 +3279,37 @@ def test_reddit_rules_are_separate_and_clinic_questions_get_criteria(env, monkey
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: True)
     rd.want("https://www.reddit.com/r/KoreaSeoulBeauty/comments/1zz0000/x/", "How do I choose a clinic for skin boosters? Any red flags?")
     assert rd.load()["items"][0]["status"] == "ready"                            # 기준 답변은 사실 번호 없이도 된다
+
+
+def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rd.allow("KoreaSeoulBeauty", False)
+    page = "Rejuran is a polynucleotide injection. Mild swelling and redness may last a few days after treatment. " * 8
+    pages = {"https://pubmed.ncbi.nlm.nih.gov/123/": (200, page), "https://www.seoulskinclinic.com/rejuran": (200, page)}
+    fetched = []
+    web.set_fetcher(lambda url: (fetched.append(url), pages.get(url, (0, "")))[1])
+    try:
+        answers, stages = _reddit_answers(rd, monkeypatch,
+            reddit_research={"sources": [{"url": "https://pubmed.ncbi.nlm.nih.gov/123/", "title": "Review"},
+                                         {"url": "https://www.seoulskinclinic.com/rejuran", "title": "Clinic"}]},
+            reddit_research_read={"facts": [
+                {"id": "F1", "text": "Mild swelling and redness may last a few days after Rejuran.", "source": "S1",
+                 "quote": "Mild swelling and redness may last a few days after treatment."},
+                {"id": "F2", "text": "Rejuran is painless.", "source": "S1", "quote": "Rejuran is painless."}]},
+            reddit_answer={"answerable": True, "fact_ids": ["R:F1"], "body": "Mild swelling and redness may last a few days after Rejuran, so ask your doctor what applies to you."})
+        sent = []
+        monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+        rd.want("https://www.reddit.com/r/KoreaSeoulBeauty/comments/1zz0000/x/", "Rejuran or Juvelook for my first trip? How long is the swelling?")
+    finally:
+        web.set_fetcher(None)
+    item = rd.load()["items"][0]
+    assert stages == ["reddit_brief", "reddit_research", "reddit_research_read", "reddit_answer", "reddit_review"]
+    assert "https://www.seoulskinclinic.com/rejuran" not in fetched                 # 병원 사이트는 출처로 받지 않는다
+    assert [f["id"] for f in item["research"]["facts"]] == ["F1"]                    # 인용이 페이지에 없는 사실은 버린다
+    assert "[Reddit 1번 조사]" in sent[1] and "pubmed.ncbi.nlm.nih.gov/123" in sent[1]
+    assert item["status"] == "ready" and "https://pubmed.ncbi.nlm.nih.gov/123/" in item["sources"]
+    assert "skinboundkorea.com" not in item["paste"]                                 # 조사 출처는 관련 글 링크가 아니다
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 1 조사")["args"] == ["pipeline.reddit", "research", "1"]
 
 
 def test_mentions_ledger(env):

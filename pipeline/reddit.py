@@ -414,7 +414,8 @@ def _rule_lines(rule: dict) -> str:
 
 # ── 사실·초안·검사 ───────────────────────────────────────────
 
-def _facts_block(posts: list[dict]) -> tuple[str, dict[str, dict]]:
+def _facts_block(posts: list[dict], researched: list[dict] | None = None) -> tuple[str, dict[str, dict]]:
+    """researched: 이 글을 위해 조사한 출처의 사실(`research`). 우리 글이 아니라 post 가 None — 관련 글 링크로 쓰지 않는다."""
     by_id, out = {}, []
     for p_no, post in enumerate(posts, 1):
         out.append(f"\nPOST P{p_no}: {post['title']}")
@@ -422,13 +423,20 @@ def _facts_block(posts: list[dict]) -> tuple[str, dict[str, dict]]:
             key = f"P{p_no}:{f['id']}"
             by_id[key] = {**f, "post": post}
             out.append(f"[{key}] {f.get('text', '')}")
+    if researched:
+        out.append("\nRESEARCHED FOR THIS THREAD (other sources, each checked against its page):")
+        for f in researched:
+            key = f"R:{f['id']}"
+            by_id[key] = {**f, "post": None}
+            out.append(f"[{key}] {f.get('text', '')}")
     return "\n".join(out), by_id
 
 
 def _review_facts(used: list[dict], by_id: dict[str, dict]) -> str:
     """검수 근거: 인용한 사실이 있는 글의 사실 전부 (쓴 쪽이 인용 번호를 빠뜨린 문장도 대조되게)."""
-    titles = {f["post"]["title"] for f in used}
-    return "\n".join(f"- {f.get('text', '')}" for f in by_id.values() if f["post"]["title"] in titles)
+    titles = {f["post"]["title"] for f in used if f.get("post")}
+    return "\n".join(f"- {f.get('text', '')}" for f in by_id.values()
+                     if (f.get("post") and f["post"]["title"] in titles) or (not f.get("post") and f in used))
 
 
 def seal_of(item: dict) -> str:
@@ -477,7 +485,7 @@ def draft(n: int, direction: str = "") -> dict:
         return notes(n)
     if st["writer"] == "post":
         _check_limits(state, item["sub"])
-    facts, by_id = _facts_block(_posts_for(st, item["sub"]))
+    facts, by_id = _facts_block(_posts_for(st, item["sub"]), (item.get("research") or {}).get("facts"))
     social = importlib.import_module("pipeline.social")
     numbers = _numbers(by_id, item["question"])
     problems: list[str] = []
@@ -515,7 +523,8 @@ def draft(n: int, direction: str = "") -> dict:
             break
     item.update(fact_ids=[k for k in data.get("fact_ids", []) if k in by_id], problems=problems, ko=ko, body=body,
                 sources=list(dict.fromkeys(f.get("url", "") for f in used if f.get("url"))))
-    _finish(item, problems, body, used[0]["post"]["url"] if used and st["links"] and not item["practice"] else "")
+    ours = next((f["post"]["url"] for f in used if f.get("post")), "")  # 관련 글 링크는 우리 글에서만
+    _finish(item, problems, body, ours if st["links"] and not item["practice"] else "")
     save(state)
     return item
 
@@ -577,13 +586,64 @@ def brief_message(item: dict) -> str:
         lines += ["", "💡 쓸 때 고려할 점:"] + [f"- {c}" for c in b["consider"]]
     how = "한국어로 써도 됩니다 (Google 번역)" if st["mt"] else "영어로 써 주세요 (이 커뮤니티는 번역 허용 기록 없음)"
     if will_draft(item, st):
-        lines += ["", "✍️ 초안을 이어서 보냅니다. 직접 쓰고 싶으면 "
+        lines += ["", "✍️ 이어서 ② 조사(출처 찾기·사실 확인) → ③ 초안을 보냅니다. 직접 쓰고 싶으면 "
                       f"`레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
     else:
         lines += ["", f"✍️ 직접 써서 보내 주세요: `레딧 {item['n']} 검사: 본문` — {how}. 법적 문제·숫자 문장만 빼고 공개 문구를 붙입니다."]
     if st["mode"] in BLOCKED_MODES or not can_post(st, "operator"):
         lines.append(f"(참고: r/{item['sub']} 은 지금 {st['label']} 단계라 게시용 글은 만들지 않습니다)")
     return "\n".join(x for x in lines if x != "")
+
+
+RESEARCH_PAGES = 6      # 조사 때 읽는 페이지 수
+RESEARCH_CHARS = 8000   # 페이지당 넘기는 본문 길이
+
+
+def research(n: int) -> dict:
+    """질문 조사 (2026-11-05 운영자 요청): Gemini 검색으로 출처 페이지 후보 → 받아 오기(병원·대행사 사이트 제외, 02_draft.fetch_sources)
+    → Claude 가 페이지에서 사실과 원문 인용을 뽑고 → 인용이 페이지에 실제로 있는 사실만 남긴다(02_draft.verify_facts). 초안이 우리 글 사실과 함께 쓴다."""
+    state = load()
+    item = _item(state, n)
+    drafting = importlib.import_module("pipeline.02_draft")
+    b = item.get("brief") or {}
+    gaps = "\n".join(f"- {g}" for g in (b.get("gaps") or []) + (b.get("asks") or [])) or "(not known — research the whole question)"
+    data, result = llm.generate_json("reddit_research", prompt("reddit_research", today=date.today().isoformat(), subreddit=item["sub"],
+                                                               title=item["title"], question=item["question"], gaps=gaps))
+    picked = [{"url": str(x.get("url", "")).strip(), "title": x.get("title", "")}
+              for x in ((data or {}).get("sources") or []) if isinstance(x, dict)] if isinstance(data, dict) else []
+    grounded = [{"url": g["url"], "title": g.get("title", "")} for g in (result.grounding_urls if result else [])]
+    sources = drafting.fetch_sources(picked + grounded)[:RESEARCH_PAGES]
+    facts = []
+    if sources:
+        pages = "\n\n".join(f"[{x['id']}] {x['title'] or x['url']}\nURL: {x['url']}\n<page>\n{x['text'][:RESEARCH_CHARS]}\n</page>" for x in sources)
+        raw, _r = llm.generate_json("reddit_research_read", prompt("reddit_research_read", subreddit=item["sub"], title=item["title"],
+                                                                   question=item["question"], pages=pages))
+        raw = (raw or {}).get("facts", []) if isinstance(raw, dict) else []
+        facts = [f for f in drafting.verify_facts(raw, sources) if f.get("kind") != "practice"]
+    state = load()
+    item = _item(state, n)
+    item["research"] = {"facts": [{"id": f["id"], "text": f["text"], "url": f["url"], "title": f.get("source_title", "")} for f in facts],
+                        "pages": len(sources), "at": now_iso()}
+    save(state)
+    return item
+
+
+def research_message(item: dict) -> str:
+    r = item.get("research") or {}
+    head = f"[Reddit {item['n']}번 조사] r/{item['sub']}: {item['title']}"
+    if not r.get("facts"):
+        return f"{head}\n🔎 쓸 만한 출처를 찾지 못했습니다 (읽은 페이지 {r.get('pages', 0)}개). 우리 글 내용으로만 씁니다."
+    lines = [head, f"🔎 출처 {len({f['url'] for f in r['facts']})}곳에서 찾은 내용 {len(r['facts'])}개 — 병원·대행사 사이트는 빼고, 원문 인용을 페이지와 대조했습니다"]
+    for f in r["facts"]:
+        lines += [f"- {f['text']}", f"  {f['url']}"]
+    lines += ["", "다음 메시지의 초안은 이 내용과 우리 글 내용으로 씁니다."]
+    return "\n".join(lines)
+
+
+def _deliver(text: str) -> str:
+    worker = importlib.import_module("pipeline.worker")
+    target = worker.reddit_target()
+    return "✅ 보냈습니다" if (worker.hermes_send(text, target=target) if target else worker.hermes_send(text)) else text
 
 
 def will_draft(item: dict, st: dict) -> bool:
@@ -597,7 +657,12 @@ def brief_and_draft(n: int) -> str:
     item = brief(n)
     out = [send(item)]
     if will_draft(item, standing(load(), item["sub"])):
-        try:
+        try:  # ② 조사 — 실패해도 우리 글로 초안은 쓴다
+            out.append(_deliver(research_message(research(n))))
+        except llm.LLMError as e:
+            log.warning("Reddit %s번 조사 실패: %s", n, e)
+            out.append(f"조사를 하지 못했습니다 (우리 글 내용으로만 씁니다): {str(e)[:120]}")
+        try:  # ③ 초안
             out.append(send(draft(n)))
         except RedditError as e:
             out.append(f"초안은 만들지 않았습니다: {e}")
@@ -1120,7 +1185,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("warn")
     p.add_argument("sub")
     p.add_argument("--note", default="")
-    for name in ("draft", "show", "skip", "facts", "brief"):
+    for name in ("draft", "show", "skip", "facts", "brief", "research"):
         sub.add_parser(name).add_argument("n", type=int)
     for name in ("direct", "check"):
         p = sub.add_parser(name)
@@ -1186,6 +1251,8 @@ def main(argv: list[str] | None = None) -> int:
             print(send(draft(args.n, args.text)))
         elif args.cmd == "brief":
             print(send(brief(args.n)))
+        elif args.cmd == "research":
+            print(_deliver(research_message(research(args.n))))
         elif args.cmd == "facts":
             print(send(notes(args.n)))
         elif args.cmd == "check":

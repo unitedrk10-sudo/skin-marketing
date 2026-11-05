@@ -114,6 +114,16 @@ stages:
     model: gemini-3.1-pro-preview
     thinking: low
 
+  reddit_research: # Reddit 질문 조사 — 읽을 출처 페이지 후보만 고른다 (찾기는 Gemini, 2026-11-05)
+    provider: gemini
+    model: gemini-3.8-flash
+    search: true
+
+  reddit_research_read:  # 받아 둔 출처 페이지에서 질문에 맞는 사실·원문 인용 뽑기 (읽기는 Claude, 코드가 인용 대조)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 600
+
   reddit_review:   # Reddit 답변 검수 (쓴 회사와 다른 모델) — 사실 대조·과장·광고·한국어 번역
     provider: gemini
     model: gemini-3.1-pro-preview
