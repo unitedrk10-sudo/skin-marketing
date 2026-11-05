@@ -143,6 +143,15 @@ def test_render_rejects_missing_variables():
         common.render("{{a}} {{b}}", a="x")
 
 
+def test_render_leaves_braces_inside_values_alone():
+    # 출처 페이지 본문에 템플릿 자리표시자가 있어도 누락으로 보지 않고, 다른 변수로 치환하지도 않는다 (2026-11-05)
+    page = "Ships to {{dlvyCntryName}}. {{rules}}"
+    out = common.render("{{rules}}\nPAGE: {{page}}", rules="R", page=page)
+    assert out == "R\nPAGE: Ships to {{dlvyCntryName}}. {{rules}}"
+    out = common.render("{{n}}", n={"a": 1})
+    assert out == '{"a": 1}'
+
+
 def test_parse_json_handles_fences_and_prose():
     assert common.parse_json('Here:\n```json\n{"a": 1}\n```') == {"a": 1}
     assert common.parse_json('sure {"a": [1, 2]} done') == {"a": [1, 2]}

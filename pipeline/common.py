@@ -111,14 +111,18 @@ def read_prompt(name: str) -> str:
 
 
 def render(template: str, **values) -> str:
-    """{{key}} 치환. 값이 없는 키가 남으면 오류 (프롬프트 누락 방지)."""
-    out = template
-    for key, value in values.items():
-        out = out.replace("{{" + key + "}}", value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
-    missing = re.findall(r"\{\{(\w+)\}\}", out)
+    """{{key}} 치환. 템플릿에 값이 없는 키가 있으면 오류 (프롬프트 누락 방지).
+    한 번에 치환해 넣은 값(출처 페이지 본문 등) 안의 {{...}} 는 건드리지도 검사하지도 않는다 —
+    2026-11-05 올리브영 페이지의 {{dlvyCntryName}} 이 누락으로 잡혀 초안 요청이 실패."""
+    missing = sorted({key for key in re.findall(r"\{\{(\w+)\}\}", template) if key not in values})
     if missing:
         raise KeyError(f"프롬프트 변수 누락: {missing}")
-    return out
+
+    def fill(m: re.Match) -> str:
+        value = values[m.group(1)]
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+    return re.sub(r"\{\{(\w+)\}\}", fill, template)
 
 
 def prompt(name: str, rules: str | None = None, **values) -> str:
