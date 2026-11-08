@@ -686,6 +686,11 @@ def continue_draft(n: int) -> list[str] | str:
 
 def brief_and_draft(n: int) -> str:
     """정리를 보내고, 활동 단계면 초안도 보낸다. 초안이 안 되면(한도·답할 사실 없음·LLM 실패) 정리는 그대로 두고 이유만 알린다."""
+    state = load()
+    old = _item(state, n)
+    if old["sub"] == "unknown" and focus_subs():  # 예전에 커뮤니티를 모른 채 기록된 글을 다시 보내도 본거지로 (2026-11-05)
+        old.update(sub=focus_subs()[0], guessed_sub=True)
+        save(state)
     item = brief(n)
     out = [send(item)]
     if will_draft(item, standing(load(), item["sub"])):
