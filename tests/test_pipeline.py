@@ -4143,3 +4143,19 @@ def test_skin_router_plugin_reads_origin_room():
     assert plugin._origin(Source(chat=Source(id=42))) == "telegram:42"
     assert plugin._origin(Source()) == "" and plugin._origin(Source(chat_id="abc")) == ""
     assert plugin._source_keys(Source(platform="telegram", user_id=1)) == "platform,user_id"   # 진단용: 이름만
+
+
+def test_faq_schema_reads_bold_questions_and_table_refs_stay_in_cells():
+    site_mod = importlib.import_module("pipeline.site")
+    md = ("## How long?\nText.\n\n## FAQ\n\n**How many sessions will I need?**\nThree sessions two weeks apart [F1].\n\n"
+          "**Does it hurt?**\nMost people describe mild discomfort.\n\n**Note** not a question.\n\n## Sources\nx")
+    faq = site_mod.extract_faq(md)
+    assert [f["q"] for f in faq] == ["How many sessions will I need?", "Does it hurt?"]
+    assert faq[0]["a"] == "Three sessions two weeks apart."
+    assert site_mod.extract_faq("## FAQ\n\n### Is it safe?\nAsk your doctor.\n")[0]["q"] == "Is it safe?"
+    walk = site_mod.extract_faq("### FAQ\n\n**Can I walk?**\nYes.\n\n### Sources\n**Why?**\nNo.\n")
+    assert [f["q"] for f in walk] == ["Can I walk?"]
+    facts =[{"id": "F1", "url": "https://pubmed.ncbi.nlm.nih.gov/1/", "source_title": "A | B study", "kind": "medical"}]
+    md2, _ = site_mod._numbered_sources("| Option | Downtime |\n|---|---|\n| Toning | 1 day [F1] |\n", facts)
+    out = site_mod.render_markdown(md2)
+    assert out.count("<td>") == 2 and "A &#124; B study" in out

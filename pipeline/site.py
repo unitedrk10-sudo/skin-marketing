@@ -44,7 +44,7 @@ REGISTRY_KEY = "_registry"
 CLINIC_LIST_AXES = {"procedure_travel", "travel_guide"}  # 코스 주변 피부과 목록을 붙이는 글 (중립 여행 글만)
 CLINIC_KEY = "_clinic"  # 주변 병원 목록의 병원별 사이트 링크 (tracked_links.json 키: _clinic:<draft_id>:<병원 id>)
 FACT_REF = re.compile(r"\s?\[(F\d+)\]")
-FAQ_HEADING = re.compile(r"^##\s+.*\b(FAQ|Frequently Asked Questions)\b", re.I | re.M)
+FAQ_HEADING = re.compile(r"^(##|###)\s+.*\b(FAQ|Frequently Asked Questions)\b", re.I | re.M)
 SAFE_HREF = re.compile(r"^(https?://|/|#|mailto:)", re.I)
 
 
@@ -328,7 +328,8 @@ def _numbered_sources(md: str, facts: list[dict]) -> tuple[str, list[dict]]:
 
     # 원시 HTML 차단 (LLM 출력·출처 텍스트로 스크립트가 들어오지 않게) — 인용(>)은 유지
     safe = autolink(md.replace("<", "&lt;"))
-    return FACT_REF.sub(repl, safe), sources
+    # 표 칸 안의 [F#] 도 있으니 출처 제목·주소의 | 가 표를 깨지 않게 (2026-11-07 비교표)
+    return FACT_REF.sub(lambda m: repl(m).replace("|", "&#124;"), safe), sources
 
 
 BARE_URL = re.compile(r"(?<![(\[<\"'=])\bhttps?://[^\s)\]<>\"']+")
@@ -379,12 +380,17 @@ def extract_faq(md: str) -> list[dict]:
     if not m:
         return []
     section = md[m.end():]
-    nxt = re.search(r"^##\s", section, re.M)
+    level = len(m.group(1))  # ### FAQ 이면 다음 ##·### 소제목에서 끝
+    nxt = re.search(r"^##\s" if level == 2 else r"^#{2,3}\s", section, re.M)
     section = section[: nxt.start()] if nxt else section
     faq = []
-    for q in re.finditer(r"^###\s+(.+?)\s*$\n(.*?)(?=^###\s|\Z)", section, re.M | re.S):
+    # 질문은 ### 소제목 또는 굵은 글씨 한 줄(**질문?**, 2026-11-07 — 글 14편 중 10편이 이 형식이라 FAQPage 가 빠져 있었다)
+    pattern = r"^###\s+(.+?)\s*$\n(.*?)(?=^###\s|\Z)"
+    if not re.search(r"^###\s", section, re.M):
+        pattern = r"^\*\*(.+?\?)\*\*[ \t]*\n?(.*?)(?=^\*\*.+?\?\*\*|\Z)"
+    for q in re.finditer(pattern, section, re.M | re.S):
         answer = re.sub(r"\s+", " ", FACT_REF.sub("", q.group(2))).strip()
-        answer = re.sub(r"[*_`>]", "", answer)
+        answer = re.sub(r"\s+([.,;:!?])", r"\1", re.sub(r"[*_`>]", "", answer))  # [F#] 뺀 자리의 " ." 정리
         if answer:
             faq.append({"q": q.group(1).strip().rstrip("?") + "?", "a": answer})
     return faq

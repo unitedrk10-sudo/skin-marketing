@@ -84,21 +84,21 @@ topics:
     hook: "Can one laser session really fix melasma?"
     has_price: false
   - id: hifu-ulthera-shurink
-    wave: 2
+    wave: 1   # 2026-11-08 키워드 조사: 영어 자료는 병원·AI 사이트 위주
     axis: procedure
     title: "Ulthera vs Shurink: how HIFU lifting works"
     angle: "What high-intensity focused ultrasound does, differences between common devices, pain, results timeline and risks such as fat loss concerns."
     why_now: "HIFU lifting is a top-tier request, often sold in multi-session packages."
-    keywords: [ulthera korea, shurink, hifu lifting korea, ultherapy vs shurink]
+    keywords: [ulthera korea, shurink, hifu lifting korea, ultherapy vs shurink, shurink universe vs ultherapy]
     hook: "Same 'ultrasound lift' — why the big price difference?"
     has_price: false
   - id: titanium-lifting
-    wave: 2
+    wave: 1   # 2026-11-08 키워드 조사: 영어 자료는 병원 홍보뿐
     axis: trend
     title: "Titanium lifting: the Korean trend explained"
     angle: "What the diode-laser-based 'titanium' lifting is, what evidence exists, how it compares with HIFU and RF, and realistic expectations."
     why_now: "Viral on TikTok in 2025-2026 as a no-downtime lifting option."
-    keywords: [titanium lifting korea, titanium laser, no downtime lifting]
+    keywords: [titanium lifting korea, titanium laser, no downtime lifting, titanium lifting downtime]
     hook: "The 'no-downtime lift' Korean celebs talk about — what is it?"
     has_price: false
   - id: rf-microneedling-potenza
@@ -265,12 +265,12 @@ topics:
     hook: "Palace tour the day after your laser?"
     has_price: false
   - id: alcohol-after-injectables
-    wave: 3
+    wave: 1   # 2026-11-08 키워드 조사: 여행 동선과 바로 연결
     axis: procedure_travel
     title: "Soju, Korean BBQ and skin treatments: alcohol and aftercare"
     angle: "What is generally advised about alcohol, spicy food and swelling after injectables and lasers, and how long to wait."
     why_now: "Food and nightlife are core to Korea trips; common aftercare question."
-    keywords: [alcohol after botox, drinking after skin booster, korean bbq after laser]
+    keywords: [alcohol after botox, drinking after skin booster, korean bbq after laser, drinking after rejuran, spicy food after skin treatment]
     hook: "Soju night after your treatment — how long should you wait?"
     has_price: false
   - id: complications-after-returning
@@ -440,4 +440,44 @@ topics:
     why_now: "Answers 'how to choose' prompts without recommending a procedure or clinic."
     keywords: [how to choose skin booster, skin booster consultation questions, korea dermatology consultation]
     hook: "Skin booster shopping? Ask these first."
+    has_price: false
+
+  # ---------- 2026-11-08 키워드 공백 조사 (Gemini 검색 + 웹 검색 확인) ----------
+  # 영어 정보가 병원 홍보·AI 생성 사이트 위주이고 중립 출처를 구할 수 있는 질문. 코어톡스 등 톡신 제품 비교(전문의약품 광고 위험)·
+  # 엑소좀 주사 합법 여부(식약처 공식 자료 확인 전)·포텐자 펌핑팁·큐어젯·LDM(출처가 병원·제조사뿐)은 제외.
+  - id: mole-removal-trip
+    wave: 1
+    axis: procedure_travel
+    title: "Mole removal on a Korea trip: patches, timing and sightseeing"
+    angle: "How long the hydrocolloid patch usually stays on after laser mole removal, sun and sweat while sightseeing, and whether to book it at the start or end of a trip — framed as questions for the clinic."
+    why_now: "Common add-on for visitors; English pages are clinic listings with little trip-planning guidance."
+    keywords: [mole removal korea, mole removal seoul, hydrocolloid patch after mole removal, mole removal before flight]
+    hook: "Mole removal on day one of your trip — then what?"
+    has_price: false
+  - id: dark-skin-laser-pigment
+    wave: 1
+    axis: procedure
+    title: "Laser toning on darker skin: what studies say about pigmentation risk"
+    angle: "Why post-inflammatory hyperpigmentation is a bigger concern for darker skin types, what research says about low-fluence and picosecond lasers, and questions to ask before a Korean laser session."
+    why_now: "Korean clinic material is written around lighter East Asian skin; travelers with darker skin find little neutral guidance."
+    keywords: [laser toning dark skin, pico laser darker skin, post inflammatory hyperpigmentation laser, korea laser brown skin]
+    hook: "Darker skin and Korean laser toning — what's the real risk?"
+    has_price: false
+  - id: skin-botox-explained
+    wave: 1
+    axis: procedure
+    title: "Skin botox (microbotox) explained: how it differs from regular botox"
+    angle: "Intradermal low-dose injection vs muscle injection, what it is used for (pores, oil, fine texture), how long it lasts, and the reported risk of stiffness when product spreads."
+    why_now: "Marketed as a glass-skin shortcut; English coverage rarely covers risks or evidence."
+    keywords: [skin botox korea, microbotox, intradermal botox, skin botox side effects]
+    hook: "'Skin botox' — is it the same as botox?"
+    has_price: false
+  - id: inmode-fx-bruising
+    wave: 1
+    axis: procedure
+    title: "InMode FX and Forma in Korea: downtime, bruising and what to expect"
+    angle: "How radiofrequency-assisted contouring works, why suction-based handpieces can leave bruising, what sources say about recovery days, and how that fits a short trip."
+    why_now: "Often sold as zero-downtime, while patient reports mention several days of bruising."
+    keywords: [inmode korea, inmode fx bruising, inmode forma downtime, inmode lifting korea]
+    hook: "'No downtime' — so why the bruises?"
     has_price: false
