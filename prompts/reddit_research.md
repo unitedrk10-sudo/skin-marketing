@@ -16,6 +16,7 @@ Page selection:
 - Only pages you actually found through search, with their exact URL (an article or a specific page, not a homepage or search results).
 - Prefer, in this order: peer-reviewed papers (PubMed/PMC, recent reviews first), government and public bodies (Medical Korea/KHIDI, MOHW, MFDS, FDA, NHS), professional societies (AAD and similar), patient-education pages from public or academic hospitals (.nhs.uk, .edu, .gov, Cleveland Clinic, Mayo Clinic), manufacturers' official product pages (product facts only), then reputable news media.
 - For clinic-choice questions, include official pages on how to check a clinic or a doctor's license in Korea (for example Medical Korea's registered institutions list).
+- For questions about agencies, concierges or coordinators, look for government or news pages on how medical-tourism facilitators are registered and regulated in Korea, and consumer-protection guidance, not the agencies' own sites.
 - Never list a private clinic's own website, a booking or medical-tourism agency, a coupon site, a forum or an affiliate blog.
 
 Return ONLY JSON:
