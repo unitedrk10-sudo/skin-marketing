@@ -1196,6 +1196,8 @@ def weekly_message(now: datetime | None = None) -> str:
     """정해진 요일에 한 번: 규칙 다시 조사 → 후보 찾기 (2026-11-02 사람 요청: 규칙 확인과 상관없이 매주). 전체 정지 중에는 안 한다."""
     social = importlib.import_module("pipeline.social")
     cfg, now = settings(), now or social.now_kst()
+    if not cfg.get("weekly_find", True):  # 2026-11-09 운영자 요청: Reddit 은 클라우드 세션 대화로 운영, 화요일 자동 후보 끔
+        return ""
     state = load()
     week = f"{now.isocalendar()[0]}-W{now.isocalendar()[1]:02d}"
     if now.weekday() != int(cfg.get("find_weekday", 1)) or now.hour < int(cfg.get("find_hour", 10)) or state.get("found_week") == week:

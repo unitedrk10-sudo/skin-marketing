@@ -8,6 +8,7 @@ max_age_days: 150            # 글 번호로 어림한 나이. Reddit 은 오래
 find_count: 8
 find_weekday: 1              # 0=월. 화요일
 find_hour: 10                # 한국 시간
+weekly_find: false           # 화요일 자동 규칙 조사·후보 찾기 (2026-11-09 끔 — Reddit 은 클라우드 세션 대화로 운영). 텔레그램 `레딧 …` 명령은 그대로 됨
 rules_refresh_days: 7        # 후보 찾는 날 이보다 오래된 규칙 조사는 Gemini 검색으로 다시 (2026-11-02, 바뀐 곳만 알림)
 auto_draft: true             # 글을 보내면 한국어 정리 뒤에 초안도 이어서 (활동 단계만, 2026-11-03 운영자 요청). false 면 정리만
 # 운영자 공개 문구(I run Skinbound Korea…)는 코드가 항상 붙인다. 아래는 "AI-assisted and human-checked." 줄만:
