@@ -3094,6 +3094,8 @@ def test_reddit_weekly_find_runs_once_a_week(env, monkeypatch):
     first = rd.weekly_message(tuesday)
     assert "규칙 주간 조사" in first and "후보" in first and rd.weekly_message(tuesday) == ""   # 주 1회: 규칙 조사 → 후보
     assert rd.weekly_message(datetime(2026, 11, 4, 11)) == ""
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "weekly_find": False})
+    assert rd.weekly_message(datetime(2026, 11, 10, 11)) == ""                   # 끄면 화요일에도 안 찾는다 (2026-11-09)
 
 
 def test_reddit_real_config_sets_initial_stages(env):
