@@ -597,45 +597,66 @@ RESEARCH_PAGES = 6      # 조사 때 읽는 페이지 수
 RESEARCH_CHARS = 8000   # 페이지당 넘기는 본문 길이
 
 
-def research(n: int) -> dict:
-    """질문 조사 (2026-11-05 운영자 요청): Gemini 검색으로 출처 페이지 후보 → 받아 오기(병원·대행사 사이트 제외, 02_draft.fetch_sources)
-    → Claude 가 페이지에서 사실과 원문 인용을 뽑고 → 인용이 페이지에 실제로 있는 사실만 남긴다(02_draft.verify_facts). 초안이 우리 글 사실과 함께 쓴다."""
-    state = load()
-    item = _item(state, n)
+def _research_pass(item: dict, gaps: str, skip_urls: set[str]) -> tuple[list[dict], list[str], list[str], list[str]]:
+    """검색 한 번: (확인된 사실, 반영 요약, 아직 없는 부분, 읽은 주소)."""
     drafting = importlib.import_module("pipeline.02_draft")
-    b = item.get("brief") or {}
-    gaps = "\n".join(f"- {g}" for g in (b.get("gaps") or []) + (b.get("asks") or [])) or "(not known — research the whole question)"
     data, result = llm.generate_json("reddit_research", prompt("reddit_research", today=date.today().isoformat(), subreddit=item["sub"],
                                                                title=item["title"], question=item["question"], gaps=gaps))
     picked = [{"url": str(x.get("url", "")).strip(), "title": x.get("title", "")}
               for x in ((data or {}).get("sources") or []) if isinstance(x, dict)] if isinstance(data, dict) else []
     grounded = [{"url": g["url"], "title": g.get("title", "")} for g in (result.grounding_urls if result else [])]
-    sources = drafting.fetch_sources(picked + grounded)[:RESEARCH_PAGES]
-    facts, missing = [], []
-    if sources:
-        pages = "\n\n".join(f"[{x['id']}] {x['title'] or x['url']}\nURL: {x['url']}\n<page>\n{x['text'][:RESEARCH_CHARS]}\n</page>" for x in sources)
-        raw, _r = llm.generate_json("reddit_research_read", prompt("reddit_research_read", subreddit=item["sub"], title=item["title"],
-                                                                   question=item["question"], pages=pages))
-        missing = [str(m) for m in ((raw or {}).get("missing_ko") or [])][:3] if isinstance(raw, dict) else []
-        raw = (raw or {}).get("facts", []) if isinstance(raw, dict) else []
-        facts = [f for f in drafting.verify_facts(raw, sources) if f.get("kind") != "practice"]
+    sources = [x for x in drafting.fetch_sources(picked + grounded) if x["url"] not in skip_urls][:RESEARCH_PAGES]
+    if not sources:
+        return [], [], [], []
+    pages = "\n\n".join(f"[{x['id']}] {x['title'] or x['url']}\nURL: {x['url']}\n<page>\n{x['text'][:RESEARCH_CHARS]}\n</page>" for x in sources)
+    raw, _r = llm.generate_json("reddit_research_read", prompt("reddit_research_read", subreddit=item["sub"], title=item["title"],
+                                                               question=item["question"], gaps=gaps, pages=pages))
+    raw = raw if isinstance(raw, dict) else {}
+    facts = [f for f in drafting.verify_facts(raw.get("facts") or [], sources) if f.get("kind") != "practice"]
+    summary = [str(x) for x in (raw.get("summary_ko") or [])][:4] if facts else []
+    missing = [str(x) for x in (raw.get("missing_ko") or [])][:3]
+    return facts, summary, missing, [x["url"] for x in sources]
+
+
+def research(n: int, focus: str = "") -> dict:
+    """질문 조사 (2026-11-05 운영자 요청): Gemini 검색으로 출처 페이지 후보 → 받아 오기(병원·대행사 사이트 제외, 02_draft.fetch_sources)
+    → Claude 가 페이지에서 사실과 원문 인용을 뽑고 → 인용이 페이지에 실제로 있는 사실만 남긴다(02_draft.verify_facts).
+    첫 검색에서 빈 부분이 남으면 그 부분만 한 번 더 찾는다 (2026-11-08). focus: 운영자가 더 찾아 달라고 한 주제."""
+    item = _item(load(), n)
+    b = item.get("brief") or {}
+    wanted = [f.strip() for f in re.split(r"[,\n/·]", focus) if f.strip()]
+    gaps = "\n".join(f"- {g}" for g in wanted + (b.get("gaps") or []) + ([] if wanted else (b.get("asks") or []))) \
+        or "(not known — research the whole question)"
+    facts, summary, missing, read = _research_pass(item, gaps, set())
+    if missing:  # 빈 부분만 다시 (검색어를 바꿔서) — 한 번만
+        more, summary2, missing2, read2 = _research_pass(item, "\n".join(f"- {m}" for m in missing), set(read))
+        missing = missing2 if read2 else missing  # 다시 찾을 페이지가 없었으면 처음 빈 부분 그대로
+        start = len(facts)
+        facts += [{**f, "id": f"F{start + k}"} for k, f in enumerate(more, 1)]
+        summary += summary2
+        read += read2
     state = load()
     item = _item(state, n)
     item["research"] = {"facts": [{"id": f["id"], "text": f["text"], "url": f["url"], "title": f.get("source_title", "")} for f in facts],
-                        "missing": missing, "pages": len(sources), "at": now_iso()}
+                        "summary": summary[:5], "missing": missing, "focus": wanted, "pages": len(read), "at": now_iso()}
     save(state)
     return item
 
 
 def research_message(item: dict) -> str:
-    """보강이 필요한 내용만 (2026-11-05 운영자 요청 — 출처를 하나하나 설명하지 않는다)."""
+    """초안에 반영할 내용(한국어 요약)과 자료가 없어 뺀 부분만 — 출처는 하나하나 적지 않는다 (2026-11-05·11-08 운영자 요청)."""
     r = item.get("research") or {}
-    head = f"[Reddit {item['n']}번 조사]"
-    if not r.get("facts"):
-        lines = [f"{head} 쓸 만한 자료를 찾지 못해 우리 글 내용으로만 씁니다."]
+    n = item["n"]
+    lines = [f"[Reddit {n}번 조사]"]
+    if r.get("summary"):
+        lines += ["초안에 이렇게 반영합니다:"] + [f"- {x}" for x in r["summary"]]
+    elif r.get("facts"):
+        lines.append(f"확인된 내용 {len(r['facts'])}개를 초안에 넣습니다.")
     else:
-        lines = [f"{head} 확인된 내용 {len(r['facts'])}개를 초안에 넣었습니다."]
-    lines += (["", "보강 필요:"] + [f"- {m}" for m in r["missing"]]) if r.get("missing") else ["보강 필요한 내용은 없습니다."]
+        lines.append("쓸 만한 자료를 찾지 못해 우리 글 내용으로만 씁니다.")
+    if r.get("missing"):
+        lines += ["", "자료가 없어 빼는 부분:"] + [f"- {m}" for m in r["missing"]]
+    lines += ["", f"바꾸려면 `레딧 {n} 방향: 원하는 내용` · 더 찾으려면 `레딧 {n} 조사: 주제`"]
     return "\n".join(lines)
 
 
@@ -665,11 +686,11 @@ def no_draft_reason(item: dict, st: dict) -> str:
     return ""
 
 
-def continue_draft(n: int) -> list[str] | str:
+def continue_draft(n: int, focus: str = "") -> str:
     """② 조사 → ③ 초안. 조사는 어떤 이유로 실패해도 우리 글로 초안을 쓴다."""
     out = []
     try:
-        out.append(_deliver(research_message(research(n))))
+        out.append(_deliver(research_message(research(n, focus))))
     except Exception as e:  # noqa: BLE001 — 검색·페이지 받기·JSON 오류 모두 초안을 막지 않게
         log.warning("Reddit %s번 조사 실패: %s: %s", n, type(e).__name__, e)
         out.append(_deliver(f"[Reddit {n}번 조사] 조사를 하지 못해 우리 글 내용으로만 씁니다 ({type(e).__name__})"))
@@ -682,6 +703,17 @@ def continue_draft(n: int) -> list[str] | str:
         out.append(f"초안을 만들지 못했습니다 (나중에 `레딧 {n} 초안`): {str(e)[:120]}")
     rest = [o for o in out if o != "✅ 보냈습니다"]
     return "\n\n".join(rest) if rest else "✅ 보냈습니다"
+
+
+def research_and_draft(n: int, focus: str = "") -> str:
+    """`레딧 N 조사[: 주제]` — 다시 조사하고, 활동 단계면 그 내용으로 초안도 다시 쓴다 (2026-11-08: 조사만 하고 끝나면 운영자가 다 써야 했다)."""
+    item = _item(load(), n)
+    st = standing(load(), item["sub"])
+    if will_draft(item, st):
+        return continue_draft(n, focus)
+    out = _deliver(research_message(research(n, focus)))
+    why = no_draft_reason(item, st)
+    return out if not why else "\n\n".join(x for x in (out if out != "✅ 보냈습니다" else "", _deliver(f"[Reddit {n}번] 초안은 만들지 않았습니다: {why}")) if x and x != "✅ 보냈습니다") or "✅ 보냈습니다"
 
 
 def brief_and_draft(n: int) -> str:
@@ -1217,8 +1249,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("warn")
     p.add_argument("sub")
     p.add_argument("--note", default="")
-    for name in ("draft", "show", "skip", "facts", "brief", "research"):
+    for name in ("draft", "show", "skip", "facts", "brief"):
         sub.add_parser(name).add_argument("n", type=int)
+    p = sub.add_parser("research")
+    p.add_argument("n", type=int)
+    p.add_argument("focus", nargs="*", help="더 찾을 주제 (`레딧 N 조사: 주제`)")
     for name in ("direct", "check"):
         p = sub.add_parser(name)
         p.add_argument("n", type=int)
@@ -1284,7 +1319,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "brief":
             print(send(brief(args.n)))
         elif args.cmd == "research":
-            print(_deliver(research_message(research(args.n))))
+            print(research_and_draft(args.n, " ".join(args.focus or [])))
         elif args.cmd == "facts":
             print(send(notes(args.n)))
         elif args.cmd == "check":

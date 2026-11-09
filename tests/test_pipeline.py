@@ -3295,7 +3295,7 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
             reddit_research_read={"facts": [
                 {"id": "F1", "text": "Mild swelling and redness may last a few days after Rejuran.", "source": "S1",
                  "quote": "Mild swelling and redness may last a few days after treatment."},
-                {"id": "F2", "text": "Rejuran is painless.", "source": "S1", "quote": "Rejuran is painless."}], "missing_ko": ["Prime 통증 비교는 병원 홍보 자료뿐"]},
+                {"id": "F2", "text": "Rejuran is painless.", "source": "S1", "quote": "Rejuran is painless."}], "summary_ko": ["리쥬란: 주사 뒤 붓기·붉어짐이 며칠 갈 수 있음"], "missing_ko": ["Prime 통증 비교는 병원 홍보 자료뿐"]},
             reddit_answer={"answerable": True, "fact_ids": ["R:F1"], "body": "Mild swelling and redness may last a few days after Rejuran, so ask your doctor what applies to you."})
         sent = []
         monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
@@ -3303,7 +3303,7 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
     finally:
         web.set_fetcher(None)
     item = rd.load()["items"][0]
-    assert stages == ["reddit_brief", "reddit_research", "reddit_research_read", "reddit_answer", "reddit_review"]
+    assert stages == ["reddit_brief", "reddit_research", "reddit_research_read", "reddit_research", "reddit_answer", "reddit_review"]  # 빈 부분은 한 번 더 찾는다
     router = importlib.import_module("pipeline.telegram_router")
     seen = {}
     monkeypatch.setattr(router.subprocess, "run", lambda *a, **k: (seen.update(k), subprocess.CompletedProcess(a, 0, "ok", ""))[1])
@@ -3311,10 +3311,19 @@ def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, mon
     assert seen["timeout"] == router.LONG_RUN_TIMEOUT > router.RUN_TIMEOUT                   # 정리→조사→초안은 10분을 넘길 수 있다
     assert "https://www.seoulskinclinic.com/rejuran" not in fetched                 # 병원 사이트는 출처로 받지 않는다
     assert [f["id"] for f in item["research"]["facts"]] == ["F1"]                    # 인용이 페이지에 없는 사실은 버린다
-    assert "[Reddit 1번 조사]" in sent[1] and "http" not in sent[1] and "Prime 통증 비교" in sent[1]   # 출처 나열 없이 보강 필요만
+    assert "[Reddit 1번 조사]" in sent[1] and "http" not in sent[1] and "Prime 통증 비교" in sent[1]   # 출처 나열 없이
+    assert "초안에 이렇게 반영합니다" in sent[1] and "리쥬란: 주사 뒤 붓기" in sent[1]                    # 무엇을 반영하는지 한국어로
     assert item["status"] == "ready" and "https://pubmed.ncbi.nlm.nih.gov/123/" in item["sources"]
     assert "skinboundkorea.com" not in item["paste"]                                 # 조사 출처는 관련 글 링크가 아니다
-    assert importlib.import_module("pipeline.telegram_router").parse("레딧 1 조사")["args"] == ["pipeline.reddit", "research", "1"]
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 1 조사")["args"] == ["pipeline.reddit", "research", "1"]
+    assert router.parse("레딧 1 조사: 스킨부스터, 컨시어지")["args"] == ["pipeline.reddit", "research", "1", "--", "스킨부스터, 컨시어지"]
+    prompts = []
+    real = rd.llm.generate_json
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append((stage, text)), real(stage, text))[1])
+    stages.clear()
+    rd.research_and_draft(1, "스킨부스터, 컨시어지")                                    # 주제를 더 찾고 초안까지 다시
+    assert "reddit_answer" in stages and "- 스킨부스터" in prompts[0][1] and "- 컨시어지" in prompts[0][1]
 
 
 def test_reddit_pasted_text_without_subreddit_uses_home_and_set_sub_continues(env, monkeypatch):
