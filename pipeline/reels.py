@@ -41,7 +41,9 @@ _http_impl = None  # 테스트용 가짜 HTTP (set_http)
 
 
 class ReelsError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int | None = None, code: int | None = None):
+        super().__init__(message)
+        self.status, self.code = status, code
 
 
 def set_http(fn) -> None:
@@ -89,7 +91,12 @@ def graph(path: str, params: dict) -> dict:
         with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as resp:
             return json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as e:
-        raise ReelsError(f"GET {path} → {e.code}: {_explain(e.read().decode(errors='replace'))}") from e
+        body = e.read().decode(errors="replace")
+        try:
+            api_code = (json.loads(body).get("error") or {}).get("code")
+        except ValueError:
+            api_code = None
+        raise ReelsError(f"GET {path} → {e.code}: {_explain(body)}", status=e.code, code=api_code) from e
     except (urllib.error.URLError, OSError, ValueError) as e:
         raise ReelsError(f"GET {path} 실패: {e}") from e
 
@@ -153,14 +160,34 @@ def hashtag_id(tag: str, state: dict) -> str:
     return state["hashtags"][tag]
 
 
-def top_media(tag_id: str, pages: int = 1) -> list[dict]:
-    """해시태그 인기 게시물 (페이지당 최대 50개, pages 페이지까지 — 다음 페이지는 after 커서)."""
+def _too_much_data(e: ReelsError) -> bool:
+    """Meta 가 '요청하는 데이터 양을 줄이라'고 할 때 (HTTP 500 · code 1, 2026-11-08 실제 응답)."""
+    return e.code == 1 or e.status == 500
+
+
+def top_media(tag_id: str, pages: int = 1, page_size: int | None = None) -> list[dict]:
+    """해시태그 인기 게시물 (pages 페이지까지 — 다음 페이지는 after 커서).
+    '데이터 양을 줄이라'(500·code 1)면 페이지 크기를 반으로 줄여 다시 (최소 10).
+    첫 페이지 뒤의 페이지가 실패하면 받은 데까지만 쓴다 — 페이지 하나 때문에 찾기 전체가 멈추지 않게."""
+    size = page_size or int(settings().get("page_size", 25))
     out, after = [], None
-    for _ in range(max(1, pages)):
-        params = {"user_id": user_id(), "fields": MEDIA_FIELDS, "limit": 50}
-        if after:
-            params["after"] = after
-        data = graph(f"{tag_id}/top_media", params)
+    for page in range(max(1, pages)):
+        while True:
+            params = {"user_id": user_id(), "fields": MEDIA_FIELDS, "limit": size}
+            if after:
+                params["after"] = after
+            try:
+                data = graph(f"{tag_id}/top_media", params)
+                break
+            except ReelsError as e:
+                if _too_much_data(e) and size > 10:
+                    size = max(10, size // 2)
+                    log.warning("top_media 데이터 양 줄임 → 페이지당 %d개로 다시", size)
+                    continue
+                if page > 0:
+                    log.warning("top_media %d페이지 실패 — 받은 %d개까지만 씀: %s", page + 1, len(out), e)
+                    return out
+                raise
         out += data.get("data") or []
         after = ((data.get("paging") or {}).get("cursors") or {}).get("after")
         if not after or not (data.get("paging") or {}).get("next"):

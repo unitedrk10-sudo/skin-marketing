@@ -176,3 +176,50 @@ def test_graph_error_hashtag_not_found():
             '"error_user_msg": "리쥬란vlog 해시태그가 존재하지 않아"}}')
     text = reels._explain(body)
     assert "해시태그를 찾을 수 없음" in text and "한도" not in text and "2207024" in text
+
+
+def test_top_media_shrinks_page_on_too_much_data(monkeypatch):
+    monkeypatch.setenv("INSTAGRAM_USER_ID", "1")
+    sizes = []
+
+    def fake(path, params):
+        sizes.append(params["limit"])
+        if params["limit"] > 12:
+            raise reels.ReelsError("GET top_media → 500: [1] Please reduce the amount of data", status=500, code=1)
+        return {"data": [{"id": "a"}]}
+
+    reels.set_http(fake)
+    try:
+        assert [m["id"] for m in reels.top_media("t", page_size=50)] == ["a"]
+        assert sizes == [50, 25, 12]
+    finally:
+        reels.set_http(None)
+
+
+def test_top_media_keeps_first_page_when_later_page_fails(monkeypatch):
+    monkeypatch.setenv("INSTAGRAM_USER_ID", "1")
+
+    def fake(path, params):
+        if params.get("after"):
+            raise reels.ReelsError("GET top_media → 400: [100] bad cursor", status=400, code=100)
+        return {"data": [{"id": "a"}, {"id": "b"}], "paging": {"cursors": {"after": "c1"}, "next": "x"}}
+
+    reels.set_http(fake)
+    try:
+        assert [m["id"] for m in reels.top_media("t", pages=3)] == ["a", "b"]
+    finally:
+        reels.set_http(None)
+
+
+def test_top_media_first_page_error_still_raises(monkeypatch):
+    monkeypatch.setenv("INSTAGRAM_USER_ID", "1")
+
+    def fake(path, params):
+        raise reels.ReelsError("GET top_media → 400: [190] expired", status=400, code=190)
+
+    reels.set_http(fake)
+    try:
+        with pytest.raises(reels.ReelsError, match="expired"):
+            reels.top_media("t", pages=3)
+    finally:
+        reels.set_http(None)
