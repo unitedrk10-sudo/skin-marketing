@@ -4188,6 +4188,60 @@ def test_faq_schema_reads_bold_questions_and_table_refs_stay_in_cells():
     assert out.count("<td>") == 2 and "A &#124; B study" in out
 
 
+def test_waitlist_form_on_neutral_posts_only_with_privacy_note(site_env, sponsored, tmp_path, monkeypatch):
+    """대기 명단 (2026-11-10): 추적기 주소가 있을 때만 양식, 스폰서 글엔 없음, 2027 표시·연결 안 함 문구·개인정보 안내."""
+    site_env.responses["blog"] = blog(FAQ_BLOG)
+    neutral = make_draft(site_env)
+    review_mod.review(common.content_dir("drafts") / neutral, fetch=ok_fetch)
+    _approve(site_env, neutral)
+    dist = tmp_path / "dist"
+    site_mod.build()  # TRACKER_URL 없음 → 받을 곳이 없으니 양식도 페이지도 없다
+    assert 'id="waitlist"' not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert not (dist / "waitlist").exists()
+    assert "waiting list" not in (dist / "privacy" / "index.html").read_text(encoding="utf-8")
+
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    site_mod.build()
+    post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert '<form method="post" action="https://go.example/w">' in post
+    assert 'name="page" value="/rejuran/"' in post and 'name="agree" value="yes" required' in post
+    assert "Planned for 2027" in post and "we do not arrange consultations or bookings" in post
+    assert post.index('id="waitlist"') < post.index('class="sources"')
+    values = re.findall(r'<option value="([^"]+)"', post)
+    logic = (common.ROOT / "tracker" / "src" / "logic.js").read_text(encoding="utf-8")
+    assert all(f'"{v}"' in logic for v in values) and values  # 양식 값 = 추적기가 받는 값
+    privacy = (dist / "privacy" / "index.html").read_text(encoding="utf-8")
+    assert 'id="waitlist"' in privacy and "We do not give it to clinics" in privacy
+    for rel in ("waitlist/index.html", "waitlist/thanks/index.html"):
+        assert '<meta name="robots" content="noindex">' in (dist / rel).read_text(encoding="utf-8")
+    assert "/waitlist/" not in (dist / "sitemap.xml").read_text(encoding="utf-8")
+    assert 'href="/waitlist/">Booking help (2027)' in (dist / "index.html").read_text(encoding="utf-8")
+
+    cfg = {**common.load_yaml("site.yaml"), "domain": "skinbound.example"}
+    sponsor_post = {"slug": "ad", "date": "2026-11-10T00:00:00+09:00",
+                    "draft": {"id": "x", "content_type": "procedure", "facts": [], "sponsor": sponsors_mod.validate(SPONSOR),
+                              "blog": {"title": "Ad", "markdown": "Body."}}}
+    assert 'id="waitlist"' not in site_mod.render_post(cfg, sponsor_post)
+    monkeypatch.setattr(site_mod, "config", lambda: {**cfg, "waitlist": {"enabled": False}})
+    site_mod.build()
+    assert 'id="waitlist"' not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+
+
+def test_waitlist_report_line_has_counts_only(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    today = date.today()
+    data = {"total": 3, "by_day": [{"day": (today - timedelta(days=30)).isoformat(), "n": 1}, {"day": today.isoformat(), "n": 2}],
+            "by_country": [{"country": "US", "n": 2}, {"country": "", "n": 1}], "by_timing": [], "by_source": [],
+            "rows": [{"email": "a@example.com", "created_at": "t", "timing": "unsure", "country": "US", "source": "instagram", "page": "/x/"}]}
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: data)
+    assert tracker_mod.waitlist_lines(7) == ["📮 대기 명단 3명 (최근 7일 +2) · US 2, ? 1"]
+    out = tracker_mod.waitlist_export(tmp_path / "w.csv")
+    assert out.read_text(encoding="utf-8").splitlines()[1] == "a@example.com,t,unsure,US,instagram,/x/"
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: {"total": 0})
+    assert tracker_mod.waitlist_lines(7) == []  # 아직 없으면 조용히
+
+
 def _threads_api(monkeypatch, tmp_path, fail: bool = False):
     monkeypatch.setenv("THREADS_ACCESS_TOKEN", "tok")
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "tok" / "threads.json"))
