@@ -2272,6 +2272,17 @@ SOCIAL = {"link": SOCIAL_LINK,
 MONDAY = datetime(2026, 10, 12, 9, 30, tzinfo=social_mod.KST)
 
 
+@pytest.fixture
+def old_social(monkeypatch):
+    """2026-11-10 이전 방식(X 수동 게시·AI-assisted 끝줄·Threads 승인 후 게시) — 설정을 되돌리면 그대로 돌아가야 한다."""
+    real = social_mod.settings
+
+    def settings():
+        cfg = real()
+        return {**cfg, "ai_label": True, "x": {**cfg["x"], "enabled": True}, "threads": {**cfg["threads"], "auto_post": False}}
+    monkeypatch.setattr(social_mod, "settings", settings)
+
+
 def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="approved", live=True):
     slug = "what-is-rejuran" if draft_id == "2026-W40-01-what-is-rejuran" else draft_id
     draft = {"id": draft_id, "content_type": "procedure", "facts": [{"id": "F1", "text": "Downtime is 1-3 days.", "url": URL}],
@@ -2289,7 +2300,7 @@ def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="appr
     return path
 
 
-def test_social_only_for_deployed_posts_and_x_length_counts_link(env):
+def test_social_only_for_deployed_posts_and_x_length_counts_link(env, old_social):
     env.responses["social"] = SOCIAL
     _published(live=False)
     assert social_mod.pending_paths() == []                                     # 배포 전: 링크가 열리지 않으니 안 만든다
@@ -2302,7 +2313,7 @@ def test_social_only_for_deployed_posts_and_x_length_counts_link(env):
     assert social_mod.x_length("Source: aad.org · x") == len("Source:  · x") + 23  # 도메인만 써도 X 는 링크로 센다
 
 
-def test_social_compose_three_kinds_list_and_x_reply_link(env):
+def test_social_compose_three_kinds_list_and_x_reply_link(env, old_social):
     env.responses["social"] = SOCIAL
     _published()
     assert social_mod.main(["compose"]) == 0
@@ -2356,7 +2367,7 @@ def test_social_blocked_kind_retried_alone_and_sponsored_skipped(env):
     assert [p.name for p in social_mod.pending_paths()] == []                    # 스폰서 글: 정책 확인 전 제외
 
 
-def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkeypatch):
+def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkeypatch, old_social):
     env.responses["social"] = SOCIAL
     social_mod.compose(_published())
     assert social_mod.daily_message(MONDAY.replace(hour=8)) == ""                # 9시 전
@@ -2429,7 +2440,7 @@ def test_blog_publish_schedule_assigns_mon_wed_fri_one_per_day(env, monkeypatch)
     assert [p["draft"]["id"] for p in posts] == ["2026-W41-07-a"] and posts[0]["date"].startswith("2026-10-12T07:00")
 
 
-def test_threads_api_post_and_token_refresh(env, tmp_path, monkeypatch):
+def test_threads_api_post_and_token_refresh(env, tmp_path, monkeypatch, old_social):
     env.responses["social"] = SOCIAL
     path = _published()
     social_mod.compose(path)
@@ -4175,3 +4186,65 @@ def test_faq_schema_reads_bold_questions_and_table_refs_stay_in_cells():
     md2, _ = site_mod._numbered_sources("| Option | Downtime |\n|---|---|\n| Toning | 1 day [F1] |\n", facts)
     out = site_mod.render_markdown(md2)
     assert out.count("<td>") == 2 and "A &#124; B study" in out
+
+
+def _threads_api(monkeypatch, tmp_path, fail: bool = False):
+    monkeypatch.setenv("THREADS_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "tok" / "threads.json"))
+    sent = []
+
+    def fake_http(method, url, params=None, headers=None, body=None):
+        if "refresh_access_token" in url:
+            return {"access_token": "tok"}
+        if url.endswith("/me"):
+            return {"id": "42", "username": "skinboundkorea"}
+        if url.endswith("/42/threads"):
+            if fail:
+                raise social_mod.SocialError("POST /v1.0/42/threads → 500: boom")
+            sent.append(params["text"])
+            return {"id": "c1"}
+        if url.endswith("/threads_publish"):
+            return {"id": "p1"}
+        return {"permalink": f"https://www.threads.net/@skinboundkorea/post/p{len(sent)}"}
+    monkeypatch.setattr(social_mod, "_http", fake_http)
+    return sent
+
+
+def test_threads_posts_automatically_without_ai_label_and_x_is_off(env, tmp_path, monkeypatch):
+    """2026-11-10: 칸마다 승인 없이 Threads 게시, 끝줄에 AI-assisted 없음, X 줄은 메시지에 없음."""
+    env.responses["social"] = SOCIAL
+    path = _published()
+    with monkeypatch.context() as m:  # 설정을 끄기 전에 만들어 둔 글 (AI-assisted 끝줄)
+        real = social_mod.settings
+        m.setattr(social_mod, "settings", lambda: {**real(), "ai_label": True})
+        social_mod.compose(path)
+    stored = common.load_json(path / "social.json")["items"]
+    assert "AI-assisted" in stored["link"]["channels"]["threads"]["text"]
+    assert "x.com/intent" not in social_mod.list_message() and "스레드 올려" not in social_mod.list_message()  # 토큰 없음 → 작성 링크만, X 는 없음
+
+    sent = _threads_api(monkeypatch, tmp_path)
+    msg = social_mod.daily_message(MONDAY)
+    assert msg.startswith("[Threads 자동 게시 1/2] 10/12(월) · 새 글 소개 — What is Rejuran?")
+    assert msg.endswith("https://www.threads.net/@skinboundkorea/post/p1") and "x.com" not in msg
+    assert sent[0].endswith("Full guide with sources: https://skinboundkorea.com/what-is-rejuran/") and "AI-assisted" not in sent[0]
+    item = common.load_json(path / "social.json")["items"]["link"]
+    assert item["channels"]["threads"]["posted"]["url"].endswith("/p1") and social_mod.sealed(item)  # 끝줄을 바꾼 뒤 지문도 다시
+    assert social_mod.daily_message(MONDAY.replace(hour=15)) == "" and len(sent) == 1   # 칸마다 한 번
+    evening = social_mod.daily_message(MONDAY.replace(hour=20))
+    assert evening.startswith("[Threads 자동 게시 2/2]") and sent[1].endswith("Source: pubmed.ncbi.nlm.nih.gov · Not medical advice")
+    assert social_mod.post(path, "threads") .startswith("이미 게시됨")                     # 같은 글을 두 번 올리지 않는다
+
+
+def test_threads_auto_post_failure_is_reported_not_retried(env, tmp_path, monkeypatch):
+    env.responses["social"] = SOCIAL
+    path = _published()
+    social_mod.compose(path)
+    assert "AI-assisted" not in json.dumps(common.load_json(path / "social.json"))        # 새로 만든 글엔 처음부터 없음
+    _threads_api(monkeypatch, tmp_path, fail=True)
+    msg = social_mod.daily_message(MONDAY)
+    assert msg.startswith("⚠️ Threads 자동 게시 실패") and "500: boom" in msg and "'오늘 스레드 올려'" in msg
+    assert social_mod.daily_message(MONDAY.replace(hour=10)) == ""                        # 같은 칸을 다시 올리지 않는다
+    assert common.load_json(path / "social.json")["items"]["link"]["channels"]["threads"]["posted"] is None
+    sent = _threads_api(monkeypatch, tmp_path)                                            # 사람이 확인하고 다시
+    monkeypatch.setattr(social_mod, "now_kst", lambda: MONDAY.replace(hour=11))
+    assert "threads 게시 기록" in social_mod.post("오늘", "threads") and len(sent) == 1
