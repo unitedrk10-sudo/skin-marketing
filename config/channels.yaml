@@ -99,4 +99,5 @@ sponsored_policy:
 review:
   trust_start: 2026-10-05   # 첫 검수 주의 월요일 → 4주 점검 11/1(일) 리포트, 8주 11/29
   check_weeks: 4
-  trust_stage: 2            # 2026-11-02 사람 결정: ⚠️·⛔ 전부 + ✅ 20% 사람, 나머지 ✅ 자동 승인 (03_review.auto_approve_message)
+  trust_stage: 4            # 2026-11-10 사람 결정: ✅ 는 전부 자동 승인 (표본 없음). ⚠️·⛔, 👤 사람 확인 항목, 스폰서, 사람이 수정 요청한 글,
+                            # 되돌린 글은 계속 사람 (03_review.auto_candidates). 2 = ✅ 20% 사람, 3 = 10%, 1 = 전부 사람

@@ -2723,6 +2723,38 @@ def test_auto_approve_only_clean_unsampled_passes(env, monkeypatch):
     assert report.agreement(date(2000, 1, 1)) == (0, 1)                      # 자동 승인 줄은 일치율에 안 들어간다
 
 
+def test_stage_four_auto_approves_every_clean_pass_but_nothing_else(env, monkeypatch):
+    """2026-11-10: ✅ 는 표본 없이 전부 자동 승인. ⚠️·⛔·사람 확인 항목·스폰서·수정 요청 글은 그대로 사람."""
+    review = importlib.import_module("pipeline.03_review")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_stage": 4}} if n == "channels.yaml" else _o(n))
+    ids = [f"2026-W46-{i:02d}-post" for i in range(1, 40)]
+    sampled = [i for i in ids if review.human_sampled(i, 20)][:2]            # 2단계였다면 사람에게 갔을 글
+    rest = [i for i in ids if i not in sampled]
+
+    def make(draft_id, grade="pass", human=(), **extra):
+        path = common.content_dir("drafts") / draft_id
+        path.mkdir(parents=True)
+        common.save_json(path / "draft.json", {"id": draft_id, "topic": {"title": draft_id}, "blog": {"title": draft_id, "markdown": "x"}, "facts": [], **extra})
+        common.save_json(path / "review.json", {"grade": grade, "always_human": list(human), "findings": []})
+    caution, block, priced, sponsored, revised = rest[:5]
+    for i in sampled:
+        make(i)
+    make(caution, "caution"); make(block, "block"); make(priced, human=["가격 포함"])
+    make(sponsored, sponsor={"name_ko": "병원"}); make(revised, revisions=[{"note": "고쳐"}])
+    assert sorted(p.name for p in review.auto_candidates()) == sorted(sampled)
+    review.auto_approve_message()
+    assert all((common.content_dir("approved") / i).exists() for i in sampled)
+    for other in (caution, block, priced, sponsored, revised):
+        assert (common.content_dir("drafts") / other).exists()
+    assert int(_real_channels()["review"]["trust_stage"]) == 4               # 실제 설정도 4단계
+
+
+def _real_channels() -> dict:
+    import yaml
+    return yaml.safe_load((common.ROOT / "config" / "channels.yaml").read_text(encoding="utf-8"))
+
+
 def test_auto_approve_off_in_stage_one(env, monkeypatch):
     review = importlib.import_module("pipeline.03_review")
     monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
