@@ -369,7 +369,7 @@ def record_agreement(draft_id: str, auto_grade: str | None, decision: str) -> No
 
 
 AUTO_FILE = "auto_approved.json"
-HUMAN_RATE = {2: 20, 3: 10}  # 신뢰 단계별 ✅ 글 중 사람이 보는 비율(%) (기획서 6-0)
+HUMAN_RATE = {2: 20, 3: 10, 4: 0}  # 신뢰 단계별 ✅ 글 중 사람이 보는 비율(%) (기획서 6-0). 4 = ✅ 전부 자동 승인 (2026-11-10 운영자 결정)
 
 
 def _human_rate() -> int | None:
