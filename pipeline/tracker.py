@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import csv
 import json
 import os
 import urllib.error
@@ -77,6 +78,35 @@ def add_link(sponsor_id: str | None, target: str | None, label: str) -> dict:
 
 def stats(start: date, end: date, sponsor_id: str | None = None) -> dict:
     return _request("GET", "/api/stats", query={"from": start.isoformat(), "to": end.isoformat(), "sponsor": sponsor_id})
+
+
+def waitlist(emails: bool = False) -> dict:
+    """대기 명단 집계 (emails=True 면 명단 포함 — 화면·로그·텔레그램에 내지 않고 파일로만 쓴다)."""
+    return _request("GET", "/api/waitlist", query={"emails": "1" if emails else ""})
+
+
+def waitlist_lines(days: int = 7) -> list[str]:
+    """주간 리포트용 — 숫자만 (이메일 주소는 넣지 않는다)."""
+    if not configured():
+        return []
+    data = waitlist()
+    if not data.get("total"):
+        return []
+    since = (date.today() - timedelta(days=days)).isoformat()
+    new = sum(r["n"] for r in data.get("by_day", []) if r["day"] > since)
+    top = ", ".join(f"{r['country'] or '?'} {r['n']}" for r in data.get("by_country", [])[:5])
+    return [f"📮 대기 명단 {data['total']}명 (최근 {days}일 +{new})" + (f" · {top}" if top else "")]
+
+
+def waitlist_export(path: Path | None = None) -> Path:
+    path = path or ROOT / "reports" / "waitlist" / "waitlist.csv"  # reports/ 는 git 제외
+    rows = waitlist(emails=True).get("rows", [])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["email", "created_at", "timing", "country", "source", "page"])
+        w.writerows([r.get(k) or "" for k in ("email", "created_at", "timing", "country", "source", "page")] for r in rows)
+    return path
 
 
 def _pct(part: int, total: int) -> str:
@@ -174,6 +204,9 @@ def main(argv: list[str] | None = None) -> int:
     sr = sub.add_parser("sponsor-report")
     sr.add_argument("--sponsor", required=True)
     sr.add_argument("--month", help="YYYY-MM (기본: 지난달)")
+    w = sub.add_parser("waitlist", help="대기 명단 집계 / --export 파일로 내보내기 / --delete 삭제 요청 처리")
+    w.add_argument("--export", action="store_true")
+    w.add_argument("--delete", metavar="EMAIL")
     args = parser.parse_args(argv)
 
     if args.cmd == "report":
@@ -187,6 +220,20 @@ def main(argv: list[str] | None = None) -> int:
         message = weekly_message(current, previous)
         if message:
             print(message)
+        return 0
+    if args.cmd == "waitlist":
+        if args.delete:
+            done = _request("POST", "/api/waitlist/delete", {"email": args.delete})["deleted"]
+            print("삭제했습니다" if done else "명단에 없는 주소입니다")
+            return 0
+        if args.export:
+            path = waitlist_export()
+            print(f"내보냈습니다: {path.relative_to(ROOT)} (이메일 주소가 들어 있으니 공유하지 마세요)")
+            return 0
+        data = waitlist()
+        print(f"대기 명단 {data['total']}명")
+        for key, title in (("by_country", "국가"), ("by_timing", "방문 시기"), ("by_source", "채널")):
+            print(f"- {title}: " + (", ".join(f"{r[key[3:]] or '?'} {r['n']}" for r in data[key]) or "-"))
         return 0
     if args.cmd == "add":
         link = add_link(args.sponsor, args.target, args.label)
