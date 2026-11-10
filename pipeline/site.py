@@ -1512,6 +1512,9 @@ def build(out: Path | None = None) -> dict:
                     shutil.copy(chart, out / "data" / "notes" / note["id"] / "chart.png")
         except dataset.DatasetError as e:  # 새 지역 영문명이 없어도 블로그 배포는 막지 않는다
             log.warning("데이터 페이지 생략: %s", e)
+    ig_page = importlib.import_module("pipeline.ig_page")  # 인스타그램 프로필 링크 도착 페이지 (config/reels.yaml landing)
+    if ig_page.enabled() and (ig_html := ig_page.render(cfg, posts)):
+        write(f"{ig_page.PATH}/index.html", ig_html)
     if cfg.get("partners_page"):  # 병원 대상 안내 — 변호사 확인 후 켠다 (기획서 12-1-1 체크리스트)
         write("partners/index.html", render_partners(cfg))
     write("404.html", page(cfg, f"Not found — {cfg['name']}", '<div class="page"><h1>Page not found</h1><p><a href="/">Back to all guides</a></p></div>',
