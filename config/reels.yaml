@@ -9,12 +9,42 @@ max_age_days: 365        # 이보다 오래된 게시물은 뺀다 (2026-11-05 �
 min_likes: 0             # 좋아요가 이보다 적으면 뺀다 (좋아요 숨김 글은 이 조건을 적용하지 않고 뒤로 보낸다)
 max_pages: 3             # 해시태그마다 인기 게시물을 몇 페이지까지 볼지
 page_size: 25            # 페이지당 개수 (Meta 최대 50 — 2026-11-08 50개 요청이 '데이터 양을 줄이라'(500)로 실패해 25, 실패하면 코드가 반으로 줄여 다시)
+recent: true             # 최근 24시간 게시물(recent_media)도 본다 — 인기 게시물은 1년 넘은 글이 대부분 (2026-11-08)
+recent_pages: 2
 
 # 주제 = 블로그에 이미 쓴 시술. 해시태그는 # 없이 (이모지 불가)
 topics:
   rejuran:
     label: 리쥬란
+    en: Rejuran          # 영상 끝 문구 "Our take on <en> → link in bio" (transcribe --about 으로 바꿀 수 있음)
     hashtags: [리쥬란, 리쥬란힐러, 리쥬란후기]
+    title: Rejuran       # 도착 페이지 /ig/ 의 칸 제목
+    posts: [rejuran-korea-downtime-sessions-aftercare]   # /ig/ 에 보일 블로그 글 주소 (사이트 글 주소 그대로)
+  # 2026-11-10 `reels tags` 점검(인기·최근 24시간 각 1페이지): 인기 게시물은 거의 사진이거나 1년 넘은 영상,
+  # 영상은 최근 24시간에 몰리지만 대부분 병원 글이라 캡션 통과는 태그당 하루 0~3개.
+  # 통과 많은 순: 스킨부스터 3 · 피부시술 3 · 쥬베룩 1 · 울쎄라 1 · 써마지 1 /
+  # 0: 피부과브이로그 · 시술브이로그 · 시술후기 · 스킨부스터후기 · 리쥬란다운타임 (리쥬란vlog 는 해시태그 없음)
+  procedures:
+    label: 스킨부스터·리프팅
+    en: skin boosters    # 영상마다 다르면 transcribe --about "Ultherapy" 처럼
+    hashtags: [스킨부스터, 피부시술, 쥬베룩, 울쎄라, 써마지]
+    title: Skin boosters & lifting
+    posts: [juvelook-pdlla-collagen-booster-explained, skin-booster-price-korea-vs-us-southeast-asia, thermage-korea-monopolar-rf-vs-hifu]
+
+# 인스타그램 프로필 링크 도착 페이지 /ig/ (2026-11-10 운영자 결정, pipeline/ig_page.py) — 릴스 → 홈페이지 연결.
+# 주제별 posts 칸 + 여행 칸. 스폰서 글·코스 광고 카드가 붙은 글은 코드가 뺀다. 검색 제외(noindex)·sitemap 제외.
+# 프로필 링크는 이 페이지의 추적 링크로: python -m pipeline.tracker add --target https://skinboundkorea.com/ig/ --label "Instagram profile"
+#   → 나온 주소 중 Instagram(?s=ig) 을 프로필 첫 번째 링크로. 성과는 python -m pipeline.reels traffic
+landing:
+  enabled: true
+  link_label: Instagram profile   # tracker add 의 --label 과 같게 (traffic 이 이 이름으로 링크를 찾는다)
+  kicker: From our Reels
+  heading: Our guides on the treatments in our Reels
+  intro: >-
+    The Reels we translate are other people's personal experiences, in their own words — results vary.
+    Here are our sourced guides on the same treatments: what they are, downtime, and how to plan a trip around them.
+  trip_title: Planning the trip around it
+  trip_posts: [how-many-days-korea-skin-treatment-trip, flying-after-skin-treatment-korea-timing-guide]
 
 # 캡션에 이 표현이 있으면 후보에서 뺀다 (정규식). "광고 아님"·"협찬X" 같은 부정 표현은 코드가 먼저 지운다.
 exclude:
@@ -26,6 +56,8 @@ exclude:
     - 원고료
     - 소정의
     - 제공\s*받
+    - 제품\s*제공     # '#제품제공' (2026-11-08 실제 후보에서 발견)
+    - '#제공\b'
     - 지원\s*받
     - 경제적\s*(이해\s*관계|대가)
     - 유료\s*파트너십
@@ -33,6 +65,9 @@ exclude:
     - '\bpaid partnership\b'
   clinic:      # 병원·의사 계정 글, 특정 병원이 드러나는 글
     - '[가-힣A-Za-z0-9]+(피부과|의원|클리닉|성형외과|병원)'
+    - '(저희|우리)\s*(병원|의원|클리닉|피부과)'   # '저희 병원에 도착했습니다' (2026-11-10 실제 후보)
+    - '\bdoctors?\b'                              # 'DOCTORS 공덕' 같은 병원 브랜드 (2026-11-10 실제 후보)
+    - '\b(clinic|dermatology)\b'
     - 원장
     - 전문의
     - 예약
@@ -46,7 +81,7 @@ exclude:
   dm_funnel:   # "댓글 남기면 DM" — 병원 정보·할인을 DM 으로 넘기는 바이럴 방식 (2026-11-05 첫 후보에서 발견)
     - 디엠
     - '\bDM\b'
-    - 댓글\s*(남겨|남기|달아|주시|주세요|ㄱㄱ|고고|go\b)
+    - 댓글\s*(로|에)?\s*(남겨|남기|달아|주시|주세요|ㄱㄱ|고고|go\b)   # '댓글로 남겨주세요' (2026-11-10)
     - 정보\s*(드려|드릴|보내)
     - 댓글\s*(로|에)?\s*["“'‘]?\s*정보   # '댓글로 "정보"라고 달아주세요' (2026-11-05 실제 API 결과에서 발견)
     - 카톡\s*주세요
@@ -66,3 +101,27 @@ warn:
     - 프로모션
     - 스토어
     - 쇼핑몰
+  clinic_voice:  # 병원 계정의 안내 말투 — 해시태그 결과엔 계정 이름이 없어 병원 글이 캡션 검사를 자주 통과한다 (2026-11-10 후보 7개 중 다수)
+    - 알려\s*드(립|릴|려)
+    - 궁금하신\s*분
+    - 확인해\s*보세요
+    - 권장(되는|하는)\s*(주기|횟수)
+
+# 고른 영상 받아쓰기·번역 (pipeline/reels_work.py, `reels transcribe`, 2026-11-10)
+transcribe:
+  whisper_model: large-v3-turbo   # 로컬 faster-whisper (처음 실행 때 모델을 내려받는다, 약 1.6GB). 느리면 small·medium
+  device: cpu
+  compute_type: int8
+  hints: [리쥬란, 리쥬란힐러, 리쥬란HB, 쥬베룩, 스킨부스터, 울쎄라, 써마지, 슈링크, 온다, 리투오, 엑소좀, PDRN,
+          보톡스, 필러, 물광주사, 레이저토닝, 피코토닝, 포텐자, 아쿠아필, 다운타임, 시술, 피부과]   # 받아쓰기 힌트 (시술·제품 이름)
+  frame_every_sec: 2     # 화면 글자 읽기 프레임 간격
+  max_frames: 30
+  speech_ignore: [예약, 상담, 문의, 진료]   # 개인 후기 말에 흔한 단어 — 말·화면 글자 검사에서만 뺀다 (캡션 검사는 그대로)
+  overlay_top: "Translated by Skinbound · more info in bio"
+  overlay_end: "Our take on {{about}} → link in bio"
+  caption_lines:
+    - "🎥 Original: @<원작자> — {{permalink}}"
+    - "English translation of the original Korean, as said."
+    - "Personal experience — results vary. Not medical advice."
+    - "Translated with AI, checked by a person."
+    - "Our take on {{about}} → link in bio"

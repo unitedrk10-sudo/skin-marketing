@@ -139,6 +139,21 @@ stages:
     model: gemini-3.1-pro-preview
     thinking: low
 
+  reels_screen:    # 리믹스 번역 릴스 — 프레임을 보고 화면 글자·장면 신호(주사·전후·병원) 읽기 (pipeline/reels_work.py)
+    provider: claude_cli
+    tools: [Read]
+    timeout_sec: 600
+
+  reels_translate: # 리믹스 번역 릴스 — 받아쓰기·화면 글자 → 원문 그대로의 영어 자막 (쓰기 = Claude)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 600
+
+  reels_review:    # 리믹스 번역 릴스 — 원문 대조·원문 과장 검수 (쓴 회사와 다른 모델)
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
   translate:       # 03 검수용 한국어 번역 (텔레그램 검수 메시지·첨부 — 게시되지 않는 참고용, pipeline/translate.py)
     provider: gemini
     model: gemini-3.8-flash

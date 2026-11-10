@@ -174,8 +174,8 @@ def test_gemini_stages_use_no_deprecated_parameters():
 def test_writing_and_review_use_different_vendors():
     """기획서 6-0: 같은 회사 모델이 쓰고 검수하지 않는다 (작성 Claude ↔ 검수 Gemini)."""
     vendor = {"claude_cli": "anthropic", "claude_code": "anthropic", "anthropic": "anthropic", "gemini": "google"}
-    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search", "shorts_write", "reddit_answer", "reddit_direct", "data_note_write")}
-    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener", "shorts_review", "reddit_review", "data_note_review")}
+    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search", "shorts_write", "reddit_answer", "reddit_direct", "data_note_write", "reels_translate")}
+    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener", "shorts_review", "reddit_review", "data_note_review", "reels_review")}
     assert writers.isdisjoint(reviewers)
 
 

@@ -20,11 +20,14 @@ def api(tmp_path, monkeypatch):
     monkeypatch.delenv("INSTAGRAM_ACCESS_TOKEN", raising=False)
     calls = []
     feeds = {"리쥬란": [], "리쥬란힐러": [], "리쥬란후기": []}
+    recent = {}
 
     def fake(path, params):
         calls.append((path, params))
         if path == "ig_hashtag_search":
             return {"data": [{"id": f"tag-{params['q']}"}]}
+        if path.endswith("/recent_media"):
+            return {"data": recent.get(path.split("/")[0].removeprefix("tag-"), [])}
         if path.endswith("/top_media"):
             assert params["user_id"] == "1789" and "like_count" in params["fields"]
             return {"data": feeds[path.split("/")[0].removeprefix("tag-")]}
@@ -41,6 +44,7 @@ def api(tmp_path, monkeypatch):
     ("리쥬란 맞고 왔어요 #협찬", "sponsored"),
     ("체험단으로 다녀왔습니다", "sponsored"),
     ("시술을 제공받아 작성했어요", "sponsored"),
+    ("#제품제공 이게 진짜 화장품이면", "sponsored"),
     ("경제적 이해관계가 있음", "sponsored"),
     ("thanks! #ad", "sponsored"),
     ("강남아름다운피부과에서 리쥬란", "clinic"),
@@ -86,7 +90,7 @@ def test_find_filters_ranks_by_likes_and_remembers(api):
     feeds["리쥬란후기"] = [media("f", "○○의원 원장님 최고", likes=3000)]  # 병원 → 제외
     last = reels.find("rejuran")
     assert [i["id"] for i in last["items"]] == ["e", "a", "d"]
-    assert last["dropped"] == {"협찬·체험단": 1, "병원·의사": 1}
+    assert last["dropped"] == {"협찬·체험단": 1, "병원·의사": 1, "영상 아님": 1}
     text = reels.message(last)
     assert "❤ 1,200" in text and "❤ 숨김" in text and "https://www.instagram.com/reel/e/" in text
     assert "제외:" in text and "리믹스 허용" in text
@@ -223,3 +227,32 @@ def test_top_media_first_page_error_still_raises(monkeypatch):
             reels.top_media("t", pages=3)
     finally:
         reels.set_http(None)
+
+
+def test_find_adds_recent_media_and_marks_it(api, monkeypatch):
+    feeds, calls = api
+    feeds["리쥬란"] = [media("old_top", "리쥬란", likes=100)]
+    # 같은 fixture 의 recent 사전을 직접 채운다
+    import inspect
+    fake = reels._http_impl
+    recent = inspect.getclosurevars(fake).nonlocals["recent"]
+    recent["리쥬란"] = [media("new", "리쥬란 어제 맞음", likes=5)]
+    last = reels.find("rejuran")
+    ids = [i["id"] for i in last["items"]]
+    assert ids == ["old_top", "new"]
+    assert last["items"][1]["fresh"] is True and "🆕 최근 24시간" in reels.message(last)
+    assert any(p.endswith("/recent_media") for p, _ in calls)
+
+
+def test_recent_failure_keeps_top_candidates(api, monkeypatch):
+    feeds, _ = api
+    feeds["리쥬란"] = [media("a", "리쥬란", likes=1)]
+    original = reels._http_impl
+
+    def flaky(path, params):
+        if path.endswith("/recent_media"):
+            raise reels.ReelsError("GET recent_media → 400: [10] no permission", status=400, code=10)
+        return original(path, params)
+
+    reels.set_http(flaky)
+    assert [i["id"] for i in reels.find("rejuran")["items"]] == ["a"]
