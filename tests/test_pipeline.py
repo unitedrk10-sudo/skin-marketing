@@ -1230,9 +1230,11 @@ def test_site_sponsored_post_labels_and_tracked_link(sponsored, tmp_path, monkey
 
 def test_partners_page_is_opt_in_korean_and_noindex(site_env, tmp_path, monkeypatch):
     out = tmp_path / "dist"
-    site_mod.build(out)
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example", "partners_page": False})
+    site_mod.build(out)                                                                  # 끄면 페이지도 꼬리말 링크도 없다
     assert not (out / "partners").exists() and "/partners/" not in (out / "index.html").read_text(encoding="utf-8")
-    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "partners_page": True})
+    assert common.load_yaml("site.yaml")["partners_page"] is True                        # 2026-11-10 운영자 결정으로 공개
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example"})
     site_mod.build(out)
     page_html = (out / "partners" / "index.html").read_text(encoding="utf-8")
     assert '<html lang="ko"' in page_html and 'content="noindex"' in page_html
@@ -1490,6 +1492,33 @@ def test_analytics_report_joins_links_and_procedures(env, tmp_path, monkeypatch)
     assert len(data) == 3 and {r["kind"] for r in data} == {"registry", "pilot", "other"} and "attractions" in data[0]
     assert "## 관광지·지역별" in md
     assert "visitor" not in data[0] and data[0]["week"] == "2026-W40"
+
+
+def test_clinic_click_report_is_a_separate_file_with_rules(env, tmp_path, monkeypatch, capsys):
+    """2026-11-10: 병원별 클릭은 영업 자료로 쓴다 — 합산 리포트·CSV 와 다른 파일, 지킬 선을 파일에 적는다."""
+    links = {
+        "_clinic:a:1": {"url": "u", "code": "c1", "kind": "clinic", "clinic": "가까운피부과의원", "attraction": "coex", "title": "Coex walk"},
+        "_clinic:b:1": {"url": "u", "code": "c2", "kind": "clinic", "clinic": "가까운피부과의원", "attraction": "bukchon", "title": "Bukchon walk"},
+        "_clinic:a:2": {"url": "u", "code": "c3", "kind": "clinic", "clinic": "먼피부과의원", "attraction": "coex", "title": "Coex walk"},
+        "_registry:a": {"url": "u", "code": "r1", "kind": "registry", "title": "Coex walk"},
+    }
+    common.save_json(common.content_dir() / "site" / "tracked_links.json", links)
+    row = lambda code, clicks, **kw: {"day": "2026-10-05", "code": code, "source": "blog", "country": "US", "is_bot": 0,  # noqa: E731
+                                      "clicks": clicks, "unique_visitors": clicks, **kw}
+    rows = [row("c1", 3), row("c2", 2, day="2026-10-06", country="SG"), row("c3", 1), row("c1", 40, is_bot=1), row("r1", 9)]
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: {"rows": rows})
+    monkeypatch.setattr(analytics_mod, "reports_dir", lambda: tmp_path / "reports")
+    assert analytics_mod.main(["clinics", "--month", "2026-10"]) == 0
+    md = (tmp_path / "reports" / "clinics-2026-10.md").read_text(encoding="utf-8")
+    assert "| 가까운피부과의원 | 5 | 5 | 2 | bukchon, coex | 2 | US 3, SG 2 |" in md        # 여러 글의 같은 병원은 합침, 봇 제외
+    assert "| 먼피부과의원 | 1 |" in md and "병원 2곳 · 클릭 6" in md                       # 등록기관 목록 클릭은 병원 것이 아님
+    assert "요금은 정액" in md and "도착까지" in md and "그 병원 줄만" in md
+    assert "가까운피부과의원: 5" in capsys.readouterr().out
+    assert analytics_mod.main(["report", "--month", "2026-10"]) == 0                       # 합산 리포트에는 여전히 병원명 없음
+    for name in ("2026-10.md", "2026-10.csv"):
+        assert "피부과의원" not in (tmp_path / "reports" / name).read_text(encoding="utf-8")
 
 
 def test_analytics_silent_without_tracker(monkeypatch, capsys):

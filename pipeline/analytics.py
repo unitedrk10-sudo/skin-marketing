@@ -26,6 +26,7 @@ log = get_logger("analytics")
 KIND_LABEL = {"registry": "의도(등록기관 목록)", "sponsor": "도착(스폰서 병원)", "pilot": "도착(파일럿 병원)",
               "clinic": "도착(주변 병원 목록)", "other": "기타 링크"}
 # 주변 병원 목록(clinic)은 병원마다 링크가 있지만 리포트·CSV 에는 병원명 없이 글·지역·시술 단위 합산으로만 낸다.
+# 병원별 수치는 `clinics` 명령의 별도 파일로만 낸다 (2026-11-10 운영자 결정: 광고 영업 자료로 사용 — clinic_clicks).
 CSV_FIELDS = ["day", "week", "code", "kind", "contract", "sponsor_id", "draft_id", "slug", "title", "axis", "procedures", "attractions",
               "source", "country", "clicks", "unique_visitors"]
 
@@ -232,6 +233,62 @@ def run(start: date, end: date, name: str) -> tuple[Path, dict]:
     return out / f"{name}.md", result
 
 
+def clinic_clicks(raw_rows: list[dict], links: dict[str, dict]) -> list[dict]:
+    """주변 병원 목록에서 병원별로 병원 사이트로 넘어간 클릭 (사람만). 같은 병원이 여러 글에 있으면 합친다.
+    2026-11-10 운영자 결정으로 광고 영업 자료에 쓴다. 지키는 선: 요금은 정액이고 이 숫자와 연동하지 않는다,
+    측정은 병원 사이트 도착까지(예약·내원은 모른다), 목록의 포함·순서는 이 숫자나 계약과 무관하다."""
+    by_code = {v["code"]: v for v in links.values() if v.get("code") and v.get("kind") == "clinic" and v.get("clinic")}
+    out: dict[str, dict] = {}
+    for r in raw_rows:
+        meta = by_code.get(r.get("code"))
+        if not meta or r.get("is_bot"):
+            continue
+        c = out.setdefault(meta["clinic"], {"clinic": meta["clinic"], "clicks": 0, "unique": 0, "posts": set(), "areas": set(),
+                                            "countries": Counter(), "sources": Counter(), "days": set()})
+        n = int(r["clicks"])
+        c["clicks"] += n
+        c["unique"] += int(r.get("unique_visitors") or 0)
+        c["posts"].add(meta.get("title") or meta.get("draft_id") or "")
+        c["areas"].add(meta.get("attraction") or "")
+        c["countries"][r.get("country") or "XX"] += n
+        c["sources"][r["source"]] += n
+        c["days"].add(r["day"])
+    return sorted(out.values(), key=lambda c: (-c["clicks"], c["clinic"]))
+
+
+def render_clinics(rows: list[dict], start: date, end: date) -> str:
+    total = sum(c["clicks"] for c in rows)
+    lines = [f"# 병원별 사이트 이동 클릭 {start} ~ {end}", "",
+             "주변 병원 목록(공공데이터 기준 전부·거리순)에서 각 병원 공식 사이트로 넘어간 클릭입니다. 이름으로 알 수 있는 봇·미리보기는 뺐습니다.",
+             "목록의 링크를 차례로 여는 자동 방문이 일부 섞여 있을 수 있어 사람 수의 상한입니다 (2026-11-10 운영자 결정: 따로 거르지 않고 쌓으며 지켜본다). "
+             "병원은 자기 애널리틱스의 utm_source 로 실제 도착을 확인할 수 있습니다.", "",
+             "**쓸 때 지킬 것**",
+             "- 광고 요금은 정액입니다. 이 숫자에 연동해 요금을 정하거나 \"환자 ○명\"을 약속하지 않습니다 (의료법 §27③).",
+             "- 측정은 병원 사이트 도착까지입니다. 예약·상담·내원은 알 수 없고, 그렇게 말하지 않습니다.",
+             "- 광고를 해도 목록의 포함 여부·순서는 바뀌지 않는다고 함께 알립니다.",
+             "- 병원에는 그 병원 줄만 보여 줍니다. 다른 병원 이름과 숫자는 주지 않습니다.", "",
+             f"병원 {len(rows)}곳 · 클릭 {total}", "",
+             "| 병원 | 클릭 | 하루 고유 합계 | 클릭 있던 날 | 지역(관광지) | 글 수 | 나라 (상위 3) | 유입 (상위 2) |",
+             "|---|---|---|---|---|---|---|---|"]
+    for c in rows:
+        top = lambda counter, n: ", ".join(f"{k} {v}" for k, v in counter.most_common(n))  # noqa: E731
+        lines.append(f"| {c['clinic']} | {c['clicks']} | {c['unique']} | {len(c['days'])} | {', '.join(sorted(a for a in c['areas'] if a)) or '-'} "
+                     f"| {len(c['posts'])} | {top(c['countries'], 3)} | {', '.join(f'{tracker.SOURCE_LABEL.get(k, k)} {v}' for k, v in c['sources'].most_common(2))} |")
+    if not rows:
+        lines.append("| - | 0 | 0 | 0 | - | 0 | - | - |")
+    return "\n".join(lines) + "\n"
+
+
+def run_clinics(start: date, end: date, name: str) -> tuple[Path, list[dict]]:
+    from pipeline.site import load_tracked_links
+    rows = clinic_clicks(fetch(start, end), load_tracked_links())
+    out = reports_dir()
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"clinics-{name}.md"  # reports/ 는 git 제외 — 병원명이 들어간 파일은 여기에만
+    path.write_text(render_clinics(rows, start, end), encoding="utf-8")
+    return path, rows
+
+
 def period(args) -> tuple[date, date, str]:
     if args.start and args.end:
         start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
@@ -247,7 +304,7 @@ def period(args) -> tuple[date, date, str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="유입 데이터 분석 (영업용)")
-    parser.add_argument("cmd", choices=["report"])
+    parser.add_argument("cmd", choices=["report", "clinics"])
     parser.add_argument("--month", help="YYYY-MM (기본: 지난달)")
     parser.add_argument("--days", type=int)
     parser.add_argument("--from", dest="start")
@@ -257,6 +314,13 @@ def main(argv: list[str] | None = None) -> int:
         log.info("추적기 미설정 — 분석 건너뜀")
         return 0
     start, end, name = period(args)
+    if args.cmd == "clinics":  # 병원별 클릭 — 영업 자료 (2026-11-10)
+        path, rows = run_clinics(start, end, name)
+        print(f"병원 {len(rows)}곳 · 클릭 {sum(c['clicks'] for c in rows)} ({start} ~ {end})")
+        for c in rows[:10]:
+            print(f"- {c['clinic']}: {c['clicks']}")
+        print(f"- 파일: {path}")
+        return 0
     path, result = run(start, end, name)
     if result["total"]:
         print(summary_line(result, name))
