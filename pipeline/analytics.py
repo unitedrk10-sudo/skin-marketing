@@ -24,7 +24,7 @@ from pipeline.common import ROOT, get_logger, load_yaml, run_cli
 log = get_logger("analytics")
 
 KIND_LABEL = {"registry": "의도(등록기관 목록)", "sponsor": "도착(스폰서 병원)", "pilot": "도착(파일럿 병원)",
-              "clinic": "도착(주변 병원 목록)", "other": "기타 링크"}
+              "clinic": "도착(주변 병원 목록)", "affiliate": "제휴(올리브영 구매 링크)", "other": "기타 링크"}
 # 주변 병원 목록(clinic)은 병원마다 링크가 있지만 리포트·CSV 에는 병원명 없이 글·지역·시술 단위 합산으로만 낸다.
 # 병원별 수치는 `clinics` 명령의 별도 파일로만 낸다 (2026-11-10 운영자 결정: 광고 영업 자료로 사용 — clinic_clicks).
 CSV_FIELDS = ["day", "week", "code", "kind", "contract", "sponsor_id", "draft_id", "slug", "title", "axis", "procedures", "attractions",

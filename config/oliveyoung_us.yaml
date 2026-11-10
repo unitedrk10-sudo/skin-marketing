@@ -1,0 +1,10 @@
+# 올리브영 US 제품 — 글로벌 제품 번호(prdtNo) → US 링크·가격 (pipeline/affiliates.py)
+# 2026-11-10: Rakuten Advertising US 승인 전이라 비어 있다. 비어 있으면 미국 방문자는 US 몰 첫 화면으로 간다 (site.yaml us_fallback).
+# - url: Rakuten 제휴 링크(click.linksynergy.com) 또는 us.oliveyoung.com 제품 주소 (https 만)
+# - 가격은 미국만, 미국 방문자에게만 보인다 (운영자 결정). price 와 as_of 가 모두 있어야 표시한다 — 기준일 없는 가격은 쓰지 않는다.
+# 예:
+#   GA210911943:
+#     url: https://click.linksynergy.com/deeplink?id=...&mid=...&murl=...
+#     price: 18.00
+#     as_of: 2026-12-01
+products: {}

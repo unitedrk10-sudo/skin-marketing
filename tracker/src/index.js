@@ -1,7 +1,7 @@
 // 스폰서 병원 링크 유입 추적 — Cloudflare Worker + D1
 //   GET  /<code>[?s=tt|ig|yt|blog]  → 클릭 기록 후 병원 사이트로 302 (UTM 부착)
 //   /api/* (Authorization: Bearer <ADMIN_TOKEN>)
-//     POST /api/links {target_url, sponsor_id?, label?}   링크 생성
+//     POST /api/links {target_url, sponsor_id?, label?, target_us?}   링크 생성 (target_us = 미국 방문자 이동 주소)
 //     GET  /api/links                                     링크 목록
 //     POST /api/links/<code>/deactivate                   링크 끄기
 //     GET  /api/stats?from=YYYY-MM-DD&to=YYYY-MM-DD[&sponsor=<id>][&code=<code>]
@@ -54,7 +54,9 @@ async function redirect(request, env, ctx, code, url) {
     const task = recordClick(request, env, link, source).catch((e) => console.error("click log failed", e));
     if (ctx?.waitUntil) ctx.waitUntil(task); else await task;
   }
-  const target = buildTarget(link.target_url, {
+  // 미국 방문자는 따로 (2026-11-10 올리브영: 글로벌몰은 미국 배송 안 함 → US 몰)
+  const base = request.cf?.country === "US" && link.target_us ? link.target_us : link.target_url;
+  const target = buildTarget(base, {
     brand: env.BRAND || "skin-info", source, campaign: slug(link.label) || link.code,
   });
   return new Response(null, { status: 302, headers: { location: target, "cache-control": "no-store", "referrer-policy": "no-referrer-when-downgrade" } });
@@ -65,13 +67,15 @@ async function createLink(request, env) {
   try { body = await request.json(); } catch { return json({ error: "JSON body 필요" }, 400); }
   if (!isValidTarget(body.target_url)) return json({ error: "target_url 은 https 주소여야 합니다" }, 400);
   const sponsor = body.sponsor_id ? String(body.sponsor_id) : null;
+  if (body.target_us && !isValidTarget(body.target_us)) return json({ error: "target_us 는 https 주소여야 합니다" }, 400);
+  if (sponsor && body.target_us) return json({ error: "스폰서 링크는 국가별 주소를 받지 않습니다" }, 400);
   if (sponsor && !/^[a-z0-9][a-z0-9-]{1,39}$/.test(sponsor)) return json({ error: "sponsor_id 형식 오류" }, 400);
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = makeCode();
     const exists = await env.DB.prepare("SELECT code FROM links WHERE code = ?").bind(code).first();
     if (exists) continue;
-    await env.DB.prepare("INSERT INTO links (code, target_url, sponsor_id, label, created_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(code, body.target_url, sponsor, String(body.label || "").slice(0, 120), new Date().toISOString()).run();
+    await env.DB.prepare("INSERT INTO links (code, target_url, sponsor_id, label, created_at, target_us) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(code, body.target_url, sponsor, String(body.label || "").slice(0, 120), new Date().toISOString(), body.target_us || null).run();
     return json({ code, url: `${new URL(request.url).origin}/${code}` }, 201);
   }
   return json({ error: "코드 생성 실패" }, 500);

@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 import markdown
 
-from pipeline import clinics, og, site_images, site_links, sponsors, tracker
+from pipeline import affiliates, clinics, og, site_images, site_links, sponsors, tracker
 from pipeline.common import (PRACTICE_KIND, ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json,
                              load_review, load_yaml, run_cli, save_json, slugify)
 
@@ -103,11 +103,24 @@ WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 def publish_schedule() -> dict | None:
-    """site.yaml publish_schedule: {days: [mon, wed, fri], hour: 7} — 하루 1편, 한국 시간. 없으면 승인 즉시 게시."""
+    """site.yaml publish_schedule: {days: [mon, wed, fri], hour: 7, slots: {mon: info, …}} — 하루 1편, 한국 시간. 없으면 승인 즉시 게시.
+    slots (2026-11-10): 요일마다 글 유형(channels.yaml topic_quota 이름)을 고정한다 — 시술·여행·화장품 주 1편씩."""
     cfg = load_yaml("site.yaml").get("publish_schedule")
     if not cfg or not cfg.get("days"):
         return None
-    return {"days": [WEEKDAYS.index(d.lower()[:3]) for d in cfg["days"]], "hour": int(cfg.get("hour", 7))}
+    days = [WEEKDAYS.index(d.lower()[:3]) for d in cfg["days"]]
+    slots = {WEEKDAYS.index(d.lower()[:3]): str(g) for d, g in (cfg.get("slots") or {}).items()}
+    return {"days": days, "hour": int(cfg.get("hour", 7)), "slots": {d: g for d, g in slots.items() if d in days}}
+
+
+def slot_group(draft: dict) -> str | None:
+    """글 유형 → topic_quota 이름 (스폰서·목록에 없는 유형은 None = 아무 요일)."""
+    if draft.get("sponsor"):
+        return None
+    for name, g in (load_yaml("channels.yaml").get("topic_quota") or {}).items():
+        if draft.get("content_type") in (g.get("axes") or []):
+            return name
+    return None
 
 
 def schedule_file() -> Path:
@@ -144,7 +157,10 @@ def apply_schedule(posts: list[dict], include_scheduled: bool = False) -> list[d
             sched[did] = {"date": day.isoformat(), "at": p["date"]}
         else:
             day = now.date()
-            while day.weekday() not in rule["days"] or day.isoformat() in taken:
+            group = slot_group(p["draft"])
+            slots = rule.get("slots") or {}
+            allowed = [d for d, g in slots.items() if g == group] or rule["days"]  # 정해진 요일이 없는 유형은 아무 게시 요일
+            while day.weekday() not in allowed or day.isoformat() in taken:
                 day += timedelta(days=1)
             at = datetime(day.year, day.month, day.day, rule["hour"], tzinfo=KST)
             sched[did] = {"date": day.isoformat(), "at": at.isoformat()}
@@ -432,6 +448,9 @@ html[data-palette=charcoal]{--bg:#F8F6F1;--ink:#1A1A1A;--muted:#6E6A64;--line:#E
 .hero h1{font-family:var(--serif);font-weight:400;font-size:78px;line-height:1;letter-spacing:-.015em;margin:22px 0 26px}
 .hero h1 em{color:var(--sage)}
 .hero .sub{font-size:19px;line-height:1.6;color:#565c59;max-width:30em;margin:0 0 34px}
+.aff-top{font-size:14px;color:var(--muted);border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:14px 0 0}
+.buy{border:1px solid var(--line);background:var(--surface);border-radius:3px;padding:22px 26px;margin:40px 0}.buy h2{margin-top:0}
+.buy .aff-note{font-size:14px;margin:0 0 12px}.buy ul{margin:0 0 12px;padding-left:20px}.buy li{margin:6px 0}
 .wl{border:1px solid var(--line);background:var(--surface);border-radius:3px;padding:28px 30px;margin:44px 0}
 .wl .wl-h{display:block;font-family:var(--serif);font-size:30px;line-height:1.15;margin:8px 0 10px}.wl p{margin:0 0 14px;font-size:16px;line-height:1.6}
 .wl form{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0 10px}
@@ -860,9 +879,44 @@ def insert_figures(body_html: str, figures: list[dict]) -> str:
     return body_html
 
 
+def affiliate_badge(draft: dict) -> str:
+    """제휴 링크가 있는 글은 목록 카드에도 표시 — 누르기 전에 알 수 있게."""
+    return ' <span class="badge">Affiliate links</span>' if affiliates.applies(draft) and affiliates.products(draft) else ""
+
+
+def buy_html(draft: dict, aff_urls: dict[str, str] | None = None) -> str:
+    """화장품 글 끝의 구매 링크 (2026-11-10). 링크 바로 위에 제휴 표시, 미국 가격은 미국 방문자에게만."""
+    cfg = affiliates.settings()
+    items = affiliates.products(draft) if affiliates.applies(draft) else []
+    if not cfg or not items:
+        return ""
+    esc = html.escape
+    rows = []
+    for item in items:
+        href = (aff_urls or {}).get(item["id"]) or affiliates.global_url(item["id"], cfg)
+        price = affiliates.us_price(item["id"])
+        rows.append(f'<li><a href="{esc(href)}" rel="sponsored nofollow noopener" target="_blank">{esc(item["name"])}</a>'
+                    + (f'<span data-geo-us hidden> · {esc(price)}</span>' if price else "") + "</li>")
+    discount = f" {esc(cfg['discount'])}" if cfg.get("discount") else ""
+    routed = bool(aff_urls)
+    return (f'<section class="buy" id="where-to-buy"><h2>Where to buy online</h2>'
+            f'<p class="aff-note"><b>{esc(affiliates.DISCLOSURE_LINKS)}</b>{discount}</p><ul>{"".join(rows)}</ul>'
+            '<p class="meta">Olive Young Global ships to many countries but not to the United States. '
+            + ("Visitors in the US are sent to Olive Young US instead, which carries a different range, so a product may not be there. "
+               if routed else "")
+            + "Stock, formulas and prices change.</p></section>")
+
+
+def geo_us_script() -> str:
+    """미국 방문자에게만 [data-geo-us] (미국 가격) 표시 — Cloudflare /cdn-cgi/trace. 확인 실패 시 숨김 유지."""
+    return ('<script>(function(){var a=document.querySelectorAll("[data-geo-us]");if(!a.length)return;'
+            'fetch("/cdn-cgi/trace").then(function(r){return r.text()}).then(function(t){if(/loc=US\b/.test(t))'
+            'a.forEach(function(e){e.hidden=false})}).catch(function(){})})();</script>')
+
+
 def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None,
                 ad_url: str | None = None, clinic_urls: dict[str, str] | None = None, posts: list[dict] | None = None,
-                pages: dict[str, list[dict]] | None = None) -> str:
+                pages: dict[str, list[dict]] | None = None, aff_urls: dict[str, str] | None = None) -> str:
     """posts: 사이트에 게시되는 글 전체 — 주면 글 끝에 관련 글(site_links.related_html), pages: 시술별 목록 페이지."""
     draft = post["draft"]
     blog = draft["blog"]
@@ -872,6 +926,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
     esc = html.escape
     badge = f'<span class="badge">{sponsors.label(sponsor)} · Ad by {esc(sponsor["name_en"])}</span>' if sponsor else ""
     ad_sponsor = route_ad_sponsor(post)
+    buy = "" if sponsor else buy_html(draft, aff_urls)
     src_items = "".join(
         f'<li id="src-{i}"><a href="{esc(s["url"])}" rel="noopener" target="_blank">{esc(s["title"])}</a> '
         f'<span class="meta">{esc(hostname(s["url"]))}</span>'
@@ -893,6 +948,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
     body = f"""<div class="wrap crumbs"><a href="/#guides">Guides</a> &nbsp;/&nbsp; {esc(category_label(draft))}</div>
 <header class="wrap art-hd"><p class="kicker">{esc(category_label(draft))}</p>
 <h1>{esc(blog.get('title', ''))}</h1>
+{f'<p class="aff-top"><b>Affiliate disclosure:</b> {esc(affiliates.DISCLOSURE_TOP)} <a href="#where-to-buy">Where to buy</a></p>' if buy else ""}
 {f'<p class="sub">{esc(blog["meta_description"])}</p>' if blog.get("meta_description") else ""}
 <div class="ameta">{badge}<span>Published {esc(post['date'][:10])}</span>{updated}<span>{read_minutes(blog.get("markdown", ""))} min read</span></div></header>
 {photo}
@@ -901,12 +957,13 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
 please consult a licensed doctor before any treatment.</div></aside>
 <article class="prose">{glance_html(draft, sources)}
 {body_html}
+{buy}
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
 {clinic_directory_html(post, clinic_urls) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
 {route_ad_html(cfg, ad_sponsor, ad_url)}
 {site_links.related_html(post, posts, pages) if posts else ""}
 {"" if sponsor else waitlist_html(cfg, f"/{post['slug']}/")}
-<section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article></div>{geo_ad_script(cfg) if ad_sponsor else ""}"""
+<section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article></div>{geo_ad_script(cfg) if ad_sponsor else ""}{geo_us_script() if "data-geo-us" in buy else ""}"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
     return page(cfg, f"{blog.get('title', '')} | {cfg['name']}", body, path=f"/{post['slug']}/",
                 description=blog.get("meta_description", ""), jsonld=post_jsonld(cfg, post, sources, faq),
@@ -943,7 +1000,7 @@ def photo_html(p: dict, size: str = "card") -> str:
 def card_html(p: dict) -> str:
     esc = html.escape
     draft = p["draft"]
-    ad = f' <span class="badge">{sponsors.label(draft["sponsor"])} · Ad</span>' if draft.get("sponsor") else ""
+    ad = f' <span class="badge">{sponsors.label(draft["sponsor"])} · Ad</span>' if draft.get("sponsor") else affiliate_badge(draft)
     return (f'<li><a class="card" href="/{p["slug"]}/">{photo_html(p)}<span class="cat">{esc(category_label(draft))}</span>{ad}'
             f'<h3>{esc(draft["blog"].get("title", ""))}</h3><p>{esc(draft["blog"].get("meta_description", ""))}</p>'
             f'<span class="meta">{esc(p["date"][:10])}</span></a></li>')
@@ -957,7 +1014,7 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
     if lead:
         d = lead["draft"]
         feat = (f'<a class="feat" href="/{lead["slug"]}/">{photo_html(lead, "hero")}<div><span class="cat">{esc(category_label(d))}</span>'
-                + (f' <span class="badge">{sponsors.label(d["sponsor"])} · Ad</span>' if d.get("sponsor") else "")
+                + (f' <span class="badge">{sponsors.label(d["sponsor"])} · Ad</span>' if d.get("sponsor") else affiliate_badge(d))
                 + f'<h3>{esc(d["blog"].get("title", ""))}</h3><p>{esc(d["blog"].get("meta_description", ""))}</p>'
                 f'<span class="meta">{esc(lead["date"][:10])} · {read_minutes(d["blog"].get("markdown", ""))} min read</span></div></a>')
     grid = f'<ul class="grid">{"".join(card_html(p) for p in rest)}</ul>' if rest else ""
@@ -999,7 +1056,9 @@ def render_about(cfg: dict) -> str:
 professional-society pages first. Clinic websites are never used as sources for medical claims.</li>
 <li>The draft is checked automatically against Korean medical-advertising rules, every source page is fetched and compared
 with the claim, and a second AI model from a different company reviews it.</li>
-<li>A person on our team reads and approves every post before it is published.</li></ol>
+<li>Posts that pass every automated check are published automatically; anything flagged, every sponsored post and
+anything involving prices or clinic information is read and approved by a person on our team first. We correct posts
+when readers or our checks find a problem.</li></ol>
 <p>Our guides are general information, not medical advice, and are not written or reviewed by a doctor. Results and
 side effects vary from person to person — always consult a licensed doctor.</p>
 <h2>What we never do</h2>
@@ -1010,6 +1069,11 @@ government public data and sorted by distance only. Clinics cannot pay to be add
 advertisers are marked.</li>
 <li>Some route guides show one small card labeled <em>Ad</em> for a clinic in the same area. It is a flat-fee advertisement,
 not a recommendation, and it does not change the guide's text or the clinic list.</li></ul>
+<h2>Affiliate links (skincare)</h2>
+<p>Some skincare guides end with links to buy the products online. These are affiliate links: we earn a commission when
+you buy through them. Every such post says so at the top and again right above the links. Products are picked by the
+criteria stated in the post, such as ingredients and sun-protection ratings, not by commission. We do not take
+affiliate commissions or any other payment from clinics for our independent guides.</p>
 <h2>Sponsored posts</h2>
 <p>Some posts are advertisements paid for by a licensed clinic at a flat fee, or produced free of charge during a short
 partner pilot. They are always labeled <em>Sponsored</em> or <em>Partner</em> and as an advertisement at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
@@ -1067,6 +1131,9 @@ go through our link counter. It records
 the date, which post and channel the click came from, the country, and whether it looks automated. We do not store your IP
 address; a one-way code that changes every day is used only to count unique visits per day. The clinic's page receives
 standard campaign tags (utm_source, utm_medium, utm_campaign) so the clinic can see the visit came from us.</li>
+<li><strong>Shopping links:</strong> product links in skincare guides go through the same link counter and then to
+Olive Young (Olive Young US for visitors in the US). Olive Young sets its own cookies to credit the purchase to us; its own
+privacy policy applies there.</li>
 <li><strong>Ad display:</strong> to show clinic ads only to visitors outside Korea, the page asks our host (Cloudflare)
 for your country code. Nothing is stored.</li>
 {waitlist_note}<li>We do not sell personal information.</li></ul>
@@ -1096,7 +1163,7 @@ def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_post_md(cfg: dict, post: dict) -> str:
+def render_post_md(cfg: dict, post: dict, aff_urls: dict[str, str] | None = None) -> str:
     """AI 가 읽기 쉬운 글 원문 (2026-10-19, `/<slug>/index.md`·llms-full.txt) — [F#] 는 출처 링크로, 병원 공통 정보는 링크 없이."""
     draft, blog = post["draft"], post["draft"]["blog"]
     facts = {f["id"]: f for f in draft.get("facts", [])}
@@ -1121,7 +1188,14 @@ def render_post_md(cfg: dict, post: dict) -> str:
              + (f" · Updated {post['modified'][:10]}" if post.get("modified", "")[:10] > post["date"][:10] else ""), ""]
     if blog.get("meta_description"):
         head += [f"_{blog['meta_description']}_", ""]
+    if (items := affiliates.products(draft) if affiliates.applies(draft) and not s else []) and affiliates.settings():
+        head += [f"> Affiliate disclosure: {affiliates.DISCLOSURE_TOP}", ""]
     tail = ["", "## Sources"] + [f"{i}. {u}" for i, u in enumerate(sources, 1)] if sources else []
+    if items:
+        buy = ["", "## Where to buy online", "", f"_{affiliates.DISCLOSURE_LINKS}_", ""]
+        buy += [f"- [{i['name']}]({(aff_urls or {}).get(i['id']) or affiliates.global_url(i['id'])})" for i in items]
+        buy += ["", "Olive Young Global does not ship to the United States; US readers are sent to Olive Young US."]
+        tail = buy + tail
     return "\n".join(head) + "\n" + body.strip() + "\n" + "\n".join(tail) + "\n"
 
 
@@ -1129,7 +1203,7 @@ def render_llms_full(cfg: dict, posts: list[dict]) -> str:
     parts = [f"# {cfg['name']} — all guides", "", f"> {cfg['description']}", "",
              "Information only — not medical advice. Every medical statement links to its source.", ""]
     for p in posts:
-        parts += ["---", "", render_post_md(cfg, p)]
+        parts += ["---", "", render_post_md(cfg, p, p.get("aff_urls"))]
     return "\n".join(parts)
 
 
@@ -1303,6 +1377,29 @@ def _clinic_links(post: dict, mapping: dict[str, dict], title: str) -> bool:
     return changed
 
 
+def _affiliate_links(post: dict, mapping: dict[str, dict], title: str) -> bool:
+    """화장품 글의 올리브영 구매 링크마다 추적 링크 — 미국 방문자는 추적기가 US 몰로 보낸다 (target_us)."""
+    draft = post["draft"]
+    cfg = affiliates.settings()
+    if not cfg or not affiliates.applies(draft):
+        return False
+    changed = False
+    for item in affiliates.products(draft):
+        key = affiliates.link_key(draft["id"], item["id"])
+        if key in mapping:
+            continue
+        try:
+            link = tracker.add_link(None, affiliates.global_url(item["id"], cfg), f"oliveyoung: {item['name']}"[:120],
+                                    target_us=affiliates.us_target(item["id"], cfg))
+        except tracker.TrackerError as e:
+            log.warning("올리브영 링크 추적 생성 실패 (바로 연결): %s — %s", item["name"], e)
+            continue
+        mapping[key] = {"url": f"{link['url']}?s=blog", "code": link["code"], **link_meta(post, "affiliate"),
+                        "placement": "buy", "product": item["id"], "product_name": item["name"]}
+        changed = True
+    return changed
+
+
 def tracked_links(posts: list[dict]) -> dict[str, dict]:
     """글별 추적 링크 (?s=blog): 스폰서 글 → 병원 공식 사이트, 중립 시술·여행 글 → 등록기관 목록 (글마다 따로 세서
     어떤 글·시술이 병원 찾기로 이어졌는지 본다). 추적기 미설정이면 기존 목록만 — 링크는 원래 주소로 나간다."""
@@ -1313,6 +1410,7 @@ def tracked_links(posts: list[dict]) -> dict[str, dict]:
     for p in posts:
         draft = p["draft"]
         title = draft["blog"].get("title", "")
+        changed |= _affiliate_links(p, mapping, title)
         if draft.get("sponsor"):
             key, kind, sponsor_id, target, label = draft["id"], "sponsor", draft["sponsor"]["id"], None, f"blog: {title}"
         elif draft.get("content_type") in REGISTRY_AXES:
@@ -1388,7 +1486,9 @@ def build(out: Path | None = None) -> dict:
         ad_url = (links.get(route_ad_key(p["draft"]["id"], ad["id"])) or {}).get("url") if ad else None
         prefix = clinic_link_key(p["draft"]["id"], "")
         clinic_urls = {k[len(prefix):]: v["url"] for k, v in links.items() if k.startswith(prefix)}
-        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls, posts=posts, pages=pages))
+        aff_prefix = affiliates.link_key(p["draft"]["id"], "")
+        p["aff_urls"] = {k[len(aff_prefix):]: v["url"] for k, v in links.items() if k.startswith(aff_prefix)}
+        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls, posts=posts, pages=pages, aff_urls=p["aff_urls"]))
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))
@@ -1422,7 +1522,7 @@ def build(out: Path | None = None) -> dict:
     write("llms.txt", render_llms_txt(cfg, posts))
     write("llms-full.txt", render_llms_full(cfg, posts))
     for p in posts:
-        write(f"{p['slug']}/index.md", render_post_md(cfg, p))
+        write(f"{p['slug']}/index.md", render_post_md(cfg, p, p.get("aff_urls")))
     write("rss.xml", render_rss(cfg, posts))
     if cfg["domain"]:
         write("sitemap.xml", render_sitemap(cfg, posts))

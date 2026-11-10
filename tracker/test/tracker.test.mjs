@@ -170,3 +170,21 @@ test("대기 명단: 같은 방문자는 하루 5개까지, 관리 API 는 토�
   assert.equal((await del.json()).deleted, 1);
   assert.equal((await waitlist()).total, 4);
 });
+
+// ---- 국가별 이동 주소 (2026-11-10 올리브영 US)
+test("target_us: 미국 방문자만 다른 주소로, 리워드 코드 등 원래 쿼리는 그대로", async () => {
+  const res = await admin("/api/links", { method: "POST", body: JSON.stringify({
+    target_url: "https://global.oliveyoung.com/product/detail?prdtNo=GA1&rwardCode=SKINBOUND82&utm_source=influencers",
+    target_us: "https://us.oliveyoung.com/", label: "oliveyoung: Lotion" }) });
+  const { code } = await res.json();
+  const go = (country) => worker.fetch(Object.assign(new Request(`https://go.example/${code}?s=blog`, { headers: { "user-agent": HUMAN } }),
+    { cf: { country } }), env, {});
+  const us = (await go("US")).headers.get("location");
+  const sg = (await go("SG")).headers.get("location");
+  assert.ok(us.startsWith("https://us.oliveyoung.com/?utm_source="));
+  assert.ok(sg.startsWith("https://global.oliveyoung.com/product/detail?prdtNo=GA1&rwardCode=SKINBOUND82&utm_source=influencers&utm_medium=blog"));
+  const bad = await admin("/api/links", { method: "POST", body: JSON.stringify({ target_url: "https://a.example/", target_us: "http://b.example/" }) });
+  assert.equal(bad.status, 400);
+  const sponsored = await admin("/api/links", { method: "POST", body: JSON.stringify({ target_url: "https://a.example/", sponsor_id: "glow", target_us: "https://b.example/" }) });
+  assert.equal(sponsored.status, 400);
+});

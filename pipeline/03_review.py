@@ -389,13 +389,16 @@ def auto_candidates() -> list[Path]:
     rate = _human_rate()
     if rate is None:
         return []
+    affiliates = importlib.import_module("pipeline.affiliates")
+    approved_aff = sum(1 for state in ("approved", "rendered", "ready_to_publish", "published") for p in draft_dirs(state)
+                       if affiliates.applies(load_draft(p)))
     out = []
     for path in draft_dirs("drafts"):
         draft, review = load_draft(path), load_review(path) or {}
         if (review.get("grade") == "pass" and not review.get("always_human") and not draft.get("sponsor")
                 and not any(not r.get("auto") for r in draft.get("revisions", []))
                 and not (path / AUTO_FILE).exists() and not _revise_pending(path.name)
-                and not human_sampled(path.name, rate)):
+                and not human_sampled(path.name, rate) and not affiliates.needs_human(draft, approved_aff)):
             out.append(path)
     return out
 
