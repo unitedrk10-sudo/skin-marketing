@@ -9,6 +9,7 @@
 - 광고 표시는 공정위 추천·보증 심사지침대로 한다.
 - 올리브영 글로벌 제휴 가입 완료. 리워드 코드 `SKINBOUND82`.
 - 병원 광고·추천은 이 글에 섞지 않는다 (병원 광고는 스폰서 트랙, 병원 소개·연결은 2027년 유치업 등록 뒤).
+- **글로벌몰 기준으로 시작한다.** 글로벌몰은 미국으로 배송하지 않으므로 구매 링크 옆에 작은 글씨로 배송 범위(미국 제외)를 적고, 미국은 따로 나눈다 (아래 3-1).
 
 ## 2. 목표와 기대치
 
@@ -29,6 +30,14 @@
 | 광고 표시 | 약관에는 없다 → 공정위 지침대로 우리가 넣는다 |
 
 **링크 형식 (확인함):** `https://global.oliveyoung.com/product/detail?prdtNo=<제품번호>&rwardCode=SKINBOUND82&utm_source=influencers`. 이 주소를 열면 사이트가 `rwardCode` 쿠키를 심는다 (코드를 빼면 심지 않음). 로그인 없이 코드로 만들 수 있다. 실제 수수료 집계는 첫 주문이 있어야 확인된다.
+
+### 3-1. 미국은 별도 (2026-11-10 확인)
+
+- **글로벌몰은 미국 배송을 중단했다.** 올리브영 공지: 2026-05-29 미국 전용 몰(OLIVE YOUNG US, 운영사 CJ OLIVE YOUNG USA Inc.)을 열면서 미국 배송 주문은 US 몰에서만 처리하고, 미국에서 글로벌몰에 들어가면 US 몰로 넘어간다. 두 몰은 계정·상품 구성이 다르다.
+- **글로벌 리워드 코드는 US 몰에 적용되지 않는다.** 그래서 지금 코드(`SKINBOUND82`)로는 미국 독자의 구매가 잡히지 않는다. 미국은 우리 독자 1위 국가다 (최근 30일 병원 링크 클릭 78 중 28).
+- **US 제휴는 Rakuten Advertising 으로 따로 가입한다.** 올리브영 안내: 미국 밖에 사는 사람도 미국 독자 대상이면 Rakuten Advertising US 로 참여할 수 있다. 절차는 Rakuten Advertising 가입 → 올리브영 US 프로그램 신청 → 승인 → 링크 생성. 수수료율·출금 조건·사이트 최소 규모는 확인하지 못했다 (가입 화면에서 확인).
+- **글에서 나누는 방법 (1차):** 구매 링크 묶음을 글로벌몰 링크로 만들고 바로 아래 작은 글씨로 `Olive Young Global ships to most countries, but not to the United States.` + 올리브영의 배송 국가 안내 링크. 국가 수는 적지 않는다 (바뀐다).
+- **US 승인 뒤 (2차):** 같은 자리에 `In the US: Olive Young US` 링크를 따로 둔다. 상품 구성이 달라 제품 페이지를 US 몰에서 다시 찾아야 하고, 없는 제품은 링크 없이 둔다. 방문 국가에 따라 한쪽만 보여 주는 방식(광고 카드에 쓰는 국가 확인)은 그때 정한다.
 
 ## 4. 글의 방향
 
@@ -109,7 +118,7 @@
 - **수수료율이 낮다 (3~5%).** 등급 기준이 약관에 없어 올릴 방법이 불분명하다.
 - **올리브영 정책 의존.** 프로그램 변경·계정 정지 시 링크가 한꺼번에 무효가 된다 → 설정 한 줄로 끌 수 있게.
 - **한국 거주 운영자 계정.** 올리브영이 "활동 국가별 계정 운영" 안내를 따로 두고 있다. 가입은 됐지만 출금 단계에서 조건이 붙는지 미확인.
-- **미국 독자.** 미국은 별도 프로그램(Rakuten)이다. 글로벌 링크로 미국에서 산 주문이 집계되는지 미확인 — 미국은 우리 독자 1위 국가라 첫 달에 확인해야 한다.
+- **미국 독자는 지금 살 수 없다.** 글로벌몰이 미국에 배송하지 않고 글로벌 코드가 US 몰에 안 먹는다 (3-1). Rakuten 승인 전까지 미국 독자의 구매는 수익이 되지 않는다.
 - **중립성.** "돈 받지 않는다"는 약속이 화장품에 한해 바뀐다. 표시를 분명히 하는 것으로 대응한다.
 - **세금.** 해외에서 들어오는 수수료는 원천징수가 없다. 사업소득 신고 대상인지 세무사 확인.
 
@@ -120,10 +129,14 @@
 3. 가격을 쓸지 (쓰면 "as of" + 출처, 안 쓰면 관리가 쉽다) — 권장: 쓰지 않는다
 4. 구매 링크를 추적기를 거쳐 보낼지 (우리 쪽 클릭 집계) — 권장: 거친다
 5. 주 편수를 1편으로 둘지
+6. Rakuten Advertising US 가입 (운영자가 직접) — 승인되면 US 링크를 2차로 붙인다
 
 ## 출처
 
 - 올리브영 글로벌 인플루언서 약관: https://global.oliveyoung.com/foot-info/footer-contents?foterSeq=71
 - 올리브영 글로벌 제휴 안내: https://global.oliveyoung.com/influencer/main
+- 올리브영 공지 — 미국 전용 서비스 출시와 운영 정책 변경 (2026-05-29): https://help.global.oliveyoung.com/hc/en-us/articles/16778310915855--Notice-Launch-of-New-U-S-Exclusive-Service-and-Changes-to-Operating-Policies-May-29-2026-PST
+- 올리브영 US 제휴 안내 (Rakuten Advertising): https://us.oliveyoung.com/affiliate
+- 올리브영 공지 — 활동 국가별 제휴 계정 운영: https://help.global.oliveyoung.com/hc/en-us/articles/16778304014223--Notice-Guidance-on-Affiliate-Account-Operations-by-Country-of-Activity
 - 공정위 추천·보증 심사지침 개정 보도 (2024-12): https://www.ajunews.com/view/20251202085042877
 - 법무법인 세종 해설: https://shinkim.com/kor/media/newsletter/2613

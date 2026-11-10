@@ -1230,9 +1230,11 @@ def test_site_sponsored_post_labels_and_tracked_link(sponsored, tmp_path, monkey
 
 def test_partners_page_is_opt_in_korean_and_noindex(site_env, tmp_path, monkeypatch):
     out = tmp_path / "dist"
-    site_mod.build(out)
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example", "partners_page": False})
+    site_mod.build(out)                                                                  # 끄면 페이지도 꼬리말 링크도 없다
     assert not (out / "partners").exists() and "/partners/" not in (out / "index.html").read_text(encoding="utf-8")
-    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "partners_page": True})
+    assert common.load_yaml("site.yaml")["partners_page"] is True                        # 2026-11-10 운영자 결정으로 공개
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example"})
     site_mod.build(out)
     page_html = (out / "partners" / "index.html").read_text(encoding="utf-8")
     assert '<html lang="ko"' in page_html and 'content="noindex"' in page_html
