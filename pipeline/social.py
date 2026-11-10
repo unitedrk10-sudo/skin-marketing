@@ -80,15 +80,50 @@ X_LINK_FOOTER = "\n\nSources in the reply ↓ (AI-assisted)"
 ROUNDUP_X_FOOTER = "\n\nLinks in the reply ↓ (AI-assisted)"
 
 
+# "AI-assisted" 가 들어간 끝줄 → 뺀 끝줄 (channels.yaml text_social.ai_label: false, 2026-11-10). 코드가 붙인 끝줄만 바꾼다
+PLAIN_FOOTERS = (
+    (ASK_FOOTER, "\n\n(Not medical advice)"),
+    (X_LINK_FOOTER, "\n\nSources in the reply ↓"),
+    (ROUNDUP_X_FOOTER, "\n\nLinks in the reply ↓"),
+    ("\n\nAI-assisted guide with sources: ", "\n\nFull guide with sources: "),
+    (" · AI-assisted, not medical advice", " · Not medical advice"),
+    ("\nAI-assisted, human-reviewed.", ""),  # 자동 승인(신뢰 단계 2) 뒤로는 "human-reviewed" 도 모든 글에 맞는 말이 아니다
+)
+
+
 class SocialError(RuntimeError):
     pass
 
 
 def settings() -> dict:
     cfg = load_yaml("channels.yaml").get("text_social") or {}
-    return {"x": {"mode": "intent", "max_chars": 280, **(cfg.get("x") or {})},
-            "threads": {"mode": "api", "max_chars": 500, **(cfg.get("threads") or {})},
-            "daily": {"hour": 9, "wait_until": 12, **(cfg.get("daily") or {})}}
+    return {"x": {"enabled": True, "mode": "intent", "max_chars": 280, **(cfg.get("x") or {})},
+            "threads": {"auto_post": False, "mode": "api", "max_chars": 500, **(cfg.get("threads") or {})},
+            "daily": {"hour": 9, "wait_until": 12, **(cfg.get("daily") or {})},
+            "ai_label": bool(cfg.get("ai_label", True))}
+
+
+def plain(text: str | None) -> str | None:
+    """끝줄의 "AI-assisted" 를 뺀 글 (ai_label 이 꺼져 있을 때만)."""
+    if not text or settings()["ai_label"]:
+        return text
+    for labelled, bare in PLAIN_FOOTERS:
+        text = text.replace(labelled, bare)
+    return text
+
+
+def unlabel(item: dict) -> bool:
+    """설정을 끄기 전에 만들어 둔 글의 끝줄을 맞춘다. 검사를 통과해 지문이 맞는, 아직 안 올린 글만 — 바뀌면 지문을 다시 찍는다."""
+    if settings()["ai_label"] or not sealed(item) or any(c.get("posted") for c in item["channels"].values()):
+        return False
+    changed = False
+    for c in item["channels"].values():
+        for field in ("text", "reply"):
+            if c.get(field) and (new := plain(c[field])) != c[field]:
+                c[field], changed = new, True
+    if changed:
+        item["seal"] = seal_of(item)
+    return changed
 
 
 def now_kst() -> datetime:
@@ -168,9 +203,9 @@ def allowed(draft: dict) -> bool:
 def build_channels(kind: str, bodies: dict[str, str], url: str, domains: list[str]) -> dict:
     """본문 → 실제로 올라갈 글 (끝줄은 코드가 붙인다). X 의 link·정리 글은 링크를 답글로."""
     if kind == "link":
-        return {"x": {"text": bodies["x"] + X_LINK_FOOTER, "reply": reply_text(url), "posted": None},
-                "threads": {"text": bodies["threads"] + footer(url), "posted": None}}
-    end = ASK_FOOTER if kind == "ask" else source_footer(domains)  # 질문 글은 사실을 말하지 않아 출처 줄이 없다
+        return {"x": {"text": bodies["x"] + plain(X_LINK_FOOTER), "reply": reply_text(url), "posted": None},
+                "threads": {"text": bodies["threads"] + plain(footer(url)), "posted": None}}
+    end = plain(ASK_FOOTER if kind == "ask" else source_footer(domains))  # 질문 글은 사실을 말하지 않아 출처 줄이 없다
     return {ch: {"text": bodies[ch] + end, "posted": None} for ch in CHANNELS}
 
 
@@ -534,8 +569,8 @@ def roundup(day: date) -> str | None:
     home = home_url()
     for n in range(len(titles), 0, -1):  # 길면 제목을 줄인다
         body = "This week on Skinbound:\n" + "\n".join(f"→ {t}" for t in titles[:n])
-        channels = {"x": {"text": body + ROUNDUP_X_FOOTER, "reply": f"All guides with sources: {home}", "posted": None},
-                    "threads": {"text": body + f"\n\nEvery guide cites its sources: {home}\nAI-assisted, human-reviewed.",
+        channels = {"x": {"text": body + plain(ROUNDUP_X_FOOTER), "reply": f"All guides with sources: {home}", "posted": None},
+                    "threads": {"text": body + plain(f"\n\nEvery guide cites its sources: {home}\nAI-assisted, human-reviewed."),
                                 "posted": None}}
         if all(size(ch, channels[ch]["text"]) <= cfg[ch]["max_chars"] for ch in CHANNELS):
             break
@@ -607,7 +642,7 @@ def _channel_lines(ref_word: str, item: dict) -> list[str]:
     lines = []
     for ch in ("threads", "x"):
         c = item["channels"].get(ch)
-        if not c:
+        if not c or (ch == "x" and not cfg["x"]["enabled"] and not c.get("posted")):  # X 중단 (2026-11-10)
             continue
         if c.get("posted"):
             lines.append(f"{ch} ✅ {c['posted']['url']}")
@@ -715,14 +750,30 @@ def daily_message(now: datetime | None = None) -> str:
     slot = due_slot(now)
     data = _load(ref)
     item = data["items"][ref.kind]
+    unlabel(item)
     item["scheduled_on"] = now.date().isoformat()
     _save(ref, data)
     state = load_json(daily_file()) if daily_file().exists() else {}
     state[slot] = {"key": ref.key, "kind": ref.kind}
     save_json(daily_file(), state)
     n, total = int(slot.partition("#")[2] or 1), len(daily_hours())
-    head = f"[오늘의 SNS 글{f' {n}/{total}' if total > 1 else ''}] {now:%m/%d}({DAY_NAMES[now.weekday()]}) · {LABEL[ref.kind]} — {data['title']}"
+    what = f"{now:%m/%d}({DAY_NAMES[now.weekday()]}) · {LABEL[ref.kind]} — {data['title']}"
+    if auto_threads():  # 승인 없이 바로 게시 (2026-11-10). 칸은 이미 쓴 것으로 적었으니 실패해도 다음 실행이 다시 올리지 않는다
+        try:
+            url = threads_post(item["channels"]["threads"]["text"])
+            record(ref, "threads", url)
+            return f"[Threads 자동 게시{f' {n}/{total}' if total > 1 else ''}] {what}\n{url}"
+        except SocialError as e:
+            again = "오늘 스레드 올려" if n == 1 else f"오늘 {n}번째 스레드 올려"
+            return (f"⚠️ Threads 자동 게시 실패 — {what}\n{e}\n다시 시도하거나 다른 방법으로 올리지 않았습니다. "
+                    f"Threads 에 글이 안 올라간 것을 확인한 뒤 '{again}'")
+    head = f"[오늘의 SNS 글{f' {n}/{total}' if total > 1 else ''}] {what}"
     return "\n".join([head, *_channel_lines("오늘", item)])
+
+
+def auto_threads() -> bool:
+    cfg = settings()["threads"]
+    return bool(cfg.get("auto_post")) and cfg["mode"] == "api" and threads_configured()
 
 
 def resolve(ref: str) -> Ref:
@@ -1015,6 +1066,8 @@ def post(target: Ref | Path | str, channel: str, kind: str = "link") -> str:
     c = item["channels"][channel]
     if c["posted"]:
         return f"이미 게시됨: {c['posted']['url']}"
+    if unlabel(item):
+        _save(ref, data)
     if not sealed(item):
         raise SocialError("저장된 글이 검사 뒤에 바뀌었습니다 — 게시하지 않습니다. 파일을 고치지 말고 그대로 알려 주세요")
     url = (threads_post if channel == "threads" else x_post)(c["text"])
