@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS links (
   target_url  TEXT NOT NULL,             -- 이동할 병원 사이트 (https)
   sponsor_id  TEXT,                      -- config/sponsors.yaml 의 id (없으면 일반 링크)
   label       TEXT,                      -- 어떤 글·캠페인용인지
+  target_us   TEXT,                      -- 미국 방문자는 여기로 (올리브영 US 등, 없으면 target_url). 기존 DB: migrations/0002_links_target_us.sql
   created_at  TEXT NOT NULL,
   active      INTEGER NOT NULL DEFAULT 1
 );

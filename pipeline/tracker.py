@@ -64,7 +64,7 @@ def _request(method: str, path: str, body: dict | None = None, query: dict | Non
         raise TrackerError(f"{method} {path} 연결 실패: {e}") from e
 
 
-def add_link(sponsor_id: str | None, target: str | None, label: str) -> dict:
+def add_link(sponsor_id: str | None, target: str | None, label: str, target_us: str | None = None) -> dict:
     sponsor = sponsors.get(sponsor_id) if sponsor_id else None
     target = target or (sponsor["official_url"] if sponsor else None)
     if not target:
@@ -73,7 +73,10 @@ def add_link(sponsor_id: str | None, target: str | None, label: str) -> dict:
     official = sponsors.official_host(sponsor) if sponsor else ""
     if sponsor and not (host == official or host.endswith("." + official)):
         raise TrackerError(f"스폰서 링크 대상은 {sponsor['name_en']} 공식 사이트여야 합니다 ({sponsor['official_url']})")
-    return _request("POST", "/api/links", {"target_url": target, "sponsor_id": sponsor_id, "label": label})
+    body = {"target_url": target, "sponsor_id": sponsor_id, "label": label}
+    if target_us:  # 미국 방문자 이동 주소 (스폰서 링크엔 쓰지 않는다)
+        body["target_us"] = target_us
+    return _request("POST", "/api/links", body)
 
 
 def stats(start: date, end: date, sponsor_id: str | None = None) -> dict:

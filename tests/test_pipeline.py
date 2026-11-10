@@ -1577,7 +1577,7 @@ def test_travel_topics_compete_on_attraction_demand(env):
 def test_weekly_topics_follow_axis_quota(env):
     week = topics_mod.from_seed("2026-W40", 6)
     axes = Counter(t["axis"] for t in week["topics"])
-    assert len(week["topics"]) == 6 and axes["procedure_travel"] == 3 and axes["skincare"] == 1
+    assert len(week["topics"]) == 6 and axes["procedure_travel"] == 2 and axes["skincare"] == 2  # 2026-11-10: 유형마다 2개 후보
     scores = [t["demand"]["score"] for t in week["topics"]]
     assert scores == sorted(scores, reverse=True)  # 메시지는 수요 점수 순
 
@@ -1587,7 +1587,7 @@ def test_quota_fills_from_other_groups_when_short():
               for i in range(6)] + [{"axis": "procedure_travel", "title": "t", "demand": {"score": 0.1, "focus": "x:t"}}]
     picked = topics_mod.pick(topics, 6)
     assert [t["title"] for t in picked] == ["p0", "p1", "p2", "p3", "p4", "t"]  # 여행 1개뿐 → 시술로 채움
-    assert topics_mod.quota(12) == [("info", topics_mod.quota(6)[0][1], 4), ("procedure_travel", ["procedure_travel"], 6), ("skincare", ["skincare"], 2)]
+    assert topics_mod.quota(12) == [("info", topics_mod.quota(6)[0][1], 4), ("procedure_travel", ["procedure_travel"], 4), ("skincare", ["skincare"], 4)]
 
 
 # ---- 관광지 트렌드 ----
@@ -4363,3 +4363,108 @@ def test_threads_auto_post_failure_is_reported_not_retried(env, tmp_path, monkey
     sent = _threads_api(monkeypatch, tmp_path)                                            # 사람이 확인하고 다시
     monkeypatch.setattr(social_mod, "now_kst", lambda: MONDAY.replace(hour=11))
     assert "threads 게시 기록" in social_mod.post("오늘", "threads") and len(sent) == 1
+
+
+# ---- 올리브영 제휴 글 (2026-11-10) ----
+
+aff_mod = importlib.import_module("pipeline.affiliates")
+OY = "https://global.oliveyoung.com/product/detail?prdtNo="
+
+
+def _skincare(draft_id="2026-W47-03-ceramide", created="2026-11-12T00:00:00+00:00", state="approved", markdown=None, **extra):
+    facts = [{"id": "F1", "kind": "other", "text": "Ceramides support the barrier.", "url": "https://pubmed.ncbi.nlm.nih.gov/1/", "source_title": "Study"},
+             {"id": "F2", "kind": "other", "text": "A ceramide lotion.", "url": OY + "GA210911943", "source_title": "ILLIYOON Ceramide Ato Lotion 334ml | OLIVE YOUNG Global"},
+             {"id": "F3", "kind": "other", "text": "A sun cream.", "url": OY + "GA210610738&dispCatNo=1", "source_title": "Dr.G Green Mild Up Sun+ 50mL - OLIVE YOUNG Global"},
+             {"id": "F4", "kind": "other", "text": "Not cited.", "url": OY + "GA999999999", "source_title": "Uncited | OLIVE YOUNG Global"}]
+    md = markdown or ("Ceramides help [F1].\n\n| Product | Criterion |\n|---|---|\n| Lotion [F2] | ceramides |\n\nAlso a sunscreen [F3] and the lotion again [F2].\n")
+    draft = {"id": draft_id, "content_type": "skincare", "created_at": created, "facts": facts,
+             "blog": {"title": "Ceramide picks", "slug": draft_id[-8:], "markdown": md, "meta_description": "d"}, **extra}
+    path = common.content_dir(state) / draft_id
+    common.save_json(path / "draft.json", draft)
+    return path, draft
+
+
+def test_affiliate_products_come_only_from_cited_olive_young_pages(env):
+    _path, draft = _skincare()
+    items = aff_mod.products(draft)
+    assert [(i["id"], i["name"]) for i in items] == [("GA210911943", "ILLIYOON Ceramide Ato Lotion 334ml"),
+                                                     ("GA210610738", "Dr.G Green Mild Up Sun+ 50mL")]  # 인용 순서·중복 제거, 인용 안 된 F4 제외
+    assert aff_mod.global_url("GA210911943") == OY + "GA210911943&rwardCode=SKINBOUND82&utm_source=influencers"
+    assert aff_mod.applies(draft)
+    assert not aff_mod.applies({**draft, "created_at": "2026-10-20T00:00:00+00:00"})        # 이미 있던 글은 그대로
+    assert not aff_mod.applies({**draft, "content_type": "procedure"})
+    assert not aff_mod.applies({**draft, "sponsor": {"id": "glow"}})
+    assert aff_mod.us_target("GA210911943") == "https://us.oliveyoung.com/"                 # US 링크 없음 → US 몰 첫 화면
+    assert aff_mod.us_price("GA210911943") is None
+
+
+def test_affiliate_post_has_disclosure_top_and_above_links_and_us_only_price(env, site_env, tmp_path, monkeypatch):
+    _skincare()
+    _skincare("2026-W43-01-old", created="2026-10-20T00:00:00+00:00")                       # since 이전 글: 링크·표시 없음
+    real = common.load_yaml
+    monkeypatch.setattr(aff_mod, "load_yaml", lambda n: {"products": {"GA210911943": {
+        "url": "https://click.linksynergy.com/deeplink?id=x", "price": 18, "as_of": "2026-12-01"}}} if n == "oliveyoung_us.yaml" else real(n))
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+
+    def fake_request(method, path, body=None, query=None):
+        made.append(body)
+        return {"code": f"oy{len(made)}", "url": f"https://go.example/oy{len(made)}"}
+    monkeypatch.setattr(tracker_mod, "_request", fake_request)
+    site_mod.build()
+    dist = tmp_path / "dist"
+    post = (dist / "ceramide" / "index.html").read_text(encoding="utf-8")
+    top, buy, body = post.index("Affiliate disclosure:"), post.index('id="where-to-buy"'), post.index("Ceramides help")
+    assert post.index("<h1>") < top < body < buy                                         # 제목 바로 아래 + 본문 뒤 구매 링크
+    assert buy < post.index(aff_mod.DISCLOSURE_LINKS) < post.index("https://go.example/oy1")   # 링크 바로 위
+    assert "We earn a commission when you buy through them." in post and "may earn" not in post   # 단정형
+    assert 'href="https://go.example/oy1?s=blog" rel="sponsored nofollow noopener"' in post
+    assert '<span data-geo-us hidden> · US price $18.00 at Olive Young US (as of Dec 2026)</span>' in post and "loc=US" in post
+    assert "not to the United States" in post and "5% off" in post
+    assert [b.get("target_us") for b in made] == ["https://click.linksynergy.com/deeplink?id=x", "https://us.oliveyoung.com/"]
+    assert all("rwardCode=SKINBOUND82" in b["target_url"] for b in made)
+    old = (dist / "3-01-old" / "index.html").read_text(encoding="utf-8")
+    assert "where-to-buy" not in old and "Affiliate" not in old
+    md = (dist / "ceramide" / "index.md").read_text(encoding="utf-8")
+    assert "> Affiliate disclosure:" in md and "- [ILLIYOON Ceramide Ato Lotion 334ml](https://go.example/oy1?s=blog)" in md
+    assert "Affiliate links</span>" in (dist / "index.html").read_text(encoding="utf-8")   # 목록 카드에도 표시
+    links = common.load_json(common.content_dir() / "site" / "tracked_links.json")
+    assert links["_oy:2026-W47-03-ceramide:GA210911943"]["kind"] == "affiliate"
+    monkeypatch.setattr(aff_mod, "load_yaml", lambda n: {"affiliates": {"oliveyoung": {"enabled": False}}} if n == "site.yaml" else real(n))
+    site_mod.build()                                                                         # 끄면 링크·표시가 모두 빠진다
+    assert "Affiliate" not in (dist / "ceramide" / "index.html").read_text(encoding="utf-8")
+
+
+def test_affiliate_rules_and_first_posts_go_to_a_person(env, monkeypatch):
+    rules = common.read_prompt("_rules")
+    assert "global.oliveyoung.com/product/detail?prdtNo=" in rules and "Do not write prices" in rules
+    assert "do not use affiliate or shop links" not in rules
+    review = importlib.import_module("pipeline.03_review")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_stage": 4}} if n == "channels.yaml" else _o(n))
+    path, _ = _skincare("2026-W47-03-new", state="drafts")
+    common.save_json(path / "review.json", {"grade": "pass", "always_human": [], "findings": []})
+    for i in range(3):
+        _skincare(f"2026-W4{i}-03-done{i}")
+    assert review.auto_candidates() == []                                                   # 제휴 글 3편뿐 → 4편째도 사람
+    _skincare("2026-W46-03-done3")
+    assert [p.name for p in review.auto_candidates()] == ["2026-W47-03-new"]
+
+
+def test_publish_slots_fix_one_type_per_weekday(env, monkeypatch):
+    assert common.load_yaml("site.yaml")["publish_schedule"]["slots"] == {"mon": "info", "wed": "procedure_travel", "fri": "skincare"}
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7,
+                                                              "slots": {0: "info", 2: "procedure_travel", 4: "skincare"}})
+    monkeypatch.setattr(site_mod, "now_kst", lambda: datetime(2026, 11, 14, 11, 0, tzinfo=site_mod.KST))   # 토요일
+    _skincare("2026-W47-03-sk", created="2026-11-13T00:00:00+00:00")
+    _published("2026-W47-01-proc", live=False)
+    path, draft = _skincare("2026-W47-02-trip", created="2026-11-13T01:00:00+00:00")
+    common.save_json(path / "draft.json", {**draft, "content_type": "procedure_travel"})
+    _skincare("2026-W47-04-sk2", created="2026-11-13T02:00:00+00:00")
+    site_mod.collect_posts()
+    sched = common.load_json(site_mod.schedule_file())
+    assert {k: v["date"] for k, v in sched.items()} == {
+        "2026-W47-01-proc": "2026-11-16", "2026-W47-02-trip": "2026-11-18",
+        "2026-W47-03-sk": "2026-11-20", "2026-W47-04-sk2": "2026-11-27"}                   # 화장품 둘째 편은 다음 주 금요일
+    assert site_mod.slot_group({"content_type": "sponsored", "sponsor": {"id": "g"}}) is None
