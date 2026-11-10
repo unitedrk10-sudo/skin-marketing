@@ -129,3 +129,44 @@ test("분석용 내보내기: 집계만, 방문자 해시 없음", async () => {
   assert.ok(!("visitor" in res.rows[0]));
   assert.equal((await call(`/api/export?from=${day}&to=${day}`)).status, 401);
 });
+
+// ---- 대기 명단 (2026-11-10)
+const join = (fields, headers = {}) => call("/w", {
+  method: "POST",
+  headers: { origin: "https://skininfo.example", "user-agent": HUMAN, "cf-connecting-ip": "203.0.113.9", ...headers },
+  body: new URLSearchParams({ email: "Reader@Example.com", agree: "yes", timing: "2027h1", page: "/rejuran-guide/", ...fields }),
+});
+const waitlist = async (qs = "") => (await admin(`/api/waitlist${qs}`)).json();
+
+test("대기 명단: 가입 저장 → 감사 페이지로 303, 이메일은 소문자·중복은 한 줄", async () => {
+  const res = await join({});
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.get("location"), "https://skininfo.example/waitlist/thanks/");
+  await join({ timing: "later" });
+  const data = await waitlist("?emails=1");
+  assert.equal(data.total, 1);
+  assert.deepEqual(data.rows.map((r) => [r.email, r.timing, r.page]), [["reader@example.com", "later", "/rejuran-guide/"]]);
+  assert.ok(!JSON.stringify(data).includes("203.0.113.9")); // IP 원문 미저장
+  assert.equal((await waitlist()).rows, undefined); // 기본 응답엔 명단 없음 (집계만)
+});
+
+test("대기 명단: 다른 사이트의 양식·봇·숨김 칸·동의 없음·잘못된 주소는 저장하지 않는다", async () => {
+  assert.equal((await join({}, { origin: "https://evil.example" })).status, 403);
+  await join({ email: "bot@example.com" }, { "user-agent": "python-requests/2.32" });
+  await join({ email: "trap@example.com", website: "http://spam" });
+  const bad = await join({ email: "no-consent@example.com", agree: "" });
+  assert.equal(bad.headers.get("location"), "https://skininfo.example/waitlist/?e=1");
+  await join({ email: "not-an-email" });
+  await join({ email: "x@example.com", page: "https://evil.example/", timing: "<script>" });
+  const data = await waitlist("?emails=1");
+  assert.deepEqual(data.rows.map((r) => [r.email, r.timing, r.page]), [["x@example.com", "unsure", ""]]);
+});
+
+test("대기 명단: 같은 방문자는 하루 5개까지, 관리 API 는 토큰 필요, 삭제 요청 처리", async () => {
+  for (let i = 0; i < 8; i++) await join({ email: `a${i}@example.com` });
+  assert.equal((await waitlist()).total, 5);
+  assert.equal((await call("/api/waitlist")).status, 401);
+  const del = await admin("/api/waitlist/delete", { method: "POST", body: JSON.stringify({ email: "A0@example.com" }) });
+  assert.equal((await del.json()).deleted, 1);
+  assert.equal((await waitlist()).total, 4);
+});

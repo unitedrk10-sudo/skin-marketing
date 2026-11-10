@@ -27,6 +27,17 @@ TRACKER_TOKEN=<ADMIN_TOKEN 과 같은 값>
 도메인을 사면 Cloudflare 대시보드 → Workers → skin-tracker → Domains 에서 `go.<도메인>` 을 연결하고 TRACKER_URL 을 바꾼다.
 블로그 도메인이 생기면 `wrangler.toml` 의 `SITE_HOST` 를 넣고 다시 배포 (블로그에서 온 클릭을 blog 로 분류). `BRAND` 는 브랜드명 확정 후 변경.
 
+## 대기 명단 (2026-11-10)
+블로그의 대기 명단 양식이 `POST /w` 로 이메일·방문 예정 시기를 보낸다 (D1 `waitlist` 표). 블로그 도메인(`SITE_HOST`)에서 온 양식만 받고, IP 원문은 저장하지 않는다.
+```bash
+npx wrangler d1 execute skin-tracker --remote --file schema.sql   # 표 추가 (이미 있는 표는 그대로)
+npx wrangler deploy
+python -m pipeline.tracker waitlist                 # 인원·국가·방문 시기·채널
+python -m pipeline.tracker waitlist --export        # reports/waitlist/waitlist.csv (git 제외, 공유 금지)
+python -m pipeline.tracker waitlist --delete a@b.c  # 삭제 요청 처리
+```
+Worker 를 먼저 배포한 뒤 블로그를 배포한다 (반대 순서면 양식이 404).
+
 ## 사용
 ```bash
 python -m pipeline.tracker add --sponsor glow --label "Rejuran guide"   # 채널별 링크 4개 출력 (?s=tt|ig|yt|blog)

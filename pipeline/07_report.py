@@ -136,6 +136,7 @@ def extras() -> list[str]:
             end = date.today() - timedelta(days=1)
             t = tracker.stats(end - timedelta(days=6), end)["totals"]
             lines.append(f"🔗 링크 클릭 {t['clicks']} (하루 고유 {t['unique_daily']})")
+            lines += tracker.waitlist_lines(7)  # 대기 명단 가입 수 (숫자만)
     except Exception as e:  # noqa: BLE001
         log.warning("유입 집계 실패: %s", e)
     try:

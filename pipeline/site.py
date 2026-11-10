@@ -432,6 +432,13 @@ html[data-palette=charcoal]{--bg:#F8F6F1;--ink:#1A1A1A;--muted:#6E6A64;--line:#E
 .hero h1{font-family:var(--serif);font-weight:400;font-size:78px;line-height:1;letter-spacing:-.015em;margin:22px 0 26px}
 .hero h1 em{color:var(--sage)}
 .hero .sub{font-size:19px;line-height:1.6;color:#565c59;max-width:30em;margin:0 0 34px}
+.wl{border:1px solid var(--line);background:var(--surface);border-radius:3px;padding:28px 30px;margin:44px 0}
+.wl .wl-h{display:block;font-family:var(--serif);font-size:30px;line-height:1.15;margin:8px 0 10px}.wl p{margin:0 0 14px;font-size:16px;line-height:1.6}
+.wl form{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0 10px}
+.wl input[type=email],.wl select{font:inherit;font-size:15px;padding:13px 14px;border:1px solid var(--line);border-radius:3px;background:var(--bg);color:var(--ink);min-width:0;height:50px;box-sizing:border-box}
+.wl input[type=email]{flex:1 1 220px}.wl select{flex:1 1 180px}.wl .ck{flex:1 1 100%;font-size:14px;color:var(--muted)}.wl .ck a{color:var(--sage);text-decoration:underline}
+.wl button{border:0;cursor:pointer;font-family:inherit}.wl .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.wl .err{color:var(--accent);font-weight:500}
 .btn{display:inline-block;background:var(--accent);color:#fff;padding:15px 28px;border-radius:999px;font-size:15px;font-weight:500}
 .tlink{margin-left:22px;font-size:15px;border-bottom:1px solid currentColor;padding-bottom:2px}
 .hero-img{margin:0;position:relative;min-height:420px}.hero-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:35% 50%;border-radius:3px}
@@ -548,6 +555,8 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     contact = f'<a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>' if cfg.get("contact_email") else ""
     name = esc(cfg["name"])
     partners = '<a href="/partners/">For clinics (한국어)</a>' if cfg.get("partners_page") else ""
+    wl = waitlist_cfg(cfg)
+    waitlist_link = f'<a href="/waitlist/">Booking help ({wl["year"]})</a>' if wl else ""
     wordmark = f'<span class="wm"><b>{name}</b><small>KOREA</small></span>'  # 워드마크: Skinbound + 자간 넓힌 KOREA
     return f"""<!doctype html>
 <html lang="{lang or cfg.get('language', 'en')}" data-palette="{esc(cfg.get('palette') or 'green')}"><head>{''.join(head)}</head>
@@ -558,7 +567,7 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
 <footer class="ft"><div class="wrap ft-in"><div><span class="brand"><img src="/icon-inverse-192.png" alt="" width="49" height="49">{wordmark}</span>
 <p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
-<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a>{data_link}</div>
+<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a>{data_link}{waitlist_link}</div>
 <div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}{partners}</div></div></footer>
 </body></html>"""
 
@@ -596,6 +605,61 @@ def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> 
         out.append({"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
             {"@type": "Question", "name": f["q"], "acceptedAnswer": {"@type": "Answer", "text": f["a"]}} for f in faq]})
     return out
+
+
+WAITLIST_TIMINGS = [("unsure", "Not sure when yet"), ("2027h1", "Visiting Jan–Jun 2027"), ("2027h2", "Visiting Jul–Dec 2027"),
+                    ("later", "2028 or later")]  # 값은 tracker/src/logic.js WAITLIST_TIMINGS 와 같아야 한다
+
+
+def waitlist_cfg(cfg: dict) -> dict | None:
+    """대기 명단 설정 — site.yaml waitlist.enabled 이고 추적기 주소(TRACKER_URL)가 있을 때만. 없으면 양식을 만들지 않는다
+    (받을 곳 없는 양식을 내지 않게)."""
+    wl = cfg.get("waitlist") or {}
+    endpoint = (os.environ.get("TRACKER_URL") or "").rstrip("/")
+    if not wl.get("enabled") or not endpoint.startswith("https://"):
+        return None
+    return {"endpoint": endpoint + "/w", "year": int(wl.get("launch_year") or 2027)}
+
+
+def waitlist_html(cfg: dict, path: str) -> str:
+    """대기 명단 양식 (2026-11-10). 이메일·방문 예정 시기만 받고 추적기(/w)에 저장한다 — 국가는 Cloudflare 가 붙인다.
+    문구의 선: 서비스는 "계획"이고 유치업 등록 법인이 운영한다고만 쓴다. 등록 전에는 상담·예약 연결을 하지 않는다고 밝힌다
+    (기획서 12-3 시스템의 선). 병원·시술 이름, 할인·혜택 문구를 넣지 않는다."""
+    wl = waitlist_cfg(cfg)
+    if not wl:
+        return ""
+    esc = html.escape
+    options = "".join(f'<option value="{v}">{esc(label)}</option>' for v, label in WAITLIST_TIMINGS)
+    contact = esc(cfg.get("contact_email") or "")
+    return f"""<aside class="wl" id="waitlist"><p class="kicker">Planned for {wl['year']}</p>
+<strong class="wl-h">Want help booking your treatment trip?</strong>
+<p>From {wl['year']} we plan to offer a booking-help service for international visitors, run by a company registered in
+Korea as a foreign-patient facilitator. Leave your email and we will write to you once when it opens.
+Until then we do not arrange consultations or bookings.</p>
+<form method="post" action="{esc(wl['endpoint'])}">
+<input type="email" name="email" required maxlength="254" placeholder="you@example.com" autocomplete="email" aria-label="Email address">
+<select name="timing" aria-label="When are you thinking of visiting Korea?">{options}</select>
+<input class="hp" type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+<input type="hidden" name="page" value="{esc(path)}">
+<label class="ck"><input type="checkbox" name="agree" value="yes" required> Email me when this service opens.
+See <a href="/privacy/#waitlist">how we handle your email</a>.</label>
+<button class="btn" type="submit">Notify me</button></form>
+<p class="meta">One email when the service opens. No newsletter, and we do not pass your email to clinics.
+{f"To be removed, write to {contact}." if contact else ""}</p></aside>"""
+
+
+def render_waitlist(cfg: dict, thanks: bool = False) -> str:
+    wl = waitlist_cfg(cfg)
+    if thanks:
+        body = (f'<h1>You are on the list</h1><p>Thank you. We will send one email when the booking-help service opens '
+                f'(planned for {wl["year"]}). Until then, the guides stay free to read.</p>'
+                '<p><a class="btn" href="/#guides">Back to the guides</a></p>')
+        return page(cfg, f"You are on the list — {cfg['name']}", f'<div class="page">{body}</div>', path="/waitlist/thanks/", noindex=True)
+    body = (f'<h1>Booking help, planned for {wl["year"]}</h1>'
+            '<p class="err" id="wl-err" hidden>Please check the email address and tick the box, then try again.</p>'
+            + waitlist_html(cfg, "/waitlist/")
+            + '<script>if(/[?&]e=1/.test(location.search))document.getElementById("wl-err").hidden=false</script>')
+    return page(cfg, f"Booking help ({wl['year']}) — {cfg['name']}", f'<div class="page wl-page">{body}</div>', path="/waitlist/", noindex=True)
 
 
 def registry_box(registry_url: str | None) -> str:
@@ -823,6 +887,7 @@ please consult a licensed doctor before any treatment.</div></aside>
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
 {clinic_directory_html(post, clinic_urls) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
 {route_ad_html(cfg, ad_sponsor, ad_url)}
+{"" if sponsor else waitlist_html(cfg, f"/{post['slug']}/")}
 <section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article></div>{geo_ad_script(cfg) if ad_sponsor else ""}"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
     return page(cfg, f"{blog.get('title', '')} | {cfg['name']}", body, path=f"/{post['slug']}/",
@@ -979,6 +1044,13 @@ def render_partners(cfg: dict) -> str:
 
 def render_privacy(cfg: dict) -> str:
     contact = html.escape(cfg.get("contact_email") or "the contact address on this site")
+    wl = waitlist_cfg(cfg)
+    waitlist_note = (f"""<li id="waitlist"><strong>Booking-help waiting list (optional):</strong> if you leave your email in the
+waiting-list form, we store the email address, the visit timing you choose, your country code (from our host), the page you
+signed up on and the date. We use it for one purpose: to email you when the booking-help service planned for {wl["year"]} opens.
+The service will be run by a company we are setting up in Korea; the list will be handed to that company for this purpose only.
+We do not give it to clinics. It is stored with our host (Cloudflare) and kept until you ask us to delete it or until
+12 months after the service opens, whichever comes first. To be removed, write to {contact}.</li>""" if wl else "")
     body = f"""<h1>Privacy</h1>
 <p>This site does not use advertising cookies or ask you to log in.</p>
 <ul><li><strong>Hosting logs:</strong> our host (Cloudflare) processes standard request data such as IP address and browser
@@ -992,7 +1064,7 @@ address; a one-way code that changes every day is used only to count unique visi
 standard campaign tags (utm_source, utm_medium, utm_campaign) so the clinic can see the visit came from us.</li>
 <li><strong>Ad display:</strong> to show clinic ads only to visitors outside Korea, the page asks our host (Cloudflare)
 for your country code. Nothing is stored.</li>
-<li>We do not sell personal information.</li></ul>
+{waitlist_note}<li>We do not sell personal information.</li></ul>
 <p>Questions: {contact}.</p>"""
     return page(cfg, f"Privacy — {cfg['name']}", f'<div class="page">{body}</div>', path="/privacy/")
 
@@ -1305,6 +1377,9 @@ def build(out: Path | None = None) -> dict:
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
     write("privacy/index.html", render_privacy(cfg))
+    if waitlist_cfg(cfg):  # 대기 명단 안내·완료 페이지 (검색 제외, sitemap 에 넣지 않음)
+        write("waitlist/index.html", render_waitlist(cfg))
+        write("waitlist/thanks/index.html", render_waitlist(cfg, thanks=True))
     if data := data_ready(cfg):  # 영어 공개 데이터 세트 (pipeline/dataset.py)
         dataset = importlib.import_module("pipeline.dataset")
         try:
