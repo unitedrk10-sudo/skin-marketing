@@ -275,6 +275,7 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
                     continue  # "cosmetics can't claim to treat..." 같은 설명은 허용
                 findings.append(Finding("rules", "block", f"[{where}] 화장품을 의약품처럼 표현 (화장품법 §13): '{m.group(0)}'",
                                         _snippet(text, m)))
+        findings += check_affiliate_products(draft)
 
     if draft.get("content_type") == "procedure_travel" and ITINERARY.search(texts["blog"]) \
             and not OBSERVATION_DAY.search(texts["blog"]):
@@ -323,6 +324,23 @@ def check_sponsor(draft: dict, texts: dict[str, str], human: set[str]) -> list[F
         findings.append(Finding("rules", "block", "[blog] 스폰서 광고 표시 없음 (표시광고법 — 대가 관계 명시)"))
     human.add(f"스폰서 광고({sponsor['name_ko']}) — 병원 확인 필요")
     return findings
+
+
+def check_affiliate_products(draft: dict) -> list[Finding]:
+    """제휴 화장품 글이 인용한 올리브영 글로벌 제품이 지금 팔리는지 (2026-11-11 — 출처 페이지가 사라진 제품인 경우가 있었다).
+    사라진 제품은 구매 링크에서 빠지므로 본문에서도 빼거나 다른 제품으로 — 품절은 참고만."""
+    from pipeline import affiliates
+    if not affiliates.applies(draft):
+        return []
+    out = []
+    for item in affiliates.products(draft):
+        state = affiliates.product_status(item["id"])
+        if state["status"] == "gone":
+            out.append(Finding("rules", "caution", f"[blog] 올리브영 글로벌에서 사라진 제품 ({item['fact_id']}) — 구매 링크 없이 나갑니다. "
+                                                     "본문에서 빼거나 다른 제품으로", item["name"]))
+        elif state["status"] == "soldout":
+            out.append(Finding("rules", "info", f"[blog] 올리브영 글로벌 품절 제품 ({item['fact_id']}) — 링크는 나갑니다", item["name"]))
+    return out
 
 
 def check_no_sponsor_names(texts: dict[str, str]) -> list[Finding]:

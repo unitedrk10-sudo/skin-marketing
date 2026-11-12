@@ -141,6 +141,11 @@ def extras() -> list[str]:
     except Exception as e:  # noqa: BLE001
         log.warning("유입 집계 실패: %s", e)
     try:
+        from pipeline import affiliates
+        lines += affiliates.report_lines(7)  # 올리브영 구매 링크 클릭 + 판매 상태 점검 (주 1회, 여기서 실행)
+    except Exception as e:  # noqa: BLE001
+        log.warning("구매 링크 집계 실패: %s", e)
+    try:
         from pipeline import social
         lines += social.reaction_lines(7)  # Threads·X 반응 수
         lines += social.experiment_lines()  # 공유 실험 글 vs 기존 글

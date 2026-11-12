@@ -887,7 +887,7 @@ def affiliate_badge(draft: dict) -> str:
 def buy_html(draft: dict, aff_urls: dict[str, str] | None = None) -> str:
     """화장품 글 끝의 구매 링크 (2026-11-10). 링크 바로 위에 제휴 표시, 미국 가격은 미국 방문자에게만."""
     cfg = affiliates.settings()
-    items = affiliates.products(draft) if affiliates.applies(draft) else []
+    items = affiliates.buyable(affiliates.products(draft), aff_urls) if affiliates.applies(draft) else []
     if not cfg or not items:
         return ""
     esc = html.escape
@@ -1191,7 +1191,7 @@ def render_post_md(cfg: dict, post: dict, aff_urls: dict[str, str] | None = None
     if (items := affiliates.products(draft) if affiliates.applies(draft) and not s else []) and affiliates.settings():
         head += [f"> Affiliate disclosure: {affiliates.DISCLOSURE_TOP}", ""]
     tail = ["", "## Sources"] + [f"{i}. {u}" for i, u in enumerate(sources, 1)] if sources else []
-    if items:
+    if items := affiliates.buyable(items, aff_urls):
         buy = ["", "## Where to buy online", "", f"_{affiliates.DISCLOSURE_LINKS}_", ""]
         buy += [f"- [{i['name']}]({(aff_urls or {}).get(i['id']) or affiliates.global_url(i['id'])})" for i in items]
         buy += ["", "Olive Young Global does not ship to the United States; US readers are sent to Olive Young US."]
@@ -1388,6 +1388,13 @@ def _affiliate_links(post: dict, mapping: dict[str, dict], title: str) -> bool:
         key = affiliates.link_key(draft["id"], item["id"])
         if key in mapping:
             continue
+        state = affiliates.product_status(item["id"])  # 링크를 만들 때 한 번: 사라진 제품은 구매 링크에서 뺀다
+        if state["status"] == "gone":
+            log.warning("올리브영에서 사라진 제품 — 구매 링크 없음: %s (%s)", item["name"], item["id"])
+            mapping[key] = {"url": "", **link_meta(post, "affiliate"), "placement": "buy", "product": item["id"],
+                            "product_name": item["name"], "gone": True}
+            changed = True
+            continue
         try:
             link = tracker.add_link(None, affiliates.global_url(item["id"], cfg), f"oliveyoung: {item['name']}"[:120],
                                     target_us=affiliates.us_target(item["id"], cfg))
@@ -1487,7 +1494,7 @@ def build(out: Path | None = None) -> dict:
         prefix = clinic_link_key(p["draft"]["id"], "")
         clinic_urls = {k[len(prefix):]: v["url"] for k, v in links.items() if k.startswith(prefix)}
         aff_prefix = affiliates.link_key(p["draft"]["id"], "")
-        p["aff_urls"] = {k[len(aff_prefix):]: v["url"] for k, v in links.items() if k.startswith(aff_prefix)}
+        p["aff_urls"] = {k[len(aff_prefix):]: v.get("url") or "" for k, v in links.items() if k.startswith(aff_prefix)}
         write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls, posts=posts, pages=pages, aff_urls=p["aff_urls"]))
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))

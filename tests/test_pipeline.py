@@ -109,6 +109,8 @@ def env(tmp_path, monkeypatch):
         monkeypatch.delenv(k, raising=False)  # 셸에 .env 를 불러 둔 상태로 테스트해도 실제 API 를 부르지 않게
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
     monkeypatch.setattr(importlib.import_module("pipeline.site"), "publish_schedule", lambda: None)  # 기본: 승인 즉시 게시
+    monkeypatch.setattr(importlib.import_module("pipeline.affiliates"), "product_status",
+                        lambda pid: {"status": "ok", "name": pid})  # 올리브영 제품 확인도 네트워크 없이 (기본: 판매 중)
     for name in ("pipeline.02b_auto_review", "pipeline.03_review", "pipeline.translate"):  # 기본: 숏폼 켠 상태로 시험
         monkeypatch.setattr(importlib.import_module(name), "shortform_on", lambda: True)
     monkeypatch.setattr(importlib.import_module("pipeline.experiment"), "config",
@@ -4468,3 +4470,62 @@ def test_publish_slots_fix_one_type_per_weekday(env, monkeypatch):
         "2026-W47-01-proc": "2026-11-16", "2026-W47-02-trip": "2026-11-18",
         "2026-W47-03-sk": "2026-11-20", "2026-W47-04-sk2": "2026-11-27"}                   # 화장품 둘째 편은 다음 주 금요일
     assert site_mod.slot_group({"content_type": "sponsored", "sponsor": {"id": "g"}}) is None
+
+
+def test_affiliate_report_lines_count_clicks_and_flag_dead_products(env, monkeypatch):
+    links = {"_oy:2026-W47-03-a:GA1": {"kind": "affiliate", "code": "oy1", "product": "GA1", "product_name": "Lotion", "draft_id": "2026-W47-03-a", "title": "Ceramide picks"},
+             "_oy:2026-W47-03-a:GA2": {"kind": "affiliate", "code": "oy2", "product": "GA2", "product_name": "Sun", "draft_id": "2026-W47-03-a", "title": "Ceramide picks"},
+             "_oy:2026-W48-03-b:GA2": {"kind": "affiliate", "code": "oy3", "product": "GA2", "product_name": "Sun", "draft_id": "2026-W48-03-b", "title": "SPF guide"},
+             "_registry:x": {"kind": "registry", "code": "r1"}}
+    common.save_json(common.content_dir() / "site" / "tracked_links.json", links)
+    assert set(aff_mod.tracked()) == {k for k in links if k.startswith("_oy")}
+    rows = [{"code": "oy1", "clicks": 3, "country": "SG", "is_bot": 0}, {"code": "oy1", "clicks": 2, "country": "US", "is_bot": 0},
+            {"code": "oy3", "clicks": 1, "country": "CA", "is_bot": 0}, {"code": "oy2", "clicks": 9, "country": "SG", "is_bot": 1},
+            {"code": "r1", "clicks": 5, "country": "SG", "is_bot": 0}]
+    lines = aff_mod.click_lines(rows, aff_mod.tracked())
+    assert lines[0] == "🛍 올리브영 구매 링크: 제휴 글 2편 · 클릭 6 (글로벌몰 4 · 미국→US 몰 2)"   # 봇·다른 링크 제외
+    assert lines[1] == "  상위: Lotion 5, Sun 1"
+    status = {"GA1": {"status": "ok", "name": "Lotion"}, "GA2": {"status": "gone"}}
+    result = aff_mod.check(fetch=lambda pid: status[pid], pause=0)
+    assert [(x["id"], x["status"], x["posts"]) for x in result["items"]] == [("GA1", "ok", ["Ceramide picks"]), ("GA2", "gone", ["Ceramide picks", "SPF guide"])]
+    out = aff_mod.check_lines(common.load_json(aff_mod.check_file()))
+    assert out[0] == "🛍 구매 링크 점검: 제품 2개 — 판매 중 1 · 사라짐 1"
+    assert "사라짐: Sun (GA2) — 글: Ceramide picks, SPF guide" in out[1] and "그대로 둡니다" in out[-1]
+
+
+def test_affiliate_product_status_reads_sale_codes(monkeypatch):
+    import io
+    replies = {}
+
+    class Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(aff_mod.urllib.request, "urlopen", lambda req, timeout=0: Resp(replies[json.loads(req.data)["prdtNo"]]))
+    replies.update({"A": b"", "B": json.dumps({"product": {"prdtNameEn": "Lotion", "sellStatCode": "10", "tempOutOfStockYn": "N",
+                                                             "optionList": [{"sellStatCode": "10", "tempOutOfStockYn": "Y"}, {"sellStatCode": "10", "tempOutOfStockYn": "N"}]}}).encode(),
+                    "C": json.dumps({"product": {"prdtNameEn": "Gel", "sellStatCode": "10", "tempOutOfStockYn": "N",
+                                                 "optionList": [{"sellStatCode": "10", "tempOutOfStockYn": "Y"}]}}).encode(),
+                    "D": json.dumps({"product": {"prdtNameEn": "Old", "sellStatCode": "20"}}).encode()})
+    assert aff_mod.product_status("A") == {"status": "gone"}
+    assert aff_mod.product_status("B") == {"status": "ok", "name": "Lotion"}          # 옵션 하나라도 판매 중
+    assert aff_mod.product_status("C")["status"] == "soldout"                          # 옵션 전부 품절
+    assert aff_mod.product_status("D")["status"] == "soldout"                          # 판매 중지
+
+
+def test_gone_olive_young_product_gets_no_buy_link_and_is_flagged(env, site_env, tmp_path, monkeypatch):
+    _skincare()
+    monkeypatch.setattr(aff_mod, "product_status", lambda pid: {"status": "gone"} if pid == "GA210610738" else {"status": "ok", "name": pid})
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: made.append(body) or {"code": "oy1", "url": "https://go.example/oy1"})
+    site_mod.build()
+    post = (tmp_path / "dist" / "ceramide" / "index.html").read_text(encoding="utf-8")
+    assert "ILLIYOON" in post and "Dr.G Green Mild" not in post.split('id="where-to-buy"')[1].split('</section>')[0]   # 사라진 제품은 구매 링크에서 빠짐
+    assert len(made) == 1                                                                   # 추적 링크도 안 만듦
+    links = common.load_json(common.content_dir() / "site" / "tracked_links.json")
+    assert links["_oy:2026-W47-03-ceramide:GA210610738"]["gone"] is True
+    review = importlib.import_module("pipeline.02b_auto_review")
+    _path, draft = _skincare("2026-W47-03-other", state="drafts")
+    found = review.check_affiliate_products(draft)
+    assert [(f.severity, f.quote) for f in found] == [("caution", "Dr.G Green Mild Up Sun+ 50mL")]

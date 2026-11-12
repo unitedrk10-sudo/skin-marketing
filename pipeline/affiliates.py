@@ -11,11 +11,19 @@
 """
 from __future__ import annotations
 
+import argparse
+import json
 import re
+import time
+import urllib.error
 import urllib.parse
-from datetime import date
+import urllib.request
+from collections import Counter
+from datetime import date, timedelta
 
-from pipeline.common import load_yaml
+from pipeline.common import content_dir, get_logger, load_json, load_yaml, now_iso, run_cli, save_json
+
+log = get_logger("affiliates")
 
 PRODUCT_URL = re.compile(r"^https://global\.oliveyoung\.com/product/detail\?(?:[^#]*&)?prdtNo=([A-Za-z0-9]{6,20})(?:&|$)")
 TITLE_TAIL = re.compile(r"\s*[-|]\s*OLIVE\s*YOUNG(?:\s+Global)?\s*$", re.I)
@@ -59,6 +67,11 @@ def products(draft: dict) -> list[dict]:
         name = TITLE_TAIL.sub("", fact.get("source_title") or "").strip() or m.group(1)
         out.append({"id": m.group(1), "name": name[:120], "fact_id": fid})
     return out
+
+
+def buyable(items: list[dict], aff_urls: dict[str, str] | None = None) -> list[dict]:
+    """구매 링크에 올릴 제품 — 링크를 만들 때 올리브영에서 사라진 것으로 확인된 제품(aff_urls 값이 빈 문자열)은 뺀다."""
+    return [i for i in items if (aff_urls or {}).get(i["id"], None) != ""]
 
 
 def global_url(product_id: str, cfg: dict | None = None) -> str:
@@ -105,3 +118,147 @@ def needs_human(draft: dict, approved_count: int) -> bool:
     """제휴 글 첫 N편(settings human_first)은 사람이 본다 — 표시 위치·문구와 구매 링크 확인 뒤 자동 승인."""
     cfg = settings()
     return bool(cfg and applies(draft) and approved_count < cfg["human_first"])
+
+
+# ---------------- 구매 링크 점검 (주 1회, 주간 리포트) ----------------
+# 글로벌몰 제품 화면이 쓰는 제품 데이터(POST detail-data, 제품마다 1회)로 판매 상태를 본다.
+# 빈 응답 = 없는 제품(화면은 not-found 로 보냄), sellStatCode '10' = 판매 중 (화면 스크립트 기준),
+# tempOutOfStockYn 'Y' 또는 옵션 전부 품절 = 일시 품절. 알리기만 하고 게시된 글의 링크는 고치지 않는다.
+DETAIL_DATA = "https://global.oliveyoung.com/product/detail-data"
+STATUS_LABEL = {"ok": "판매 중", "soldout": "품절", "gone": "사라짐", "error": "확인 실패"}
+
+
+def check_file():
+    return content_dir() / "site" / "affiliate_check.json"
+
+
+def tracked() -> dict[str, dict]:
+    """게시된 제휴 글의 구매 링크 (content/site/tracked_links.json 의 kind affiliate)."""
+    path = content_dir() / "site" / "tracked_links.json"
+    raw = load_json(path) if path.exists() else {}
+    return {k: v for k, v in raw.items() if isinstance(v, dict) and v.get("kind") == "affiliate" and v.get("product")}
+
+
+def tracked_products(links: dict[str, dict] | None = None) -> list[dict]:
+    """제품별로 묶기 — 같은 제품이 여러 글에 있으면 글 제목을 모은다."""
+    out: dict[str, dict] = {}
+    for v in (tracked() if links is None else links).values():
+        item = out.setdefault(v["product"], {"id": v["product"], "name": v.get("product_name") or v["product"], "posts": []})
+        if v.get("title") and v["title"] not in item["posts"]:
+            item["posts"].append(v["title"])
+    return list(out.values())
+
+
+def product_status(product_id: str) -> dict:
+    """제품 하나의 판매 상태 {status, name}. 네트워크 오류는 error (다음 주에 다시 본다)."""
+    from pipeline.web import USER_AGENT
+    req = urllib.request.Request(DETAIL_DATA, data=json.dumps({"prdtNo": product_id}).encode(), method="POST",
+                                 headers={"User-Agent": USER_AGENT, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read().decode("utf-8", "replace").strip()
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return {"status": "error", "note": str(e)[:120]}
+    if not body:
+        return {"status": "gone"}
+    try:
+        product = (json.loads(body) or {}).get("product") or {}
+    except ValueError:
+        return {"status": "error", "note": "응답이 JSON 이 아님"}
+    if not product:
+        return {"status": "gone"}
+    name = product.get("prdtNameEn") or product.get("prdtName") or ""
+    options = product.get("optionList") or []
+    selling = str(product.get("sellStatCode")) == "10" and product.get("tempOutOfStockYn") != "Y"
+    if selling and options:
+        selling = any(str(o.get("sellStatCode")) == "10" and o.get("tempOutOfStockYn") != "Y" for o in options)
+    return {"status": "ok" if selling else "soldout", "name": name}
+
+
+def check(fetch=product_status, pause: float = 1.0) -> dict:
+    """게시된 제휴 글의 제품을 모두 확인해 저장한다 (content/site/affiliate_check.json)."""
+    items = []
+    for i, item in enumerate(tracked_products()):
+        if i and pause:
+            time.sleep(pause)
+        items.append({**item, **fetch(item["id"])})
+    result = {"checked_at": now_iso(), "items": items}
+    save_json(check_file(), result)
+    bad = [x for x in items if x["status"] != "ok"]
+    log.info("구매 링크 점검: 제품 %d개, 문제 %d개", len(items), len(bad))
+    return result
+
+
+def check_lines(result: dict) -> list[str]:
+    items = result.get("items") or []
+    if not items:
+        return []
+    counts = Counter(x["status"] for x in items)
+    lines = ["🛍 구매 링크 점검: 제품 " + str(len(items)) + "개 — " +
+             " · ".join(f"{STATUS_LABEL[k]} {counts[k]}" for k in STATUS_LABEL if counts[k])]
+    for x in items:
+        if x["status"] in ("soldout", "gone"):
+            lines.append(f"  - {STATUS_LABEL[x['status']]}: {x['name']} ({x['id']}) — 글: {', '.join(x['posts'][:2]) or '-'}")
+    if counts["soldout"] or counts["gone"]:
+        lines.append("  (게시된 글의 링크는 그대로 둡니다 — 바꾸려면 따로 요청)")
+    return lines
+
+
+def click_lines(rows: list[dict], links: dict[str, dict]) -> list[str]:
+    """추적기 집계(analytics.fetch 의 행)에서 구매 링크 클릭 — 봇 제외, 미국(US 몰로 감)·그 외(글로벌몰, 수수료 대상) 나눠서."""
+    by_code = {v["code"]: v for v in links.values() if v.get("code")}
+    total, us, products = 0, 0, Counter()
+    for r in rows:
+        meta = by_code.get(r.get("code"))
+        if not meta or r.get("is_bot"):
+            continue
+        n = int(r.get("clicks") or 0)
+        total += n
+        us += n if r.get("country") == "US" else 0
+        products[meta.get("product_name") or meta["product"]] += n
+    posts = len({v.get("draft_id") for v in links.values()})
+    line = f"🛍 올리브영 구매 링크: 제휴 글 {posts}편 · 클릭 {total}"
+    if total:
+        line += f" (글로벌몰 {total - us} · 미국→US 몰 {us})"
+    lines = [line]
+    if products:
+        lines.append("  상위: " + ", ".join(f"{name} {n}" for name, n in products.most_common(3)))
+    lines.append("  주문·수수료는 올리브영 인플루언서 화면에서 확인")
+    return lines
+
+
+def report_lines(days: int = 7) -> list[str]:
+    """주간 리포트용: 구매 링크 클릭 + 링크 점검 (점검은 이때 실행). 설정이 꺼져 있으면 없음."""
+    if not settings():
+        return []
+    links = tracked()
+    if not links:
+        return ["🛍 올리브영 제휴: 게시된 제휴 글 아직 없음"]
+    lines = []
+    from pipeline import tracker
+    if tracker.configured():
+        from pipeline import analytics
+        end = date.today() - timedelta(days=1)
+        try:
+            lines += click_lines(analytics.fetch(end - timedelta(days=days - 1), end), links)
+        except tracker.TrackerError as e:
+            log.warning("구매 링크 클릭 집계 실패: %s", e)
+    lines += check_lines(check())
+    return lines
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="올리브영 제휴 링크")
+    parser.add_argument("cmd", choices=["check", "report"])
+    parser.add_argument("--days", type=int, default=7)
+    args = parser.parse_args(argv)
+    if args.cmd == "check":
+        result = check()
+        print("\n".join(check_lines(result)) or "게시된 제휴 글의 구매 링크 없음")
+        return 0
+    print("\n".join(report_lines(args.days)) or "제휴 설정이 꺼져 있음")
+    return 0
+
+
+if __name__ == "__main__":
+    run_cli("affiliates", main)
