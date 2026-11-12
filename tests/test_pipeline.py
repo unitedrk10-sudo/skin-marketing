@@ -110,7 +110,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
     monkeypatch.setattr(importlib.import_module("pipeline.site"), "publish_schedule", lambda: None)  # 기본: 승인 즉시 게시
     monkeypatch.setattr(importlib.import_module("pipeline.affiliates"), "product_status",
-                        lambda pid: {"status": "ok", "name": pid})  # 올리브영 제품 확인도 네트워크 없이 (기본: 판매 중)
+                        lambda pid: {"status": "ok"})  # 올리브영 제품 확인도 네트워크 없이 (기본: 판매 중)
     for name in ("pipeline.02b_auto_review", "pipeline.03_review", "pipeline.translate"):  # 기본: 숏폼 켠 상태로 시험
         monkeypatch.setattr(importlib.import_module(name), "shortform_on", lambda: True)
     monkeypatch.setattr(importlib.import_module("pipeline.experiment"), "config",
@@ -4514,7 +4514,7 @@ def test_affiliate_product_status_reads_sale_codes(monkeypatch):
 
 def test_gone_olive_young_product_gets_no_buy_link_and_is_flagged(env, site_env, tmp_path, monkeypatch):
     _skincare()
-    monkeypatch.setattr(aff_mod, "product_status", lambda pid: {"status": "gone"} if pid == "GA210610738" else {"status": "ok", "name": pid})
+    monkeypatch.setattr(aff_mod, "product_status", lambda pid: {"status": "gone"} if pid == "GA210610738" else {"status": "ok"})
     monkeypatch.setenv("TRACKER_URL", "https://go.example")
     monkeypatch.setenv("TRACKER_TOKEN", "x")
     made = []
@@ -4529,3 +4529,57 @@ def test_gone_olive_young_product_gets_no_buy_link_and_is_flagged(env, site_env,
     _path, draft = _skincare("2026-W47-03-other", state="drafts")
     found = review.check_affiliate_products(draft)
     assert [(f.severity, f.quote) for f in found] == [("caution", "Dr.G Green Mild Up Sun+ 50mL")]
+
+
+# ---- 올리브영 제품명은 실제 페이지에서 (2026-11-12: 검색 결과 제목과 실제 제품이 달랐다) ----
+
+OY_PAGE = " | OLIVE YOUNG Global Clear All Sign In / Sign Up " + QUOTE * 30
+OY_HOME = "OLIVE YOUNG Global | Korea's No. 1 Health & Beauty Store Clear All Sign In " + QUOTE * 30
+
+
+def test_olive_young_source_title_comes_from_the_fetched_page(env):
+    assert aff_mod.page_product_name("Bepanthol Derma Face Cream 50mL" + OY_PAGE) == "Bepanthol Derma Face Cream 50mL"
+    assert aff_mod.page_product_name(OY_HOME) is None                                       # 없는 제품 = 몰 첫 화면
+    assert aff_mod.source_title("https://www.aad.org/a", "AAD", OY_HOME) == "AAD"           # 다른 사이트는 그대로
+    pages = {OY + "GA000000001": (200, "Bepanthol Derma Face Cream 50mL" + OY_PAGE), OY + "GA000000002": (200, OY_HOME),
+             "https://www.aad.org/a": (200, QUOTE * 30)}
+    web.set_fetcher(lambda url: pages.get(url, (0, "")))
+    try:
+        sources = draft_mod.fetch_sources([{"url": OY + "GA000000001", "title": "ILLIYOON Ceramide Ato Concentrate Cream 150ml - OLIVE YOUNG Global"},
+                                           {"url": OY + "GA000000002", "title": "Some Cream - OLIVE YOUNG Global"},
+                                           {"url": "https://www.aad.org/a", "title": "AAD"}])
+    finally:
+        web.set_fetcher(None)
+    assert [(s["url"], s["title"]) for s in sources] == [
+        (OY + "GA000000001", "Bepanthol Derma Face Cream 50mL | OLIVE YOUNG Global"),               # 검색 결과 제목 대신 실제 제목
+        ("https://www.aad.org/a", "AAD")]                                                   # 사라진 제품 페이지는 출처에서 빠짐
+    assert aff_mod.same_product("AESTURA Atobarrier 365 Cream 80mL", "AESTURA Atobarrier 365 Cream 80ml")
+    assert aff_mod.same_product("ILLIYOON Ceramide Ato Lotion 334ml", "ILLIYOON Ceramide Ato Lotion 334ml (Set/Single)")
+    assert not aff_mod.same_product("ILLIYOON Ceramide Ato Concentrate Cream 150ml", "Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL")
+
+
+def test_buy_link_and_source_list_use_the_real_product_name(env, site_env, tmp_path, monkeypatch):
+    _skincare()                                                                             # 출처 제목: ILLIYOON …, Dr.G …
+    real = {"GA210911943": "Bepanthol Derma Face Cream 50mL", "GA210610738": "Dr.G Green Mild Up Sun+ 50mL"}
+    monkeypatch.setattr(aff_mod, "product_status", lambda pid: {"status": "ok", "name": real[pid]})
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None:
+                        made.append(body) or {"code": f"oy{len(made)}", "url": f"https://go.example/oy{len(made)}"})
+    site_mod.build()
+    post = (tmp_path / "dist" / "ceramide" / "index.html").read_text(encoding="utf-8")
+    assert '>Bepanthol Derma Face Cream 50mL</a>' in post.split('id="where-to-buy"')[1].split("</section>")[0]
+    assert "ILLIYOON" not in post                                                           # 링크 이름·출처 목록 어디에도 틀린 이름 없음
+    assert ">Bepanthol Derma Face Cream 50mL | OLIVE YOUNG Global</a>" in post              # 출처 목록도 실제 제목
+    md = (tmp_path / "dist" / "ceramide" / "index.md").read_text(encoding="utf-8")
+    assert "- [Bepanthol Derma Face Cream 50mL](https://go.example/oy1?s=blog)" in md and "ILLIYOON" not in md
+    links = common.load_json(common.content_dir() / "site" / "tracked_links.json")
+    assert links["_oy:2026-W47-03-ceramide:GA210911943"]["product_name"] == "Bepanthol Derma Face Cream 50mL"
+    assert made[0]["label"] == "oliveyoung: Bepanthol Derma Face Cream 50mL"
+    saved = common.load_draft(common.content_dir("approved") / "2026-W47-03-ceramide")
+    assert saved["facts"][1]["source_title"].startswith("ILLIYOON")                         # 초안 파일은 그대로
+    review = importlib.import_module("pipeline.02b_auto_review")
+    found = review.check_affiliate_products(saved)
+    assert [(f.severity, f.quote) for f in found] == [("caution", "ILLIYOON Ceramide Ato Lotion 334ml")]
+    assert "실제: Bepanthol Derma Face Cream 50mL" in found[0].message
