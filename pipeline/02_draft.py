@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
-from pipeline import attractions, llm, sponsors, web
+from pipeline import affiliates, attractions, llm, sponsors, web
 from pipeline.common import (
     blog_text,
     content_dir,
@@ -139,7 +139,11 @@ def fetch_sources(candidates: list[dict], sponsor: dict | None = None) -> list[d
         if status != 200 or len(text) < MIN_PAGE_CHARS:
             log.info("출처 제외 (%s, 본문 %d자): %s", status or "연결 오류", len(text), s["url"])
             continue
-        sources.append({"id": f"S{len(sources) + 1}", **s, "text": text})
+        title = affiliates.source_title(s["url"], s["title"], text)  # 올리브영 제품 페이지는 실제 페이지 제목으로
+        if title is None:
+            log.info("올리브영에서 사라진 제품 페이지라 출처에서 제외: %s", s["url"])
+            continue
+        sources.append({"id": f"S{len(sources) + 1}", **s, "title": title, "text": text})
         if len(sources) >= MAX_SOURCES:
             break
     return sources
@@ -259,8 +263,9 @@ def verify_facts(raw: list, sources: list[dict], clinic_pages: list[dict] | None
         url = str(f.get("url", "")).strip()
         if src is None and url.startswith("http") and not web.is_clinic_host(url):
             status, page = web.get(url)
-            if status == 200 and len(page) >= MIN_PAGE_CHARS:
-                src = {"id": f"S{len(sources) + 1}", "url": url, "title": f.get("source_title", ""), "text": page}
+            title = affiliates.source_title(url, f.get("source_title", ""), page) if status == 200 else None
+            if status == 200 and len(page) >= MIN_PAGE_CHARS and title is not None:
+                src = {"id": f"S{len(sources) + 1}", "url": url, "title": title, "text": page}
                 sources.append(src)
                 by_url[url] = src
         if src is None:

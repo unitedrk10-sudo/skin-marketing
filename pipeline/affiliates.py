@@ -69,6 +69,53 @@ def products(draft: dict) -> list[dict]:
     return out
 
 
+PAGE_TITLE = re.compile(r"^\s*(.{3,160}?)\s*\|\s*OLIVE YOUNG Global(?![A-Za-z])")
+SITE_NAME = "OLIVE YOUNG Global"
+
+
+def is_product_url(url: str) -> bool:
+    return bool(PRODUCT_URL.match(url or ""))
+
+
+def page_product_name(page_text: str) -> str | None:
+    """받아 온 글로벌몰 제품 페이지 본문의 첫머리(= 페이지 제목 "<제품명> | OLIVE YOUNG Global")에서 제품명.
+    없는 제품 번호는 몰 첫 화면 제목이 나오므로 None."""
+    m = PAGE_TITLE.match(page_text or "")
+    name = m.group(1).strip() if m else ""
+    return name if name and not name.lower().startswith("olive young") else None
+
+
+def source_title(url: str, title: str, page_text: str) -> str | None:
+    """출처 제목 — 글로벌몰 제품 페이지는 검색 결과가 준 제목 대신 받아 온 페이지의 실제 제목으로 (2026-11-12:
+    검색 결과 제목과 실제 페이지의 제품이 달라 구매 링크 이름이 틀릴 뻔했다). 사라진 제품 페이지는 None (출처로 쓰지 않음).
+    제품 페이지가 아니면 받은 제목 그대로."""
+    if not is_product_url(url):
+        return title
+    name = page_product_name(page_text)
+    return f"{name} | {SITE_NAME}" if name else None
+
+
+def same_product(a: str, b: str) -> bool:
+    """두 제품명이 같은 제품인가 — 대소문자·기호·"(Set/Single)" 같은 덧붙임은 무시하고 단어가 대부분 겹치면 같다고 본다."""
+    ta, tb = (set(re.findall(r"[a-z0-9]+", TITLE_TAIL.sub("", x or "").lower())) for x in (a, b))
+    if not ta or not tb:
+        return False
+    return len(ta & tb) / min(len(ta), len(tb)) >= 0.75
+
+
+def retitled(draft: dict, names: dict[str, str] | None) -> dict:
+    """제품 페이지를 출처로 한 사실의 source_title 을 확인된 제품명(구매 링크를 만들 때 몰에서 읽은 이름)으로 바꾼 사본.
+    구매 링크 이름과 출처 목록이 링크가 실제로 가는 제품과 항상 맞게 — 초안 파일은 건드리지 않는다."""
+    names = {k: v for k, v in (names or {}).items() if v}
+    if not names:
+        return draft
+    facts = []
+    for f in draft.get("facts", []):
+        m = PRODUCT_URL.match(f.get("url") or "")
+        facts.append({**f, "source_title": f"{names[m.group(1)]} | {SITE_NAME}"} if m and m.group(1) in names else f)
+    return {**draft, "facts": facts}
+
+
 def buyable(items: list[dict], aff_urls: dict[str, str] | None = None) -> list[dict]:
     """구매 링크에 올릴 제품 — 링크를 만들 때 올리브영에서 사라진 것으로 확인된 제품(aff_urls 값이 빈 문자열)은 뺀다."""
     return [i for i in items if (aff_urls or {}).get(i["id"], None) != ""]

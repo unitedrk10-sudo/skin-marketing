@@ -338,6 +338,9 @@ def check_affiliate_products(draft: dict) -> list[Finding]:
         if state["status"] == "gone":
             out.append(Finding("rules", "caution", f"[blog] 올리브영 글로벌에서 사라진 제품 ({item['fact_id']}) — 구매 링크 없이 나갑니다. "
                                                      "본문에서 빼거나 다른 제품으로", item["name"]))
+        elif state.get("name") and not affiliates.same_product(item["name"], state["name"]):
+            out.append(Finding("rules", "caution", f"[blog] 출처 제목과 실제 올리브영 제품이 다릅니다 ({item['fact_id']}) — 실제: {state['name']}. "
+                                                     "구매 링크는 실제 제품명으로 나갑니다. 본문이 말하는 제품이 맞는지 확인", item["name"]))
         elif state["status"] == "soldout":
             out.append(Finding("rules", "info", f"[blog] 올리브영 글로벌 품절 제품 ({item['fact_id']}) — 링크는 나갑니다", item["name"]))
     return out

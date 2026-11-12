@@ -918,7 +918,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
                 ad_url: str | None = None, clinic_urls: dict[str, str] | None = None, posts: list[dict] | None = None,
                 pages: dict[str, list[dict]] | None = None, aff_urls: dict[str, str] | None = None) -> str:
     """posts: 사이트에 게시되는 글 전체 — 주면 글 끝에 관련 글(site_links.related_html), pages: 시술별 목록 페이지."""
-    draft = post["draft"]
+    draft = affiliates.retitled(post["draft"], post.get("aff_names"))
     blog = draft["blog"]
     sponsor = draft.get("sponsor")
     md, sources = _numbered_sources(strip_leading_h1(blog["markdown"]), draft.get("facts", []))
@@ -1165,7 +1165,8 @@ def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
 
 def render_post_md(cfg: dict, post: dict, aff_urls: dict[str, str] | None = None) -> str:
     """AI 가 읽기 쉬운 글 원문 (2026-10-19, `/<slug>/index.md`·llms-full.txt) — [F#] 는 출처 링크로, 병원 공통 정보는 링크 없이."""
-    draft, blog = post["draft"], post["draft"]["blog"]
+    draft = affiliates.retitled(post["draft"], post.get("aff_names"))
+    blog = draft["blog"]
     facts = {f["id"]: f for f in draft.get("facts", [])}
     sources: list[str] = []
 
@@ -1395,14 +1396,15 @@ def _affiliate_links(post: dict, mapping: dict[str, dict], title: str) -> bool:
                             "product_name": item["name"], "gone": True}
             changed = True
             continue
+        name = state.get("name") or item["name"]  # 몰에서 읽은 실제 제품명 (출처 제목이 틀릴 수 있다)
         try:
-            link = tracker.add_link(None, affiliates.global_url(item["id"], cfg), f"oliveyoung: {item['name']}"[:120],
+            link = tracker.add_link(None, affiliates.global_url(item["id"], cfg), f"oliveyoung: {name}"[:120],
                                     target_us=affiliates.us_target(item["id"], cfg))
         except tracker.TrackerError as e:
             log.warning("올리브영 링크 추적 생성 실패 (바로 연결): %s — %s", item["name"], e)
             continue
         mapping[key] = {"url": f"{link['url']}?s=blog", "code": link["code"], **link_meta(post, "affiliate"),
-                        "placement": "buy", "product": item["id"], "product_name": item["name"]}
+                        "placement": "buy", "product": item["id"], "product_name": name}
         changed = True
     return changed
 
@@ -1495,6 +1497,7 @@ def build(out: Path | None = None) -> dict:
         clinic_urls = {k[len(prefix):]: v["url"] for k, v in links.items() if k.startswith(prefix)}
         aff_prefix = affiliates.link_key(p["draft"]["id"], "")
         p["aff_urls"] = {k[len(aff_prefix):]: v.get("url") or "" for k, v in links.items() if k.startswith(aff_prefix)}
+        p["aff_names"] = {k[len(aff_prefix):]: v.get("product_name") for k, v in links.items() if k.startswith(aff_prefix) and not v.get("gone")}
         write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls, posts=posts, pages=pages, aff_urls=p["aff_urls"]))
     write("index.html", render_index(cfg, posts))
     write("about/index.html", render_about(cfg))
