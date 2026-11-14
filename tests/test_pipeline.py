@@ -4583,3 +4583,33 @@ def test_buy_link_and_source_list_use_the_real_product_name(env, site_env, tmp_p
     found = review.check_affiliate_products(saved)
     assert [(f.severity, f.quote) for f in found] == [("caution", "ILLIYOON Ceramide Ato Lotion 334ml")]
     assert "실제: Bepanthol Derma Face Cream 50mL" in found[0].message
+
+
+# ---- 올리브영 제품 페이지의 전성분 표 (2026-11-14: 화면에서 따로 불러와져 받은 페이지에 없었다 → 표가 전부 "—") ----
+
+def test_olive_young_product_page_gets_its_ingredient_list(monkeypatch):
+    class Resp:
+        def __init__(self, body): self.body = body
+        def read(self, n=-1): return self.body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    rows = [{"codeDtlName": "Content volume or weight", "itemCont": "50ml"},
+            {"codeDtlName": "Ideal for", "itemCont": "For all skin types"},
+            {"codeDtlName": "Customer Service", "itemCont": "Customer Service: +82-80-000-0000"},
+            {"codeDtlName": "Ingredients", "itemCont": "Water, Glycerin,\r\n Panthenol"}]
+    asked = []
+    monkeypatch.setattr(web.urllib.request, "urlopen", lambda req, timeout=None:
+                        asked.append(json.loads(req.data)) or Resp(json.dumps({"description": rows}).encode()))
+    info = web.oliveyoung_product_info("GA220514919")
+    assert asked == [{"prdtNo": "GA220514919"}]
+    assert info == " Product information (Olive Young Global): Content volume or weight: 50ml. Ideal for: For all skin types. Ingredients: Water, Glycerin, Panthenol."
+    assert "+82" not in info                                                                 # 연락처 줄은 넣지 않는다
+
+    monkeypatch.setattr(web, "oliveyoung_product_info", lambda pid: f" Product information (Olive Young Global): Ingredients: Water ({pid}).")
+    monkeypatch.setattr(web, "_fetch", lambda url: (200, "Bepanthol Cream 50mL | OLIVE YOUNG Global Clear All Sign In " + "menu " * 3000))
+    status, text = web.fetch_page("https://global.oliveyoung.com/product/detail?prdtNo=GA220514919&dispCatNo=1")
+    assert text.startswith("Bepanthol Cream 50mL | OLIVE YOUNG Global Product information (Olive Young Global): Ingredients: Water (GA220514919). Clear All")
+    assert aff_mod.page_product_name(text) == "Bepanthol Cream 50mL"                         # 제목 읽기는 그대로
+    status, text = web.fetch_page("https://www.aad.org/a")
+    assert "Product information" not in text                                                 # 다른 사이트는 그대로
+    assert web.oliveyoung_product_id("https://global.oliveyoung.com/display/page?x=1") is None
