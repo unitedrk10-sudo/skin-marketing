@@ -4613,3 +4613,21 @@ def test_olive_young_product_page_gets_its_ingredient_list(monkeypatch):
     status, text = web.fetch_page("https://www.aad.org/a")
     assert "Product information" not in text                                                 # 다른 사이트는 그대로
     assert web.oliveyoung_product_id("https://global.oliveyoung.com/display/page?x=1") is None
+
+
+# ---- 검수 오탐 (2026-11-14: 보습제 글이 제품명·공식 명단 링크로 ⛔) ----
+
+def test_product_names_and_official_registry_link_are_not_blocked(env):
+    facts = [{"id": "F1", "url": "https://www.aad.org/a", "source_title": "AAD", "kind": "other"},
+             {"id": "F2", "url": OY + "GA220514919", "kind": "other",
+              "source_title": "Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL | OLIVE YOUNG Global"}]
+    body = ("Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL lists panthenol [F2]. Ok [F1]. "
+            "Registered institutions: https://www.medicalkorea.or.kr/en/registeredhospitals. "
+            f"Lumina Derma Clinic is nearby.\n\n{DISCLOSURE}")
+    draft = {"facts": facts, "shortform": script(fact_ids=("F1",)), "blog": blog(body)}
+    msgs, _ = review_mod.check_rules(draft)
+    assert [m.quote for m in msgs if "병원명" in m.message] and all("Lumina Derma" in m.quote for m in msgs if "병원명" in m.message)
+    assert not any("출처 목록에 없는 URL" in m.message for m in msgs)
+    draft["blog"] = blog(f"See https://example.com/x for more. Ok [F1].\n\n{DISCLOSURE}")
+    msgs, _ = review_mod.check_rules(draft)
+    assert any("출처 목록에 없는 URL" in m.message for m in msgs)                       # 다른 링크는 여전히 막는다
