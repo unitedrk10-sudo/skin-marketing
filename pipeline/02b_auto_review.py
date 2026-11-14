@@ -224,6 +224,18 @@ def _snippet(text: str, m: re.Match, pad: int = 30) -> str:
     return text[max(0, m.start() - pad) : m.end() + pad].replace("\n", " ").strip()
 
 
+# 규칙(_rules.md)이 직접 안내하라고 한 공식 명단 — 사실 목록에 없어도 본문 링크 허용 (2026-11-14: 이 링크로 ⛔ 가 났다)
+OFFICIAL_LINKS = {"https://www.medicalkorea.or.kr/en/registeredhospitals"}
+PRODUCT_TITLE_END = re.compile(r"\s*[|-]\s*OLIVE YOUNG Global\s*$", re.I)
+
+
+def product_names(draft: dict) -> list[str]:
+    """출처로 인용한 올리브영 글로벌 제품 페이지의 제품명."""
+    from pipeline import affiliates
+    return [PRODUCT_TITLE_END.sub("", f.get("source_title", "")) for f in draft.get("facts", [])
+            if affiliates.is_product_url(f.get("url", "")) and f.get("source_title")]
+
+
 def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None) -> tuple[list[Finding], set[str]]:
     """반환: (발견 목록, 항상 사람 검수 사유)"""
     banned = banned if banned is not None else load_banned()
@@ -233,6 +245,7 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
     fact_urls = {f.get("url", "") for f in draft.get("facts", [])}
     sponsor = draft.get("sponsor")
     sponsor_names = [sponsor["name_en"], sponsor["name_ko"]] if sponsor else []
+    products = product_names(draft)
 
     for where, text in texts.items():
         for term, pat in banned:
@@ -247,6 +260,8 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
                     continue
                 if kind == "clinic_name" and any(n in _snippet(text, m, 60) for n in sponsor_names):
                     continue  # 스폰서 글의 광고주 병원명은 허용
+                if kind == "clinic_name" and any(m.group(0).strip() in n for n in products):
+                    continue  # 출처로 인용한 올리브영 제품명 ("Bepanthol Derma …") 은 병원명이 아니다 (2026-11-14)
                 if kind == "testimonial" and _in_question(text, m):
                     continue  # FAQ 의 독자 질문 ("How should I protect my skin?") 은 체험담이 아니다
                 findings.append(Finding("rules", "block", f"[{where}] {label}", _snippet(text, m)))
@@ -256,7 +271,7 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
             url = m.group(0).rstrip(".,")
             if sponsor and urlparse(url).netloc.lower().removeprefix("www.") == sponsors.official_host(sponsor):
                 continue  # 광고주 공식 사이트 링크만 허용
-            if url not in fact_urls:
+            if url not in fact_urls and url not in OFFICIAL_LINKS:
                 findings.append(Finding("rules", "block", f"[{where}] 출처 목록에 없는 URL", m.group(0)))
         if PRICE.search(text):
             human.add("가격 포함")
