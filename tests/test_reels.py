@@ -52,14 +52,33 @@ def api(tmp_path, monkeypatch):
     ("예약은 프로필 링크", "clinic"),
     ("문의 02-1234-5678", "clinic"),
     ("@gangnam_derma_clinic 감사해요", "clinic"),
-    ("좋아요 누르시구 댓글 남겨주시면 바로 디엠가요", "dm_funnel"),
-    ("궁금하면 DM 주세요", "dm_funnel"),
-    ('병원정보가 궁금하신분들은 댓글로 "정보"라고 달아주세요', "dm_funnel"),
-    ("(광고•협찬•수수료❌) 나만 정착할 수 없지 댓글 ㄱㄱ", "dm_funnel"),
     ("리쥬란 전후 사진 비교", "before_after"),
 ])
 def test_exclusion_reasons_finds_signals(caption, kind):
     assert kind in reels.exclusion_reasons(caption, reels.settings()["exclude"])
+
+
+@pytest.mark.parametrize("caption", [
+    "좋아요 누르시구 댓글 남겨주시면 바로 디엠가요",
+    "궁금하면 DM 주세요",
+    "문의는 DM으로 주세요",            # 뒤에 조사가 붙어도 (\b 로는 못 잡았다)
+    "dm 주세요 #리쥬란",
+    '병원정보가 궁금하신분들은 댓글로 "정보"라고 달아주세요',
+    "(광고•협찬•수수료❌) 나만 정착할 수 없지 댓글 ㄱㄱ",
+])
+def test_dm_funnel_is_a_warning_not_an_exclusion(caption):
+    """2026-11-13 운영자 결정: DM 유도는 후보에서 빼지 않고 ⚠️ 만 (광고인지 아닌지는 운영자도 알 수 없다)."""
+    assert "dm_funnel" not in reels.exclusion_reasons(caption, reels.settings()["exclude"])
+    assert "dm_funnel" in reels.exclusion_reasons(caption, reels.settings()["warn"])
+
+
+@pytest.mark.parametrize("text", [
+    "그 다음에 셀르디엠, 사실 셀리디엠은 성분이 높고",   # 제품명 속 '디엠' (2026-11-12 실제 영상 오탐)
+    "admin 계정으로 로그인",
+    "리쥬란 3회차 후기",
+])
+def test_dm_funnel_ignores_lookalikes(text):
+    assert "dm_funnel" not in reels.exclusion_reasons(text, reels.settings()["warn"])
 
 
 @pytest.mark.parametrize("caption", [
