@@ -7,4 +7,10 @@
 #     url: https://click.linksynergy.com/deeplink?id=...&mid=...&murl=...
 #     price: 18.00
 #     as_of: 2026-12-01
-products: {}
+products:
+  # 2026-11-14: Rakuten 승인 전 — US 몰 제품 페이지 주소만 (수수료 없음, 가격 없음). 승인되면 url 을 Rakuten 링크로 바꾼다.
+  # Bepanthol(GA220514919)은 US 몰에 없어 넣지 않음 → 미국 방문자는 US 몰 첫 화면으로.
+  GA240121573:   # AESTURA Atobarrier 365 Cream 80ml
+    url: https://us.oliveyoung.com/products/UA71026007
+  GA210610734:   # S.NATURE Aqua Squalane Moisturizing Cream 60ml
+    url: https://us.oliveyoung.com/products/UA16733220
