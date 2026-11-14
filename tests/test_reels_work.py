@@ -202,10 +202,45 @@ def test_extract_frames_from_real_video(tmp_path):
 @pytest.mark.parametrize("caption,kind", [
     ("드디어 최신 리쥬란 장비가 저희 병원에 도착했습니다", "clinic"),
     ("DOCTORS GONGDEOK", "clinic"),
-    ("더 궁금한 점이 있다면 댓글로 남겨주세요!", "dm_funnel"),
 ])
 def test_new_caption_signals(caption, kind):
     assert kind in reels.exclusion_reasons(caption, reels.settings()["exclude"])
+
+
+def test_comment_funnel_phrase_is_warned():
+    assert "dm_funnel" in reels.exclusion_reasons("더 궁금한 점이 있다면 댓글로 남겨주세요!", reels.settings()["warn"])
+
+
+def test_dm_line_is_dropped_from_subtitles_but_video_is_used(env):
+    """DM 안내가 있어도 영상은 쓴다 — 자막·캡션에서 그 줄만 빼고 뺀 줄을 checklist 에 남긴다. 제품명 속 '디엠' 은 그대로."""
+    env["speech"][:] = [{"start": 0.0, "end": 3.0, "text": "셀리디엠은 성분이 높아요"},
+                        {"start": 3.0, "end": 6.0, "text": "궁금하면 DM으로 문의 주세요"}]
+    env["responses"]["reels_translate"] = {"cues": [
+        {"start": 0.0, "end": 3.0, "source": "speech", "ko": "셀리디엠은 성분이 높아요", "en": "Cellidim has a higher content."},
+        {"start": 3.0, "end": 6.0, "source": "speech", "ko": "궁금하면 DM으로 문의 주세요", "en": "DM me if you're curious."}]}
+    _find(env, media("a", "리쥬란 후기", likes=10))
+    result = reels_work.run("1")
+    folder = reels_work.work_dir("a")
+    assert result["verdict"] == "ok" and result["check"]["blocks"] == []
+    assert any("DM 유도" in w for w in result["check"]["warns"])        # 경고는 남는다
+    assert [c["ko"] for c in result["cues"]] == ["셀리디엠은 성분이 높아요"]
+    assert [c["ko"] for c in result["removed_cues"]] == ["궁금하면 DM으로 문의 주세요"]
+    srt = (folder / "subtitles.en.srt").read_text(encoding="utf-8")
+    assert "Cellidim" in srt and "DM me" not in srt
+    assert "DM me" not in (folder / "caption.txt").read_text(encoding="utf-8")
+    checklist = (folder / "checklist.md").read_text(encoding="utf-8")
+    assert "자막에서 뺀 줄" in checklist and "궁금하면 DM으로 문의 주세요" in checklist and "스티커" in checklist
+    review_prompt = env["calls"][2][1]
+    assert "Cellidim" in review_prompt and "DM me" not in review_prompt   # 검수에도 뺀 줄은 안 넘긴다
+    assert "자막에서 뺌" in reels_work.summary(result, folder)
+
+
+def test_only_dm_lines_means_nothing_to_translate(env):
+    env["responses"]["reels_translate"] = {"cues": [
+        {"start": 0.0, "end": 3.0, "source": "speech", "ko": "DM 주세요", "en": "DM me."}]}
+    _find(env, media("a", "리쥬란 후기", likes=10))
+    with pytest.raises(reels_work.WorkError, match="DM"):
+        reels_work.run("1")
 
 
 def test_clinic_voice_is_warned():

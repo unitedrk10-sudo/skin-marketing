@@ -270,6 +270,16 @@ def clean_cues(cues: list, duration: float) -> list[dict]:
     return out
 
 
+def drop_dm_cues(cues: list[dict]) -> tuple[list[dict], list[dict]]:
+    """DM·댓글 유도 줄은 영어 자막에서 뺀다 (2026-11-13 운영자 결정 — 정보가 아니고, 우리가 못 지킬 약속이 된다).
+    반환: (남긴 cue, 뺀 cue). 뺀 줄은 checklist.md 에 남겨 운영자가 화면 글자를 스티커로 가릴 수 있게 한다."""
+    rules = {"dm_funnel": ((reels().settings().get("warn") or {}).get("dm_funnel")) or []}
+    kept, removed = [], []
+    for c in cues:
+        (removed if reels().exclusion_reasons(c.get("ko", ""), rules) else kept).append(c)
+    return kept, removed
+
+
 def review(cues: list[dict]) -> dict:
     """Gemini 검수 (stage reels_review, 쓴 회사와 다른 모델): 원문 대조 + 원문 자체의 과장."""
     rows = [{"n": n, "ko": c["ko"], "en": c["en"]} for n, c in enumerate(cues, 1)]
@@ -350,6 +360,11 @@ def checklist(result: dict) -> str:
         lines += ["", "## ⛔ 원문 과장 (번역해도 퍼뜨리는 것)"] + [f"- {o.get('ko', '')} — {o.get('why', '')}" for o in rv["original_overclaims"]]
     if rv.get("issues"):
         lines += ["", "## ⚠️ 번역 검수"] + [f"- {i.get('cue', '?')}번: {i.get('problem', '')} → {i.get('suggest', '')}" for i in rv["issues"]]
+    if result.get("removed_cues"):
+        lines += ["", "## 자막에서 뺀 줄 (DM·댓글 유도 — 영어 자막·캡션에 넣지 않음)"]
+        lines += [f"- [{c['start']:.1f}–{c['end']:.1f}s · {'말' if c['source'] == 'speech' else '화면 글자'}] {c['ko']}"
+                  for c in result["removed_cues"]]
+        lines += ["- 화면에 박힌 글자는 영상에 그대로 남는다 → 앱에서 스티커로 가린다 (원작자 말을 다른 말로 덮어쓰지 않기). 음성은 그대로 나온다"]
     if result.get("cues"):
         lines += ["", "## 자막 (한국어 원문 → 영어)"]
         lines += [f"{n}. [{c['start']:.1f}–{c['end']:.1f}s · {'말' if c['source'] == 'speech' else '화면'}] {c['ko']}\n   → {c['en']}"
@@ -361,7 +376,7 @@ def checklist(result: dict) -> str:
               "", "## 캡션", "```", result.get("caption", ""), "```",
               "", "## 앱에서 확인",
               "- [ ] 리믹스 허용돼 있음", "- [ ] 원작자 계정이 병원·의사 계정이 아님 · 캡션의 @<원작자> 채움",
-              "- [ ] 고정 댓글·답글에 DM 유도 없음", "- [ ] 병원 간판·이름·위치, 주사·피 클로즈업, 전후 비교 없음",
+              "- [ ] 고정 댓글에 광고·DM 유도가 있어도 우리 글에는 옮기지 않음", "- [ ] 병원 간판·이름·위치, 주사·피 클로즈업, 전후 비교 없음",
               "- [ ] 원작자 외 얼굴 없음", "- [ ] 'link in bio' 의 프로필 링크가 스폰서 글·광고 카드 붙은 글이 아님",
               "- [ ] 게시 뒤 이 폴더의 영상·프레임이 지워졌는지 (작업용, 게시에 쓰지 않음)"]
     return "\n".join(lines) + "\n"
@@ -410,9 +425,9 @@ def run(ref: str | None = None, file: str | None = None, permalink: str = "", ab
         elif not segments and not screen["texts"]:
             raise WorkError("말소리도 화면 글자도 없습니다 — 번역할 것이 없음")
         else:
-            result["cues"] = translate(segments, screen, duration)
+            result["cues"], result["removed_cues"] = drop_dm_cues(translate(segments, screen, duration))
             if not result["cues"]:
-                raise WorkError("번역 결과 자막이 비었습니다")
+                raise WorkError("번역 결과 자막이 비었습니다" + (" (DM 안내 줄만 있어 모두 뺐음)" if result["removed_cues"] else ""))
             result["review"] = review(result["cues"])
             result["verdict"] = ("overclaim" if result["review"]["original_overclaims"] else
                                  "review" if not result["review"]["ok"] or result["review"]["issues"] else
@@ -451,6 +466,8 @@ def summary(result: dict, folder: Path) -> str:
         lines.append(f"⛔ 원문 과장: {o.get('ko', '')}")
     for i in (result.get("review") or {}).get("issues", [])[:5]:
         lines.append(f"⚠️ {i.get('cue', '?')}번: {i.get('problem', '')}")
+    if result.get("removed_cues"):
+        lines.append(f"DM·댓글 유도 줄 {len(result['removed_cues'])}개는 자막에서 뺌 — 화면 글자면 스티커로 가리기 (checklist.md)")
     if result.get("cues"):
         lines.append(f"자막 {len(result['cues'])}개 → subtitles.en.srt · caption.txt · checklist.md")
     return "\n".join(lines)
