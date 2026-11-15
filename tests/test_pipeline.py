@@ -4622,6 +4622,7 @@ def test_product_names_and_official_registry_link_are_not_blocked(env):
              {"id": "F2", "url": OY + "GA220514919", "kind": "other",
               "source_title": "Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL | OLIVE YOUNG Global"}]
     body = ("Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL lists panthenol [F2]. Ok [F1]. "
+            "The Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL list shows no ceramide [F2]. "
             "Registered institutions: https://www.medicalkorea.or.kr/en/registeredhospitals. "
             f"Lumina Derma Clinic is nearby.\n\n{DISCLOSURE}")
     draft = {"facts": facts, "shortform": script(fact_ids=("F1",)), "blog": blog(body)}

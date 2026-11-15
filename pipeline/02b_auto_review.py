@@ -260,8 +260,9 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
                     continue
                 if kind == "clinic_name" and any(n in _snippet(text, m, 60) for n in sponsor_names):
                     continue  # 스폰서 글의 광고주 병원명은 허용
-                if kind == "clinic_name" and any(m.group(0).strip() in n for n in products):
-                    continue  # 출처로 인용한 올리브영 제품명 ("Bepanthol Derma …") 은 병원명이 아니다 (2026-11-14)
+                if kind == "clinic_name" and any(" ".join(m.group(0).split()[-2:]) in n for n in products):
+                    continue  # 출처로 인용한 올리브영 제품명 ("Bepanthol Derma …") 은 병원명이 아니다 (2026-11-14).
+                    # 걸린 말의 끝 두 단어로 본다 — 앞에 "The" 같은 말이 같이 잡힌다 ("The Bepanthol Derma", 2026-11-15)
                 if kind == "testimonial" and _in_question(text, m):
                     continue  # FAQ 의 독자 질문 ("How should I protect my skin?") 은 체험담이 아니다
                 findings.append(Finding("rules", "block", f"[{where}] {label}", _snippet(text, m)))
