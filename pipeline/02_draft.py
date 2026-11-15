@@ -297,6 +297,15 @@ def add_disclosures(draft: dict, sponsor: dict) -> None:
         draft["blog"]["markdown"] = draft["blog"]["markdown"].rstrip() + f"\n\n{link}\n"
 
 
+NOTE_URL = re.compile(r"https://[^\s)\]>\"',]+")
+
+
+def pinned_sources(note: str | None) -> list[dict]:
+    """수정 메모에 적은 주소는 검색 결과와 상관없이 출처 후보 맨 앞에 넣는다 (2026-11-14: 같은 제품으로 다시 쓰라고 해도
+    출처를 새로 검색해 예시 제품이 바뀌었다). 병원 사이트 제외·페이지 확인·인용 대조는 다른 출처와 똑같다."""
+    return [{"url": u.rstrip("."), "title": ""} for u in dict.fromkeys(NOTE_URL.findall(note or ""))]
+
+
 def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -> dict:
     rules = sponsors.rules_text(sponsor) if sponsor else None
     if sponsor:  # 스폰서 "병원 중심 코스" 글만 관광 데이터를 받는다 (병원 권역 기준)
@@ -304,7 +313,7 @@ def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -
     else:  # 여행 축: 관광지 속성·코스 규칙·맛집 트렌드
         travel = attractions.context(topic)
     candidates, clinic_candidates = search_sources(topic, note, rules, travel)
-    sources = fetch_sources(candidates, sponsor)
+    sources = fetch_sources(pinned_sources(note) + candidates, sponsor)
     # 스폰서 글에는 광고주 외 다른 병원이 들어가면 안 되므로 병원 공통 정보를 쓰지 않는다
     clinic_pages = [] if sponsor else fetch_clinic_pages(clinic_candidates)
     log.info("출처 %d곳 확보 (병원 공통 정보용 %d곳): %s", len(sources), len(clinic_pages), topic["title"])

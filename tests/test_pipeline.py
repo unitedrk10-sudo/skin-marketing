@@ -4631,3 +4631,22 @@ def test_product_names_and_official_registry_link_are_not_blocked(env):
     draft["blog"] = blog(f"See https://example.com/x for more. Ok [F1].\n\n{DISCLOSURE}")
     msgs, _ = review_mod.check_rules(draft)
     assert any("출처 목록에 없는 URL" in m.message for m in msgs)                       # 다른 링크는 여전히 막는다
+
+
+def test_urls_in_a_revision_note_are_always_source_candidates(env, monkeypatch):
+    note = ("Use these products: https://global.oliveyoung.com/product/detail?prdtNo=GA240121573, "
+            "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734. and (https://www.aad.org/a) "
+            "again https://global.oliveyoung.com/product/detail?prdtNo=GA240121573")
+    assert [s["url"] for s in draft_mod.pinned_sources(note)] == [
+        "https://global.oliveyoung.com/product/detail?prdtNo=GA240121573",
+        "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734",
+        "https://www.aad.org/a"]
+    assert draft_mod.pinned_sources(None) == [] and draft_mod.pinned_sources("no links") == []
+    seen = []
+    monkeypatch.setattr(draft_mod, "search_sources", lambda *a, **k: ([{"url": "https://www.fda.gov/x", "title": "FDA"}], []))
+    monkeypatch.setattr(draft_mod, "fetch_sources", lambda c, s=None: seen.extend(c) or (_ for _ in ()).throw(RuntimeError("stop")))
+    with pytest.raises(RuntimeError):
+        draft_mod.compose(TOPICS["topics"][0], note)
+    assert [c["url"] for c in seen][:2] == ["https://global.oliveyoung.com/product/detail?prdtNo=GA240121573",
+                                            "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734"]
+    assert seen[-1]["url"] == "https://www.fda.gov/x"                                          # 검색 결과는 그 뒤에
