@@ -4613,3 +4613,22 @@ def test_olive_young_product_page_gets_its_ingredient_list(monkeypatch):
     status, text = web.fetch_page("https://www.aad.org/a")
     assert "Product information" not in text                                                 # 다른 사이트는 그대로
     assert web.oliveyoung_product_id("https://global.oliveyoung.com/display/page?x=1") is None
+
+
+def test_urls_in_a_revision_note_are_always_source_candidates(env, monkeypatch):
+    note = ("Use these products: https://global.oliveyoung.com/product/detail?prdtNo=GA240121573, "
+            "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734. and (https://www.aad.org/a) "
+            "again https://global.oliveyoung.com/product/detail?prdtNo=GA240121573")
+    assert [s["url"] for s in draft_mod.pinned_sources(note)] == [
+        "https://global.oliveyoung.com/product/detail?prdtNo=GA240121573",
+        "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734",
+        "https://www.aad.org/a"]
+    assert draft_mod.pinned_sources(None) == [] and draft_mod.pinned_sources("no links") == []
+    seen = []
+    monkeypatch.setattr(draft_mod, "search_sources", lambda *a, **k: ([{"url": "https://www.fda.gov/x", "title": "FDA"}], []))
+    monkeypatch.setattr(draft_mod, "fetch_sources", lambda c, s=None: seen.extend(c) or (_ for _ in ()).throw(RuntimeError("stop")))
+    with pytest.raises(RuntimeError):
+        draft_mod.compose(TOPICS["topics"][0], note)
+    assert [c["url"] for c in seen][:2] == ["https://global.oliveyoung.com/product/detail?prdtNo=GA240121573",
+                                            "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734"]
+    assert seen[-1]["url"] == "https://www.fda.gov/x"                                          # 검색 결과는 그 뒤에
