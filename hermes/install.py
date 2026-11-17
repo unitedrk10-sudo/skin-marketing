@@ -44,7 +44,6 @@ JOBS: list[tuple[str, str | None, list[dict]]] = [
         _py("pipeline.01_topics", "--next-week", "--from-seed", "6"),  # 초기 주제 목록 소진 후 자동으로 Gemini 조사
     ]),
     ("skin-worker", "every 10m", [_py("pipeline.worker", "run")]),
-    ("skin-traffic-report", "0 10 * * 1", [_py("pipeline.tracker", "report", "--days", "7")]),
     # 블로그: 승인된 글이 바뀌었을 때만 Cloudflare Pages 배포 (없으면 조용)
     ("skin-site", "every 1h", [_py("pipeline.site", "deploy")]),
     ("skin-weekly-report", "0 20 * * 0", [_py("pipeline.07_report")]),

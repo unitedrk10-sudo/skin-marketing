@@ -4,6 +4,8 @@
 요청이 몰린 위장 봇(DISGUISED)도 뺀다. 남은 위장 봇이 있어 사람 수의 상한으로 보지만 글마다 거의 전수로 잡혀 추세 비교가 된다. Web Analytics(JS 비콘, demand.page_views)는
 사람에 가깝지만 표본이라 글이 적게 읽힐 때는 글별 숫자가 0·10 처럼 튀어서 합계만 같이 보여 준다.
 서버 기록은 약 31일만 남아 다 찬 주의 숫자를 content/reports/page_requests.json 에 쌓는다.
+그래프 왼쪽은 날짜별 선(2026-11-17 — 주 합계 막대로는 언제 오르내렸는지 안 보였다): 최근 4주, 날짜별 숫자는
+content/reports/page_requests_daily.json 에 쌓는다 (날짜 경계는 UTC).
 
     python -m pipeline.trend    # 숫자 출력 + reports/weekly/<주차>-trend.png
 """
@@ -20,6 +22,10 @@ from pipeline.common import ROOT, content_dir, get_logger, iso_week, load_json, 
 log = get_logger("trend")
 
 WEEKS = 6
+DAILY_DAYS = 28
+BOT_MIN_VIEWS = 5    # 봇 의심 판정에 넣을 글 (두 주 중 많은 쪽 조회)
+BOT_MIN_POSTS = 5
+BOT_SHARE = 0.8      # 기존 글의 이만큼이 같은 방향으로 2배 이상 움직이면 사람이 아니라 수집 봇으로 본다
 TOP_POSTS = 12
 TITLE_CHARS = 40
 NON_BROWSER = re.compile(r"bot|crawl|spider|slurp|fetch|preview|headless|python|curl|wget|node|axios|go-http|scan|monitor|facebookexternal|meta-", re.I)
@@ -31,7 +37,7 @@ REQUEST_QUERY = """query ($zone: String!, $filter: ZoneHttpRequestsAdaptiveGroup
   } }
 }"""
 # dataviz 기본 팔레트 슬롯 1·2 (validate_palette.js 통과), 이전 기간은 같은 파랑의 옅은 단계
-SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0"
+SURFACE, INK, MUTED, GRID, MARK = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e0", "#d3d1c9"
 EXISTING, NEW, PREVIOUS = "#2a78d6", "#eb6834", "#a9c9ef"
 
 
@@ -74,6 +80,56 @@ def weekly(a: date, b: date, cache: dict, fetch) -> dict[str, int] | None:
     return cache[key]
 
 
+def _daily_file():
+    return content_dir() / "reports" / "page_requests_daily.json"
+
+
+def daily(end: date, slugs: list[str], fetch, rum, days: int = DAILY_DAYS) -> list[dict]:
+    """end 까지 days 일의 날짜별 {"date", "requests"(서버 요청·글), "views"(JS 집계·글)}. 못 읽은 날은 None.
+    쌓아 둔 날은 다시 조회하지 않는다. JS 집계는 빈 결과가 실패인지 0 인지 구분이 안 돼 빈 날은 쌓지 않는다."""
+    cache = load_json(_daily_file()) if _daily_file().exists() else {}
+    req, seen = cache.setdefault("requests", {}), cache.setdefault("rum", {})
+    out = []
+    for i in range(days - 1, -1, -1):
+        day = end - timedelta(days=i)
+        key = day.isoformat()
+        if key not in req:
+            try:
+                req[key] = fetch(day, day)
+            except Exception as e:  # noqa: BLE001 — 보관 기간이 지난 날
+                log.info("%s 조회 못 함: %s", key, str(e)[:120])
+        if key not in seen and (got := rum(day, day)):
+            seen[key] = got
+        out.append({"date": day, "requests": sum(_views_of(req[key], s) for s in slugs) if key in req else None,
+                    "views": sum(n for path, n in seen[key].items() if path != "/") if key in seen else None})
+    save_json(_daily_file(), cache)
+    if not any(d["views"] is not None for d in out):
+        return out  # JS 집계를 하나도 못 읽었으면 선을 그리지 않는다
+    return [{**d, "views": d["views"] or 0} for d in out]
+
+
+def bot_suspect(data: dict) -> str:
+    """기존 글 대부분이 한 주 사이 같은 방향으로 2배 이상 움직였으면 경고 문구 (아니면 빈 문자열).
+    사람 방문은 글마다 다르게 움직인다 — 2026-11-07 주에 글 12편이 전부 30 안팎이었다가 다음 주 전부 5 안팎이 됐다."""
+    prev = data["windows"][-2]
+    rows = [r for r in data["rows"] if r["date"] < prev["from"] and max(r["views"][-1], r["views"][-2]) >= BOT_MIN_VIEWS]
+    up = sum(1 for r in rows if r["views"][-1] >= 2 * max(r["views"][-2], 1))
+    down = sum(1 for r in rows if r["views"][-2] >= 2 * max(r["views"][-1], 1))
+    if len(rows) < BOT_MIN_POSTS or max(up, down) < len(rows) * BOT_SHARE:
+        return ""
+    if up > down:
+        return f"⚠️ 기존 글 {len(rows)}편 중 {up}편이 한꺼번에 2배 이상 늘었음 — 이번 주 서버 요청이 수집 봇으로 부풀었을 가능성"
+    return f"⚠️ 기존 글 {len(rows)}편 중 {down}편이 한꺼번에 절반 이하로 줄었음 — 전주 서버 요청이 수집 봇으로 부풀었을 가능성"
+
+
+def movers(data: dict, n: int = 2) -> tuple[list[dict], list[dict]]:
+    """이번 주 전에 나온 글 중 가장 많이 오른 글·내린 글."""
+    start = data["windows"][-1]["from"]
+    rows = sorted((r for r in data["rows"] if r["date"] < start), key=lambda r: r["views"][-1] - r["views"][-2])
+    return ([r for r in reversed(rows) if r["views"][-1] > r["views"][-2]][:n],
+            [r for r in rows if r["views"][-1] < r["views"][-2]][:n])
+
+
 def collect(today: date | None = None, weeks: int = WEEKS, posts: list[dict] | None = None, fetch=None, rum=None) -> dict | None:
     """최근 다 찬 주(일~토)들. 비교할 두 주를 못 읽으면 None."""
     from pipeline import demand, site
@@ -105,9 +161,11 @@ def collect(today: date | None = None, weeks: int = WEEKS, posts: list[dict] | N
                 r["first7"] = _views_of(fetch(r["date"], min(r["date"] + timedelta(days=6), end)), r["slug"])
             except Exception as e:  # noqa: BLE001
                 log.info("%s 첫 7일 조회 못 함: %s", r["slug"], str(e)[:120])
-    a, b = series[-1]["from"], series[-1]["to"]
-    seen = rum(a, b)
-    return {"windows": series, "rows": rows, "rum": sum(n for p, n in seen.items() if p != "/") if seen else None}
+    def js_views(window: dict) -> int | None:
+        seen = rum(window["from"], window["to"])
+        return sum(n for p, n in seen.items() if p != "/") if seen else None
+    return {"windows": series, "rows": rows, "rum": js_views(series[-1]), "rum_prev": js_views(series[-2]),
+            "daily": daily(last_sat, [r["slug"] for r in rows], fetch, rum)}
 
 
 def report_lines(data: dict) -> list[str]:
@@ -137,7 +195,7 @@ def report_lines(data: dict) -> list[str]:
 
 
 def chart(data: dict, out):
-    """왼쪽 = 기존 글·새 글 추이, 오른쪽 = 글별 지난주와 그 전 주. matplotlib 없으면 None (리포트는 글자로 나간다)."""
+    """왼쪽 = 날짜별 글 조회 선, 오른쪽 = 글별 지난주와 그 전 주. matplotlib 없으면 None (리포트는 글자로 나간다)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -147,29 +205,39 @@ def chart(data: dict, out):
         return None
     plt.rcParams.update({"font.family": ["Malgun Gothic", "DejaVu Sans"], "axes.unicode_minus": False,
                          "text.color": INK, "axes.labelcolor": MUTED, "xtick.color": MUTED, "ytick.color": MUTED})
-    w = data["windows"]
     rows = sorted(data["rows"], key=lambda r: (-(r["views"][-1] + r["views"][-2]), r["slug"]))[:TOP_POSTS]
-    fig, (left, right) = plt.subplots(1, 2, figsize=(12.5, 6), dpi=150, width_ratios=[1, 1.35], facecolor=SURFACE)
+    fig, (left, right) = plt.subplots(1, 2, figsize=(12.5, 6), dpi=150, width_ratios=[1.25, 1], facecolor=SURFACE)
     for ax in (left, right):
         ax.set_facecolor(SURFACE)
         ax.spines[["top", "right", "left"]].set_visible(False)
         ax.spines["bottom"].set_color(GRID)
         ax.tick_params(length=0)
 
-    xs = range(len(w))
-    existing, new = [x["existing"] for x in w], [x["new"] for x in w]
-    left.bar(xs, existing, 0.58, color=EXISTING, edgecolor=SURFACE, linewidth=2, label="기존 글")
-    left.bar(xs, new, 0.58, bottom=existing, color=NEW, edgecolor=SURFACE, linewidth=2, label="그 주에 나온 새 글")
-    top = max(max(a + b for a, b in zip(existing, new)), 1)
-    for x, a, b in zip(xs, existing, new):
-        left.text(x, a + b + top * 0.02, str(a + b), ha="center", va="bottom", fontsize=11, fontweight="bold")
-    left.set_xticks(list(xs), [f"{x['to']:%m/%d}" for x in w], fontsize=10)
+    days = data.get("daily") or []
+    xs = range(len(days))
+    series = [("requests", "서버 요청 (봇 일부 포함)", EXISTING), ("views", "JS 집계 (사람에 가까움)", NEW)]
+    top = max([d[k] or 0 for d in days for k, _, _ in series] + [1])
+    posted = {r["date"] for r in data["rows"]}
+    for x, d in zip(xs, days):
+        if d["date"] in posted:  # 글 게시일 — 옅은 세로선
+            left.axvline(x, color=MARK, linewidth=1, zorder=1)
+    for key, label, color in series:
+        pts = [(x, d[key]) for x, d in zip(xs, days) if d[key] is not None]
+        if not pts:
+            continue
+        left.plot(*zip(*pts), color=color, linewidth=2, label=label, zorder=3, solid_capstyle="round")
+        left.scatter(*pts[-1], s=36, color=color, edgecolor=SURFACE, linewidth=2, zorder=4)
+        left.text(pts[-1][0] + 0.5, pts[-1][1], str(pts[-1][1]), va="center", fontsize=10, fontweight="bold")
+    left.plot([], [], color=MARK, linewidth=1, label="글 게시일")
+    sundays = [x for x, d in zip(xs, days) if d["date"].weekday() == 6]
+    left.set_xticks(sundays, [f"{days[x]['date']:%m/%d}" for x in sundays], fontsize=10)
+    left.set_xlim(-0.5, len(days) + 1.5)
     left.set_ylim(0, top * 1.25)
-    left.set_xlabel("주 (일~토)의 마지막 날", fontsize=10)
+    left.set_xlabel("날짜 (눈금 = 일요일, UTC)", fontsize=10)
     left.yaxis.grid(True, color=GRID, linewidth=0.8)
     left.set_axisbelow(True)
-    left.set_title("글 도달 추이 (서버 요청, 홈 제외)", loc="left", fontsize=14, fontweight="bold", pad=14)
-    left.legend(frameon=False, loc="upper left", fontsize=10, ncols=2)
+    left.set_title(f"일별 글 조회 (최근 {len(days) // 7}주, 홈 제외)", loc="left", fontsize=14, fontweight="bold", pad=34)
+    left.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 1), borderaxespad=0.2, fontsize=10, ncols=3, handlelength=1.4, columnspacing=1.2)
 
     ys = list(range(len(rows)))[::-1]
     h = 0.36
@@ -183,7 +251,7 @@ def chart(data: dict, out):
     right.set_xlim(0, peak * 1.12)
     right.xaxis.set_visible(False)
     right.spines["bottom"].set_visible(False)
-    right.set_title("글별 변화", loc="left", fontsize=14, fontweight="bold", pad=14)
+    right.set_title("글별 변화 (서버 요청)", loc="left", fontsize=14, fontweight="bold", pad=34)
     right.legend(frameon=False, loc="lower right", fontsize=10)
 
     fig.tight_layout(w_pad=3)
@@ -193,9 +261,9 @@ def chart(data: dict, out):
     return out
 
 
-def report(today: date | None = None) -> list[str]:
-    """주간 리포트용 줄 + 그래프 첨부 줄. """
-    data = collect(today)
+def report(today: date | None = None, data: dict | None = None) -> list[str]:
+    """주간 리포트용 줄 + 그래프 첨부 줄. data 를 주면 다시 조회하지 않는다."""
+    data = data or collect(today)
     if not data:
         return ["📊 글 도달 추세: 숫자를 읽지 못함 (Cloudflare 연결 확인)"]
     base = ROOT / "reports" / "weekly" / f"{iso_week()}-trend"

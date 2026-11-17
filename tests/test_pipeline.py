@@ -2252,10 +2252,64 @@ def test_weekly_report_counts_pipeline_activity(env, monkeypatch, tmp_path):
     assert data["created"] >= 1 and data["moves"]["approved"] == 1 and data["posts"]["tiktok"] == 1
     assert data["waiting"]["ready_to_publish"] == 1
     monkeypatch.setattr(report_mod, "ROOT", tmp_path)
-    monkeypatch.setattr(report_mod, "extras", lambda: ["🌐 블로그 글 1개 (스폰서 0)"])
+    monkeypatch.setattr(report_mod, "extras", lambda *a: ["🌐 블로그 글 1개 (스폰서 0)"])
+    monkeypatch.setattr(report_mod, "headline", lambda *a: {"link_clicks": (77, 60)})
+    monkeypatch.setattr(importlib.import_module("pipeline.trend"), "collect", lambda *a, **k: None)
+    monkeypatch.setattr(report_mod, "link_stats", lambda: None)
     assert report_mod.main([]) == 0
     text = next((tmp_path / "reports" / "weekly").glob("*.md")).read_text(encoding="utf-8")
-    assert "[주간 리포트" in text and "승인 1" in text and "tiktok 1" in text and "게시 키트 1" in text
+    summary, detail = text.split(report_mod.DETAIL_MARK)
+    assert "전주 → 이번 주]" in summary and "링크 클릭 77 → 60 (−17)" in summary and "할 일: 게시 키트 1" in summary
+    assert "승인 1" not in summary                                                 # 파이프라인 현황은 상세로
+    assert "[주간 리포트 상세" in detail and "승인 1" in detail and "tiktok 1" in detail and "블로그 글 1개" in detail
+    assert report_mod.detail_text() == detail.strip()                              # 텔레그램 "리포트 상세"
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("리포트 상세") == {"args": ["pipeline.07_report", "--detail"]}
+
+
+def test_weekly_summary_shows_change_from_the_week_before(env, monkeypatch):
+    trend = importlib.import_module("pipeline.trend")
+
+    def row(slug, published, prev, now):
+        return {"slug": slug, "title": slug.upper(), "date": date.fromisoformat(published), "views": [prev, now], "first7": None, "age": 30}
+    windows = [{"from": date(2026, 11, 1), "to": date(2026, 11, 7), "new": 0, "existing": 60, "home": 20, "new_posts": 0},
+               {"from": date(2026, 11, 8), "to": date(2026, 11, 14), "new": 4, "existing": 70, "home": 25, "new_posts": 1}]
+    rows = [row("a", "2026-10-01", 10, 22), row("b", "2026-10-02", 12, 9), row("c", "2026-10-03", 8, 8),
+            row("d", "2026-10-04", 15, 16), row("e", "2026-10-05", 15, 15), row("new", "2026-11-09", 0, 4)]
+    data = {"windows": windows, "rows": rows, "rum": 41, "rum_prev": 27, "daily": []}
+    assert trend.bot_suspect(data) == ""
+    up, down = trend.movers(data)
+    assert [r["slug"] for r in up] == ["a", "d"] and [r["slug"] for r in down] == ["b"]   # 새 글은 증감에서 뺀다
+
+    social, ai = importlib.import_module("pipeline.social"), importlib.import_module("pipeline.ai_traffic")
+    monkeypatch.setattr(importlib.import_module("pipeline.search_console"), "gsc_configured", lambda: False)
+    monkeypatch.setattr(tracker_mod, "configured", lambda: False)
+    views = {"n": 310}
+    monkeypatch.setattr(social, "threads_reactions", lambda days: {"views": views["n"]})
+    monkeypatch.setattr(ai, "crawls", lambda a, b: {"live": Counter({"ChatGPT": 22 if a == date(2026, 11, 8) else 17})})
+    monkeypatch.setattr(ai, "referrals", lambda a, b: {"total": 0})
+    links = ({"totals": {"clicks": 60}}, {"totals": {"clicks": 77}})
+    today = date(2026, 11, 15)
+    numbers = report_mod.with_history(report_mod.headline(data, links, today), today)
+    waiting = {"waiting": {"drafts": 1, "rendered": 0, "ready_to_publish": 0}}
+    text = report_mod.summary(waiting, numbers, data, ["🧭 신뢰 단계 점검"], today)
+    assert text.startswith("[주간 리포트 2026-W46 · 11/08~11/14 · 전주 → 이번 주]")
+    assert "글 조회 27 → 41 (+14)" in text and "서버 요청 60 → 74 (+14) · 홈 20 → 25 (+5)" in text
+    assert "새 글 1편 · 서버 요청 4" in text and "링크 클릭 77 → 60 (−17)" in text
+    assert "Threads 조회 – → 310" in text                                          # 전주를 직접 못 읽는 숫자: 첫 주
+    assert "AI 실시간 조회 17 → 22 (+5) · AI 답변에서 온 방문 0 → 0 (±0)" in text
+    assert "📈 10 → 22  A" in text and "📉 12 → 9  B" in text and "할 일: 검수 1" in text and "🧭 신뢰 단계 점검" in text
+    assert "구글" not in text and "제휴" not in text                                # 못 읽은 항목은 줄을 내지 않는다
+    views["n"] = 250                                                               # 다음 주: 쌓아 둔 값과 비교
+    later = date(2026, 11, 22)
+    assert report_mod.change(report_mod.with_history(report_mod.headline(data, links, later), later)["threads_views"]) == "310 → 250 (−60)"
+    assert report_mod.change((0, 1), plus=True) == "+0 → +1"
+
+    bots = {**data, "rows": [row(x, "2026-10-01", 30, 5) for x in "abcdef"]}      # 글이 전부 같이 움직인 주
+    assert "절반 이하" in trend.bot_suspect(bots)
+    text = report_mod.summary(waiting, numbers, bots, [], today)
+    assert "수집 봇" in text and "📉" not in text
+    assert "2배 이상 늘었음" in trend.bot_suspect({**data, "rows": [row(x, "2026-10-01", 5, 30) for x in "abcdef"]})
 
 
 def test_site_share_images_and_icons(sponsored, tmp_path, monkeypatch):
@@ -2809,7 +2863,10 @@ def test_trend_compares_finished_weeks_and_splits_new_posts(env):
     data = trend.collect(date(2026, 11, 2), posts=posts, fetch=fetch, rum=lambda a, b: {"/": 10, "/new/": 2})
     assert [str(w["to"]) for w in data["windows"]] == ["2026-10-24", "2026-10-31"]   # 일~토, 못 읽는 옛 주는 뺀다
     last = data["windows"][-1]
-    assert (last["existing"], last["new"], last["new_posts"]) == (8, 3, 1) and data["rum"] == 2
+    assert (last["existing"], last["new"], last["new_posts"]) == (8, 3, 1) and data["rum"] == 2 and data["rum_prev"] == 2
+    days = data["daily"]                                                             # 날짜별 선 (최근 4주)
+    assert len(days) == 28 and str(days[-1]["date"]) == "2026-10-31" and (days[-1]["requests"], days[-1]["views"]) == (11, 2)
+    assert days[0]["requests"] is None                                               # 보관 기간이 지난 날
     assert next(r for r in data["rows"] if r["slug"] == "new")["first7"] == 9
     text = "\n".join(trend.report_lines(data))
     assert "위장 봇" in text and "새 글 1편 3 vs 바로 전 1편 8" in text and "5일째" in text

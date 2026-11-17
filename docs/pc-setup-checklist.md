@@ -63,7 +63,7 @@ python -m venv .venv                     # 이미 있으면 생략
 # 끝에 출력되는 skin-check 명령 실행 (키·모델·Claude Code 점검)
 ```
 - [ ] 텔레그램 봇 연결·DM 페어링 (Hermes 메신저 게이트웨이)
-- [ ] 크론 등록 확인: `hermes cron list` — law-sync, weekly-topics, worker, traffic-report, site, clinics, weekly-report, analytics
+- [ ] 크론 등록 확인: `hermes cron list` — law-sync, weekly-topics, worker, site, clinics, weekly-report, analytics
   - `skin-analytics` 의 `0 11 1 * *`(매월 1일) 형식이 안 되면 README 명령으로 직접 등록
 - **확인**: 텔레그램에 봇이 답하는지, 실패 알림이 오는지 (일부러 키 하나 빼고 `hermes cron run skin-worker`)
 

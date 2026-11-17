@@ -39,7 +39,7 @@ YES = re.compile(r"(응|네|예|ㅇㅇ|그래|좋아|실행|진행|ok|yes)[.!\s]
 NO = re.compile(r"(아니|아니요|아니오|취소|ㄴㄴ|no)[.!\s]*", re.I)
 PENDING_MINUTES = 10
 READ_ONLY = {("pipeline.figures", "list"), ("pipeline.social", "list"), ("pipeline.site", "schedule"), ("pipeline.03_review", "list"),
-             ("pipeline.tracker", "report"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show"),
+             ("pipeline.tracker", "report"), ("pipeline.07_report", "--detail"), ("pipeline.trends", "show"), ("pipeline.sponsors", "check"), ("pipeline.experiment", "summary"), ("pipeline.reddit", "list"), ("pipeline.reddit", "show"),
              ("pipeline.reddit", "communities"), ("pipeline.mentions", "list"), ("pipeline.data_notes", "list")}
 EVIDENCE_LOGS = ("worker", "social", "site", "figures", "telegram", "02_draft", "02b_auto_review", "03_review", "01_topics")
 REDDIT_EVIDENCE_LOGS = ("reddit", "telegram", "worker")  # Reddit 방의 Claude 답변 근거 (2026-11-03)
@@ -54,7 +54,7 @@ HELP = """[명령어]
 주제: 1,3,4 (주제 후보 번호)
 그림: 그림 1,2 승인 / 그림 2 빼기 / 그림 전체 승인 / 그림 목록
 SNS: 오늘 스레드 올려 / 오늘 2번째 스레드 올려 / 3 스레드 올려 / X·Threads 주소 붙여넣기 / 3 + 주소 / SNS 목록 / 오늘 글
-조회: 검수 목록 / 승인 목록 / 3번 보여줘 / 3번 블로그 보여줘 / 블로그 일정 / 유입 / 관광지 트렌드
+조회: 검수 목록 / 승인 목록 / 3번 보여줘 / 3번 블로그 보여줘 / 블로그 일정 / 유입 / 리포트 상세 / 관광지 트렌드
 승인 글: 승인글 2 폐기 / 2 되돌리기: 내용
 데이터 글: 데이터글 목록 / 데이터글 승인 / 데이터글 폐기 (검수 대기 글에 적용, 지역을 고르는 명령이 아님) / 데이터글 초안 where / 데이터글 초안 changes (분기 변화)
 Reddit (기준 docs/reddit-ops.md): 레딧 글 주소 + 글 내용 보내기 (주소 없이 본문만 붙여 넣어도 됨, Reddit 방) → ① 정리(질문 요약·우리 글 근거·작성 권고) → ② 조사(출처 찾기·사실 확인) → ③ 초안(영어, 붙여넣기용) — 활동 단계 커뮤니티 / 직접 쓰기: 레딧 1 검사: 한국어 본문 → 번역·검사 / 레딧 1 정리 / 레딧 1 조사 (다시 조사 + 초안) / 레딧 1 조사: 스킨부스터, 컨시어지 (그 주제를 더 찾아서 초안 다시) / 레딧 1 커뮤니티 <이름> / 레딧 기준 / 레딧 후보 찾아 / 레딧 목록 / 레딧 1 초안 / 레딧 1 방향: 내가 하고 싶은 말 (커뮤니티 말투로 영작) / 레딧 1 사실 → 레딧 1 검사: 직접 쓴 본문 (영어, 번역 허용된 곳은 한국어도 — Google 번역, 숫자는 빼고) / 레딧 1 보여줘 / 레딧 1 빼기 / 레딧 추가 <글 주소> <질문> / 레딧 글 주소만 보내기 → 글 내용 붙여넣기 → 답변
@@ -200,6 +200,8 @@ def parse(text: str) -> dict | None:
         return {"args": ["pipeline.03_review", "apply", t, "--stage", "approved"]}
     if m := re.fullmatch(r"(\d+)\s*번?\s*(블로그|대본)?\s*(글\s*)?보여\s*줘", t):
         return {"show": int(m.group(1)), "part": m.group(2) or ""}
+    if re.fullmatch(r"(주간\s*)?리포트\s*(상세|자세히)", t):
+        return {"args": ["pipeline.07_report", "--detail"]}
     if re.fullmatch(r"유입( 어때\??)?", t):
         return {"args": ["pipeline.tracker", "report", "--days", "7"]}
     if re.fullmatch(r"(관광지 트렌드|요즘 뜨는 관광지\??)", t):
