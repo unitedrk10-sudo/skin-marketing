@@ -2599,6 +2599,30 @@ def test_site_tracks_modified_date_and_pings_indexnow_for_new_and_changed(site_e
     assert "- 수정: https://skinbound.example/what-is-rejuran/" in msg and pinged[-1][0].endswith("/what-is-rejuran/")
     html_ = (site_mod.dist_dir() / "what-is-rejuran" / "index.html").read_text(encoding="utf-8")
     assert "<span>Updated 20" in html_ and '"dateModified": "20' in html_
+    about = (site_mod.dist_dir() / "about" / "index.html").read_text(encoding="utf-8")   # 수정 기록은 About 에도
+    assert "Posts changed after they were first published" in about and '<a href="/what-is-rejuran/">' in about
+
+
+def test_about_names_the_operator_and_never_claims_registration(site_env):
+    cfg = {**site_mod.load_yaml("site.yaml"), "domain": "skinbound.example"}
+    page = site_mod.render_about(cfg, [])
+    assert "Who runs Skinbound" in page and "run by an independent publisher based in Seoul, South Korea." in page
+    assert "publishing since October 2026" in page and 'rel="me">Threads</a>' in page
+    assert "not a registered foreign-patient facilitator" in page and "registration no." not in page
+    assert "planned for 2027" in page                                              # 계획이라고만 쓴다
+    assert '"foundingDate": "2026-10"' in page and '"addressCountry": "KR"' in page and "legalName" not in page
+    assert "No post has been changed after publication so far." in page and "0 sponsored or partner posts" in page
+    corp = {**cfg, "operator": {**cfg["operator"], "legal_name": "Skinbound Co., Ltd.", "representative": "Hong Gildong",
+                                "business_no": "123-45-67890"}}                    # 법인 설립 뒤 칸만 채운다
+    page = site_mod.render_about(corp, [])
+    assert ("operated by <strong>Skinbound Co., Ltd.</strong> (business registration no. 123-45-67890; "
+            "representative: Hong Gildong)") in page and '"legalName": "Skinbound Co., Ltd."' in page
+    assert "not a registered foreign-patient facilitator" in page                  # 유치업 등록번호가 없으면 그대로
+    done = {**corp, "operator": {**corp["operator"], "facilitator_no": "A-2027-01-01-0001"}}
+    page = site_mod.render_about(done, [])
+    assert "registered foreign-patient facilitator in Korea (registration no. A-2027-01-01-0001)" in page
+    assert "we do not arrange" not in page
+    assert "Who runs" not in site_mod.render_about({**cfg, "operator": {}}, [])   # 설정이 없으면 단락을 내지 않는다
 
 
 def test_ai_traffic_classifies_referrers_and_bots():

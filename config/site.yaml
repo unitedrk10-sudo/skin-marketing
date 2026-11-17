@@ -13,6 +13,16 @@ contact_email: hello@skinboundkorea.com  # 2026-10-10 Cloudflare Email Routing (
 cloudflare_project: skin-site     # Cloudflare Pages 프로젝트명 (wrangler pages deploy)
 posts_on_home: 30
 indexnow_key: "9c92fdd682b5fa530af168170339bdde"   # IndexNow (공개 값 — 사이트에 /<key>.txt 로 게시). 배포 때 새 글·수정 글 주소를 Bing 등에 바로 알린다
+operator:                       # 운영 주체 공개 — About "Who runs" 단락·구조화 데이터 (2026-11-17 운영자 결정)
+  description: an independent publisher based in Seoul, South Korea   # 지금은 여기까지만 밝힌다
+  since: 2026-10                # 첫 글 게시 (2026-10-06)
+  city: Seoul
+  country: KR
+  legal_name: ""                # ↓ 법인 설립 뒤 채우면 About 에 그대로 나온다
+  representative: ""
+  business_no: ""
+  address: ""
+  facilitator_no: ""            # 외국인환자 유치사업자 등록번호 — 등록 전에는 반드시 비워 둔다 (등록된 것처럼 읽히는 문구 금지)
 social_profiles:                # 공식 SNS 계정 — 구조화 데이터 sameAs (검색·AI 가 같은 브랜드로 묶게)
   - https://www.threads.com/@skinboundkorea
   - https://x.com/Skinboundkorea
