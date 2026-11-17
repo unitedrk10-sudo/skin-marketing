@@ -49,6 +49,7 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 | skin-worker | 10분마다 | `skin-worker.py` | 요청 처리(초안 생성·수정 재생성: Gemini 출처 찾기 → Claude 작성) → 자동 검수(Gemini) → 바뀐 게 있으면 검수 요청 전송 |
 | skin-weekly-report | 일 20:00 | `skin-weekly-report.py` | 주간 리포트 — 요약(전주 → 이번 주 증감) + 그래프. 상세는 텔레그램 `리포트 상세` (2026-11-17: 월요일 링크 유입 리포트를 합침 — 기존 설치에는 `hermes cron remove <skin-traffic-report id>`) |
 | skin-clinics | 월 07:00 | `skin-clinics.py` | 코스 관광지 주변 피부과 목록 갱신 (심평원 공공데이터, `DATA_GO_KR_KEY` 없으면 조용) |
+| skin-naver-trends | 매월 3일 08:00 | `skin-naver-trends.py` | 한국 시술 검색 관심도 갱신 (네이버 데이터랩, 키 없으면 조용) → 순위 요약, 다음 배포 때 `/trends/` 반영 |
 | skin-analytics | 매월 1일 11:00 | `skin-analytics.py` | 지난달 유입 분석 → `reports/analytics/<월>.md·.csv` (시술별 의도·도착, 영업 벤치마크) |
 | skin-site | 매시 | `skin-site.py` | 승인된 블로그 글이 바뀌었을 때만 사이트 빌드·배포 → "새 글" 알림 |
 

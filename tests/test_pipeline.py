@@ -1187,6 +1187,80 @@ def test_medical_facts_link_inline_travel_facts_use_footnotes():
     assert [s["url"] for s in sources] == ["https://www.aad.org/a", "https://english.visitkorea.or.kr/x"]
 
 
+def test_naver_trends_rank_page_and_post_line(site_env, tmp_path, monkeypatch):
+    nt = importlib.import_module("pipeline.naver_trends")
+    today = date.today()
+    months = nt.month_list(today, 13)
+    true = {"aqua_peel": [400] * 13, "botox": [200] * 13, "rejuran": [50] * 12 + [100], "juvelook": [90] * 12 + [80]}
+    calls = []
+
+    def api(body):                                              # 실제 API 처럼: 요청마다 가장 큰 값이 100
+        keys = [g["groupName"] for g in body["keywordGroups"]]
+        calls.append(keys)
+        assert len(keys) <= 5 and keys[0] == "botox" and body["timeUnit"] == "month" and body["startDate"] == f"{months[0]}-01"
+        rows = {k: true.get(k, [10] * 13) for k in keys}
+        top = max(max(v) for v in rows.values())
+        return {"results": [{"title": k, "data": [{"period": f"{m}-01", "ratio": v / top * 100} for m, v in zip(months, rows[k])]}
+                            for k in keys]}
+    nt.set_caller(api)
+    try:
+        data = nt.refresh(today)
+    finally:
+        nt.set_caller(None)
+    assert len(calls) == 5 and data["month"] == months[-1] and len(data["items"]) == 18
+    by = {it["key"]: it for it in data["items"]}
+    # 요청이 달라도(아쿠아필은 마지막 요청) 기준 주제어로 눈금이 맞는다
+    assert (by["aqua_peel"]["rank"], by["botox"]["rank"], by["rejuran"]["rank"], by["juvelook"]["rank"]) == (1, 2, 3, 4)
+    assert (by["aqua_peel"]["index"], by["botox"]["index"], by["rejuran"]["index"], by["titanium"]["index"]) == (100, 50, 25, 2.5)
+    assert by["rejuran"]["prev_rank"] == 4 and by["rejuran"]["change"] == 100.0 and by["botox"]["change"] == 0
+    prev = nt.month_label(months[-2], year=False)
+    line = f"Rejuran ranks 3rd of the 18 treatments we track (index 25, where the most-searched is 100), up from 4th in {prev}."
+    assert nt.sentence(by["rejuran"], data) == line
+    assert nt.sentence(by["botox"], data).endswith(f"unchanged from {prev}.") and nt.ordinal(11) == "11th" and nt.ordinal(22) == "22nd"
+    up, down = nt.movers(data)
+    assert up["key"] == "rejuran" and down["key"] == "juvelook"
+    text = nt.summary(data, published=False)
+    assert "3. 리쥬란 25 (▲1, +100%)" in text and "trends_page 가 꺼져" in text
+
+    site_env.responses["blog"] = blog(FAQ_BLOG)
+    approved = make_draft(site_env)
+    review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
+    _approve(site_env, approved)
+    dist = tmp_path / "dist"
+    site_mod.build()                                            # 기본: trends_page 꺼짐 → 아무것도 안 나감
+    assert "Search interest in Korea" not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert not (dist / "trends").exists() and "/trends/" not in (dist / "sitemap.xml").read_text(encoding="utf-8")
+
+    older = {**data, "month": months[-2], "months": months[:-1]}                         # 지난 달 판도 남아 있다
+    common.save_json(nt.store_dir() / f"{months[-2]}.json", older)
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example", "trends_page": True})
+    site_mod.build()
+    post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert line in post and 'href="/trends/"' in post and "not a measure of results, safety" in post
+    page = (dist / "trends" / "index.html").read_text(encoding="utf-8")
+    assert nt.month_label(months[-1]) in page and '<a href="/rejuran/">Rejuran explained</a>' in page     # 순위 → 우리 글
+    assert "Search interest is not treatment volume" in page and "NAVER DataLab" in page and "리쥬란" in page
+    assert ".csv" not in page and f'href="/trends/{months[-2]}/"' in page                # 원자료 내려받기 없음, 지난 달 링크
+    assert (dist / "trends" / months[-2] / "index.html").exists()
+    assert "https://skinbound.example/trends/" in (dist / "sitemap.xml").read_text(encoding="utf-8")
+    assert "Korea treatment search trends" in (dist / "llms.txt").read_text(encoding="utf-8")
+    assert line in (dist / "rejuran" / "index.md").read_text(encoding="utf-8")
+    log_file = site_mod.content_log_file()
+    assert not common.load_json(log_file)[approved]["updated_at"]                        # 문장이 붙어도 글 수정일은 그대로
+
+    posts = site_mod.collect_posts()
+    assert [it["key"] for it in nt.post_items(posts[0], data)] == ["rejuran"]
+    ad = {**posts[0], "draft": {**posts[0]["draft"], "sponsor": {"id": "glow", "name_en": "Glow"}}}
+    assert nt.post_items(ad, data) == [] and nt.post_html(ad, data) == ""                 # 스폰서 글에는 인기 문장 없음
+    assert nt.item_posts(by["rejuran"], [ad]) == []                                      # 순위 페이지가 잇는 글에도 없음
+    assert nt.current([data], today) is data
+    assert nt.current([data], today + timedelta(days=100)) is None                       # 묵은 데이터로 "지금" 이라 하지 않는다
+    monkeypatch.delenv("NAVER_CLIENT_ID", raising=False)
+    assert nt.main(["refresh"]) == 0                                                     # 키 없으면 크론은 조용히 지나간다
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("시술 트렌드") == {"args": ["pipeline.naver_trends", "show"]}
+
+
 def test_site_publishes_only_approved_posts(site_env, tmp_path):
     site_env.responses["blog"] = blog(FAQ_BLOG)
     approved = make_draft(site_env)
