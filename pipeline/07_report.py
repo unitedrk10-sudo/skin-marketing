@@ -1,18 +1,20 @@
-"""7. 주간 리포트 — 지난 7일 파이프라인 현황을 텔레그램 한 메시지로 (Hermes 크론, 일요일 저녁).
+"""7. 주간 리포트 — 일요일 저녁 한 번 (Hermes 크론). 2026-11-17: 요약 + 그래프만 보내고 나머지는 상세로.
 
-  - 만든 것: 초안 수, 자동 검수 등급(✅⚠️⛔⏳), 수정 요청, 승인·폐기, 렌더링, 게시(채널별)
-  - 기다리는 것: 검수 대기 초안, 게시 전 확인 영상, 게시 키트 대기
-  - 자동 검수와 사람 판단 일치율 (logs/review_agreement.csv — 신뢰 단계 판단, 기획서 6-0)
-  - 블로그 글 수, 링크 유입(추적기 설정 시), 이번 주 수요 상위 시술·관광지
-결과는 reports/weekly/<주차>.md 에도 저장 (git 제외).
+  - 요약 (텔레그램): 숫자마다 "전주 → 이번 주 (증감)" — 글 조회·구글 노출·링크 클릭·Threads·AI 조회·제휴 클릭·대기 명단,
+    많이 오른 글·내린 글, 할 일. 직접 두 주를 조회하지 못하는 숫자는 지난 리포트 때 저장한 값과 비교한다
+    (content/reports/weekly_metrics.json).
+  - 상세 (reports/weekly/<주차>.md, 텔레그램 "리포트 상세"): 파이프라인 현황(초안·검수 등급·승인·게시), 링크 유입 채널·상위 링크
+    (월요일에 따로 가던 링크 유입 리포트를 여기로 합침), SNS·검색·AI·수요 상위 등 전체 줄.
 
-    python -m pipeline.07_report [--days 7]
+    python -m pipeline.07_report [--days 7]      # 요약 출력 + 저장
+    python -m pipeline.07_report --detail        # 가장 최근 리포트의 상세
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
@@ -122,7 +124,166 @@ def trust_check(today: date | None = None) -> list[str]:
     return lines
 
 
-def extras() -> list[str]:
+def link_stats() -> tuple[dict, dict] | None:
+    """추적 링크 클릭: (지난 일~토, 그 전 주). 추적기 미설정·실패면 None."""
+    try:
+        from pipeline import tracker
+        if not tracker.configured():
+            return None
+        end = date.today() - timedelta(days=1)
+        return tracker.stats(end - timedelta(days=6), end), tracker.stats(end - timedelta(days=13), end - timedelta(days=7))
+    except Exception as e:  # noqa: BLE001
+        log.warning("유입 집계 실패: %s", e)
+        return None
+
+
+def metrics_file():
+    return content_dir() / "reports" / "weekly_metrics.json"
+
+
+def headline(trend_data: dict | None, links: tuple[dict, dict] | None, today: date | None = None) -> dict[str, tuple]:
+    """요약에 쓰는 숫자: {이름: (전주, 이번 주)}. 못 읽은 항목은 빠지고, 전주를 직접 조회할 수 없는 항목은 (None, 이번 주)."""
+    today = today or date.today()
+    end = today - timedelta(days=1)
+    this, last = (end - timedelta(days=6), end), (end - timedelta(days=13), end - timedelta(days=7))
+
+    def from_trend():
+        if not trend_data:
+            return {}
+        w, v = trend_data["windows"][-1], trend_data["windows"][-2]
+        got = {"requests": (v["new"] + v["existing"], w["new"] + w["existing"]), "home": (v["home"], w["home"])}
+        if trend_data.get("rum") is not None:
+            got["views"] = (trend_data.get("rum_prev"), trend_data["rum"])
+        return got
+
+    def from_google():
+        from pipeline import search_console
+        if not search_console.gsc_configured():
+            return {}
+        g = search_console.gsc_stats(7, today)
+        return {"impressions": (g["previous"]["impressions"], g["totals"]["impressions"]),
+                "search_clicks": (g["previous"]["clicks"], g["totals"]["clicks"])}
+
+    def from_links():
+        return {"link_clicks": (links[1]["totals"]["clicks"], links[0]["totals"]["clicks"])} if links else {}
+
+    def from_affiliates():
+        from pipeline import affiliates, analytics, tracker
+        codes = {v["code"] for v in affiliates.tracked().values() if v.get("code")} if affiliates.settings() else set()
+        if not codes or not tracker.configured():
+            return {}
+
+        def count(span):
+            return sum(int(r.get("clicks") or 0) for r in analytics.fetch(*span) if r.get("code") in codes and not r.get("is_bot"))
+        return {"affiliate_clicks": (count(last), count(this))}
+
+    def from_threads():
+        from pipeline import social
+        return {"threads_views": (None, social.threads_reactions(7).get("views", 0))}
+
+    def from_ai():
+        from pipeline import ai_traffic
+
+        def live(span):
+            return sum(ai_traffic.crawls(*span)["live"].values())
+        return {"ai_live": (live(last), live(this)),
+                "ai_visits": (ai_traffic.referrals(*last)["total"], ai_traffic.referrals(*this)["total"])}
+
+    def from_waitlist():
+        from pipeline import tracker
+        if not tracker.configured():
+            return {}
+        days = {r["day"]: r["n"] for r in tracker.waitlist().get("by_day", [])}
+
+        def new(span):
+            return sum(n for day, n in days.items() if span[0].isoformat() <= day <= span[1].isoformat())
+        return {"waitlist_new": (new(last), new(this))} if days else {}
+
+    out: dict[str, tuple] = {}
+    for name, fn in (("글 추세", from_trend), ("구글 검색", from_google), ("링크 클릭", from_links), ("제휴 클릭", from_affiliates),
+                     ("Threads", from_threads), ("AI 조회", from_ai), ("대기 명단", from_waitlist)):
+        try:
+            out.update(fn())
+        except Exception as e:  # noqa: BLE001 — 한 항목이 실패해도 요약은 나간다
+            log.warning("%s 집계 실패: %s", name, e)
+    return out
+
+
+def with_history(numbers: dict[str, tuple], today: date | None = None) -> dict[str, tuple]:
+    """이번 주 숫자를 쌓고, 전주를 직접 못 읽은 항목(Threads 조회 등)은 지난 리포트 때 쌓은 값으로 채운다."""
+    today = today or date.today()
+    f = metrics_file()
+    saved = load_json(f) if f.exists() else {}
+    before = saved.get(iso_week(today - timedelta(days=7)), {})
+    saved[iso_week(today)] = {k: now for k, (_, now) in numbers.items()}
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(saved, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+    return {k: (before.get(k) if prev is None else prev, now) for k, (prev, now) in numbers.items()}
+
+
+def change(pair: tuple, plus: bool = False) -> str:
+    """"19 → 31 (+12)". 전주를 모르면 "– → 31". plus=True 는 그 주에 새로 생긴 수 ("+0 → +1")."""
+    prev, now = pair
+    show = (lambda n: f"+{n}") if plus else str
+    if prev is None:
+        return f"– → {show(now)}"
+    diff = now - prev
+    return f"{show(prev)} → {show(now)}" + ("" if plus else f" ({'+' if diff > 0 else '−' if diff < 0 else '±'}{abs(diff)})")
+
+
+def summary(data: dict, numbers: dict[str, tuple], trend_data: dict | None, checks: list[str], today: date | None = None) -> str:
+    """텔레그램으로 가는 요약 — 숫자마다 전주 → 이번 주."""
+    from pipeline import trend
+    today = today or date.today()
+    end = today - timedelta(days=1)
+    lines = [f"[주간 리포트 {iso_week(today)} · {end - timedelta(days=6):%m/%d}~{end:%m/%d} · 전주 → 이번 주]"]
+    n = numbers
+    warn = trend.bot_suspect(trend_data) if trend_data else ""
+    if "views" in n:
+        lines.append(f"👀 글 조회 {change(n['views'])} (JS 집계, 사람에 가까움)")
+    if "requests" in n:
+        lines.append(f"   서버 요청 {change(n['requests'])} · 홈 {change(n['home'])}")
+    if warn:
+        lines.append("   " + warn)
+    if trend_data and trend_data["windows"][-1]["new_posts"]:
+        last = trend_data["windows"][-1]
+        lines.append(f"🆕 새 글 {last['new_posts']}편 · 서버 요청 {last['new']}")
+    if not trend_data:
+        lines.append("👀 글 조회: 숫자를 읽지 못함 (Cloudflare 연결 확인)")
+    if "impressions" in n:
+        lines.append(f"🔍 구글 노출 {change(n['impressions'])} · 클릭 {change(n['search_clicks'])} (3일 전까지)")
+    if "link_clicks" in n:
+        lines.append(f"🔗 링크 클릭 {change(n['link_clicks'])}")
+    if "affiliate_clicks" in n:
+        lines.append(f"🛍 제휴 클릭 {change(n['affiliate_clicks'])}")
+    if "threads_views" in n:
+        lines.append(f"💬 Threads 조회 {change(n['threads_views'])}")
+    if "ai_live" in n:
+        lines.append(f"🤖 AI 실시간 조회 {change(n['ai_live'])} · AI 답변에서 온 방문 {change(n['ai_visits'])}")
+    if "waitlist_new" in n:
+        lines.append(f"📮 대기 명단 가입 {change(n['waitlist_new'], plus=True)}")
+    if trend_data and not warn:  # 봇이 의심되는 주는 글별 증감이 뜻이 없다
+        up, down = trend.movers(trend_data)
+        lines += [f"📈 {r['views'][-2]} → {r['views'][-1]}  {r['title'][:trend.TITLE_CHARS]}" for r in up]
+        lines += [f"📉 {r['views'][-2]} → {r['views'][-1]}  {r['title'][:trend.TITLE_CHARS]}" for r in down]
+    w = data["waiting"]
+    todo = [f"{label} {w[key]}" for key, label in (("drafts", "검수"), ("rendered", "영상 확인"), ("ready_to_publish", "게시 키트")) if w[key]]
+    lines.append("⏳ 할 일: " + (" · ".join(todo) if todo else "없음"))
+    return "\n".join(lines + checks + ['자세한 숫자: "리포트 상세"'])
+
+
+DETAIL_MARK = "\n— 상세 —\n"
+
+
+def detail_text() -> str:
+    """가장 최근 주간 리포트의 상세 (텔레그램 "리포트 상세")."""
+    files = sorted((ROOT / "reports" / "weekly").glob("*-W??.md"))
+    if not files:
+        return "저장된 주간 리포트가 없습니다"
+    return files[-1].read_text(encoding="utf-8").split(DETAIL_MARK, 1)[-1].strip()
+
+
+def extras(trend_data: dict | None = None, links: tuple[dict, dict] | None = None) -> list[str]:
     """블로그·유입·수요 — 각각 실패해도 리포트는 나간다."""
     lines = []
     try:
@@ -133,10 +294,9 @@ def extras() -> list[str]:
         log.warning("블로그 집계 실패: %s", e)
     try:
         from pipeline import tracker
+        if links:  # 채널·상위 링크 — 월요일에 따로 가던 링크 유입 리포트 (2026-11-17 합침)
+            lines += [("🔗 " if i == 0 else "   ") + x for i, x in enumerate(tracker.weekly_message(*links).splitlines())]
         if tracker.configured():
-            end = date.today() - timedelta(days=1)
-            t = tracker.stats(end - timedelta(days=6), end)["totals"]
-            lines.append(f"🔗 링크 클릭 {t['clicks']} (하루 고유 {t['unique_daily']})")
             lines += tracker.waitlist_lines(7)  # 대기 명단 가입 수 (숫자만)
     except Exception as e:  # noqa: BLE001
         log.warning("유입 집계 실패: %s", e)
@@ -163,7 +323,7 @@ def extras() -> list[str]:
         log.warning("외부 언급 집계 실패: %s", e)
     try:
         from pipeline import trend
-        lines += trend.report()  # 글별 지난주 대비·새 글 첫 7일·그래프
+        lines += trend.report(data=trend_data)  # 글별 지난주 대비·새 글 첫 7일·그래프
     except Exception as e:  # noqa: BLE001
         log.warning("글 추세 집계 실패: %s", e)
     try:
@@ -192,7 +352,7 @@ def message(data: dict, extra: list[str]) -> str:
     grades = " ".join(f"{GRADE_ICON[k]}{g[k]}" for k in GRADE_ICON if g[k]) or "-"
     posts = ", ".join(f"{ch} {n}" for ch, n in sorted(data["posts"].items())) or "0"
     agree, total = data["agreement"]
-    lines = [f"[주간 리포트 {iso_week()} · 지난 {data['days']}일]",
+    lines = [f"[주간 리포트 상세 {iso_week()} · 지난 {data['days']}일]",
              f"✍️ 초안 {data['created']}건 (자동 검수 {grades}) · 수정 요청 {data['revisions']}",
              f"👍 승인 {m['approved']} · 폐기 {m['rejected']} · 🎬 렌더링 {m['rendered']} · 게시 OK {m['ready_to_publish']}",
              f"📤 게시 {posts} · 모든 채널 완료 {m['published']}",
@@ -205,20 +365,33 @@ def message(data: dict, extra: list[str]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="주간 리포트")
     parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--detail", action="store_true", help="가장 최근 리포트의 상세를 출력")
     args = parser.parse_args(argv)
-    checks = trust_check()
+    if args.detail:
+        print(detail_text())
+        return 0
+    checks = trust_check()  # 4주마다 — 사람이 정할 일이라 요약에 넣는다
+    cited = []
     if checks:  # 4주 점검 주에는 AI 인용 점검도 같이 (Gemini 검색, 질문 20개)
         try:
             from pipeline import citation_check
-            checks += citation_check.report_lines(citation_check.check())
+            cited = citation_check.report_lines(citation_check.check())
         except Exception as e:  # noqa: BLE001
             log.warning("AI 인용 점검 실패: %s", e)
-    lines = extras() + checks
+    trend_data = None
+    try:
+        from pipeline import trend
+        trend_data = trend.collect()
+    except Exception as e:  # noqa: BLE001
+        log.warning("글 추세 집계 실패: %s", e)
+    links = link_stats()
+    lines = extras(trend_data, links) + cited
     media = [x for x in lines if x.startswith("MEDIA:")]  # 첨부 줄은 메시지 끝에, 저장본에는 넣지 않는다
-    text = message(collect(args.days), [x for x in lines if x not in media])
+    data = collect(args.days)
+    text = summary(data, with_history(headline(trend_data, links)), trend_data, checks)
     path = ROOT / "reports" / "weekly" / f"{iso_week()}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text + "\n", encoding="utf-8")
+    path.write_text(text + "\n" + DETAIL_MARK + message(data, [x for x in lines if x not in media]) + "\n", encoding="utf-8")
     print("\n".join([text, *media]))
     return 0
 
