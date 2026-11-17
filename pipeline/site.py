@@ -99,6 +99,8 @@ def collect_posts(include_scheduled: bool = False) -> list[dict]:
 # ---------------- 게시 일정 (월·수·금 등) ----------------
 
 KST = timezone(timedelta(hours=9))  # 한국은 서머타임이 없다
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
@@ -608,8 +610,71 @@ Sponsored posts are clearly labeled advertisements.</p></div>
 def organization(cfg: dict) -> dict:
     """브랜드 정보 — 공식 SNS 계정(sameAs)을 붙여 검색·AI 가 같은 브랜드로 묶게 한다."""
     base = base_url(cfg)
+    op = cfg.get("operator") or {}
+    place = {k: v for k, v in (("addressLocality", op.get("city")), ("addressCountry", op.get("country"))) if v}
     return {"@type": "Organization", "name": cfg["name"], **({"url": base + "/"} if base else {}),
+            **({"legalName": op["legal_name"]} if op.get("legal_name") else {}),
+            **({"foundingDate": str(op["since"])} if op.get("since") else {}),
+            **({"address": {"@type": "PostalAddress", **place}} if place else {}),
             **({"sameAs": list(cfg["social_profiles"])} if cfg.get("social_profiles") else {})}
+
+
+def operator_html(cfg: dict) -> str:
+    """About 의 "Who runs" 단락 (site.yaml operator, 2026-11-17 운영자 결정). 지금은 "서울의 독립 매체"까지만 밝히고,
+    법인 설립 뒤 legal_name·representative·business_no·address 를 채우면 그대로 나온다. 선: 유치사업자 등록번호
+    (facilitator_no)가 없으면 등록 전이라 상담·예약 연결을 하지 않는다고 쓴다 — 등록된 것처럼 읽히는 문구를 내지 않는다."""
+    op = cfg.get("operator") or {}
+    if not op.get("description") and not op.get("legal_name"):
+        return ""
+    esc, name = html.escape, html.escape(cfg["name"])
+    since = ""
+    if op.get("since"):
+        y, _, m = str(op["since"]).partition("-")
+        since = f" It has been publishing since {MONTHS[int(m) - 1] + ' ' if m else ''}{esc(y)}."
+    if op.get("legal_name"):
+        ids = [f"business registration no. {esc(str(op['business_no']))}" if op.get("business_no") else "",
+               f"representative: {esc(op['representative'])}" if op.get("representative") else ""]
+        ids = "; ".join(x for x in ids if x)
+        who = (f"{name} is operated by <strong>{esc(op['legal_name'])}</strong>" + (f" ({ids})" if ids else "")
+               + (f", {esc(op['address'])}" if op.get("address") else "") + ".")
+    else:
+        who = f"{name} is run by {esc(op['description'])}."
+    if op.get("facilitator_no"):
+        status = (f"The operator is a registered foreign-patient facilitator in Korea (registration no. "
+                  f"{esc(str(op['facilitator_no']))}).")
+    else:
+        status = ("We are not a clinic or a medical professional, and we are not a registered foreign-patient facilitator, "
+                  "so we do not arrange consultations, bookings or referrals.")
+        if (cfg.get("waitlist") or {}).get("enabled"):
+            status += (f" A company for a booking-help service is planned for {int(cfg['waitlist'].get('launch_year') or 2027)}; "
+                       "once it is registered, its legal name, registration numbers and representative will be listed here.")
+    links = [f'<a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>'] if cfg.get("contact_email") else []
+    for url in cfg.get("social_profiles") or []:
+        label = {"threads.com": "Threads", "threads.net": "Threads", "x.com": "X", "instagram.com": "Instagram"}.get(
+            (urlparse(url).hostname or "").removeprefix("www."))
+        if label and url.startswith("https://"):
+            links.append(f'<a href="{esc(url)}" rel="me">{label}</a>')
+    reach = f"<p>Contact and official accounts: {' · '.join(links)}</p>" if links else ""
+    return f"<h2>Who runs {name}</h2><p>{who}{since} {status}</p>{reach}"
+
+
+def updates_html(posts: list[dict]) -> str:
+    """About 의 정정·수정 기록 — 처음 게시 뒤 본문·사실이 바뀐 글 (track_modified 가 남긴 수정 시각)."""
+    changed = sorted((p for p in posts if (p.get("modified") or p["date"]) > p["date"]), key=lambda p: p["modified"], reverse=True)
+    rows = "".join(f'<li>{html.escape(p["modified"][:10])} — <a href="/{html.escape(p["slug"])}/">'
+                   f'{html.escape(p["draft"]["blog"].get("title") or p["slug"])}</a></li>' for p in changed[:30])
+    return rows and f"<p>Posts changed after they were first published:</p><ul>{rows}</ul>"
+
+
+def funding_html(posts: list[dict], now: datetime | None = None) -> str:
+    """About 의 수익 현황 한 줄 — 숫자는 게시된 글에서 코드가 센다 (스폰서 글·코스 광고 카드·제휴 링크가 붙은 글)."""
+    at = (now or datetime.now(timezone.utc)).astimezone(KST)
+    sponsored = sum(1 for p in posts if p["draft"].get("sponsor"))
+    ads = sum(1 for p in posts if route_ad_sponsor(p))
+    aff = sum(1 for p in posts if not p["draft"].get("sponsor") and affiliates.applies(p["draft"]) and affiliates.products(p["draft"]))
+    return (f"<p>As of {MONTHS[at.month - 1]} {at.year}, this site has {len(posts)} published guides: {sponsored} sponsored or partner "
+            f"posts, {ads} guides carrying a clinic ad card and {aff} skincare guides with affiliate links. "
+            "We have no other income from clinics.</p>")
 
 
 def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> list[dict]:
@@ -1046,10 +1111,13 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
 {feat or "<p>First guides are coming soon.</p>"}{grid}</section></div>{band}"""
     return page(cfg, f"{cfg['name']} — {cfg['tagline']}", body, path="/", jsonld=[site_ld], image=None)
 
-def render_about(cfg: dict) -> str:
+def render_about(cfg: dict, posts: list[dict] | None = None) -> str:
     name = html.escape(cfg["name"])
+    posts = posts or []
+    contact = html.escape(cfg.get("contact_email") or "the contact address on this site")
     body = f"""<h1>About {name}</h1>
 <p>{html.escape(cfg['description'])}</p>
+{operator_html(cfg)}
 <h2>How our guides are made</h2>
 <ol><li>Topics come from what international visitors search for and ask about.</li>
 <li>An AI model gathers facts, and <strong>every fact must cite a source</strong> — peer-reviewed research, government and
@@ -1077,8 +1145,19 @@ affiliate commissions or any other payment from clinics for our independent guid
 <h2>Sponsored posts</h2>
 <p>Some posts are advertisements paid for by a licensed clinic at a flat fee, or produced free of charge during a short
 partner pilot. They are always labeled <em>Sponsored</em> or <em>Partner</em> and as an advertisement at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
-sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, the text of our independent guides.</p>"""
-    return page(cfg, f"About — {cfg['name']}", f'<div class="page">{body}</div>', path="/about/")
+sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, the text of our independent guides.</p>
+<h2>How the site is funded</h2>
+<p>The guides are free to read. Income comes only from the three things described above: affiliate commissions on
+skincare products, labeled sponsored posts and labeled clinic ad cards. Clinic advertising is flat-fee only — never per
+click, booking or patient.</p>
+{funding_html(posts)}
+<h2>Corrections and updates</h2>
+<p>Found something wrong or out of date? Write to {contact} with the page and the sentence. We check it against the
+source, fix confirmed errors and show an updated date on the post.</p>
+{updates_html(posts) or "<p>No post has been changed after publication so far.</p>"}"""
+    return page(cfg, f"About — {cfg['name']}", f'<div class="page">{body}</div>', path="/about/",
+                jsonld=[{"@context": "https://schema.org", "@type": "AboutPage", "url": f"{base_url(cfg)}/about/",
+                         "about": organization(cfg)}])
 
 
 def render_partners(cfg: dict) -> str:
@@ -1500,7 +1579,7 @@ def build(out: Path | None = None) -> dict:
         p["aff_names"] = {k[len(aff_prefix):]: v.get("product_name") for k, v in links.items() if k.startswith(aff_prefix) and not v.get("gone")}
         write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls, posts=posts, pages=pages, aff_urls=p["aff_urls"]))
     write("index.html", render_index(cfg, posts))
-    write("about/index.html", render_about(cfg))
+    write("about/index.html", render_about(cfg, posts))
     write("privacy/index.html", render_privacy(cfg))
     if pages:
         write("treatments/index.html", site_links.render_treatments_index(cfg, pages))
