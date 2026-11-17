@@ -120,6 +120,60 @@ def test_find_filters_ranks_by_likes_and_remembers(api):
     assert sum(1 for p, _ in calls if p == "ig_hashtag_search") == searches
 
 
+def _discovery(monkeypatch, profiles):
+    """Business Discovery 가짜: 계정 아이디 → 프로필. 없는 아이디는 API 오류."""
+    asked = []
+
+    def fake(path, params):
+        assert path == "1789" and "view_count" in params["fields"]
+        name = params["fields"].split("username(")[1].split(")")[0]
+        asked.append(name)
+        if name not in profiles:
+            raise reels.ReelsError("GET 1789 → 400: [110] Cannot find User", status=400, code=110)
+        return {"business_discovery": profiles[name]}
+
+    reels.set_http(fake)
+    return asked
+
+
+def test_accounts_rank_related_clean_videos_by_views(api, monkeypatch):
+    profiles = {
+        "skin_diary": {"username": "skin_diary", "name": "피부 일기", "followers_count": 12000, "biography": "내돈내산 시술 기록 · 협업 문의 메일",
+                       "media": {"data": [
+                           {**media("a", "리쥬란 3회차 솔직 후기"), "view_count": 900},
+                           {**media("b", "울쎄라 한 달 뒤, 궁금하면 DM으로"), "view_count": 50000},
+                           {**media("c", "써마지 받았어요 #협찬"), "view_count": 999999},      # 협찬 → 제외
+                           {**media("d", "오늘 점심 브이로그"), "view_count": 700000},          # 시술 무관
+                           {**media("e", "리쥬란 사진", kind="IMAGE", product="FEED"), "view_count": 1}]}},
+        "gangnam_skin": {"username": "gangnam_skin", "name": "강남OO피부과", "followers_count": 300, "biography": "원장 직접 진료",
+                         "media": {"data": [{**media("z", "리쥬란 안내"), "view_count": 10}]}},
+    }
+    asked = _discovery(monkeypatch, profiles)
+    rows = reels.accounts(["@skin_diary", "https://www.instagram.com/gangnam_skin/", "no_such"])
+    assert asked == ["skin_diary", "gangnam_skin", "no_such"]
+    diary, clinic, missing = rows
+    assert (diary["videos"], diary["sponsored"], diary["related"], diary["clean"]) == (4, 1, 3, 2)
+    assert [i["id"] for i in diary["items"]] == ["b", "a"] and diary["clinic"] is False   # '협업 문의' 는 병원 신호가 아니다
+    assert diary["items"][0]["warn"] == ["dm_funnel"]                                    # DM 은 경고만
+    assert clinic["clinic"] is True and "error" in missing
+    text = reels.accounts_message(rows)
+    assert "▶ 50,000" in text and "https://www.instagram.com/reel/b/" in text and "⚠️ DM 유도" in text
+    assert "⛔ 소개에 병원·의사 신호" in text and "/reel/z/" not in text                  # 병원 계정 영상은 목록에 내지 않는다
+    assert "✗ @no_such" in text and "--file" in text and "GET 1789" not in text      # 우리 계정 ID 는 메시지에 없다
+    saved = reels.load_state()["accounts"]
+    assert set(saved) == {"skin_diary", "gangnam_skin"} and "items" not in saved["skin_diary"]  # 캡션은 남기지 않는다
+    # 이름 없이 다시: 저장한 계정 중 병원 신호 없는 곳만
+    asked.clear()
+    reels.accounts([])
+    assert asked == ["skin_diary"]
+
+
+@pytest.mark.parametrize("text", ["https://www.instagram.com/reel/Dfn8u05h4w8/", "피부 일기", "a/b", "x{y}"])
+def test_account_name_must_be_a_handle(api, text):
+    with pytest.raises(reels.ReelsError, match="아이디"):
+        reels.accounts([text])
+
+
 def test_find_keeps_only_short_caption(api):
     feeds, _ = api
     feeds["리쥬란"] = [media("a", "가" * 500, likes=1)]
