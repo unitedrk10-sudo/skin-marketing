@@ -13,6 +13,11 @@
 # 역할 (2026-10-06 변경): Gemini 는 찾기·검수, Claude 는 읽고 쓰기.
 #   Gemini 가 쓰기까지 하면 출처 페이지에 없는 내용을 사실로 적는 문제가 반복돼 작성을 Claude 로 옮겼다.
 
+# claude_cli 단계에서 model 을 따로 적지 않으면 이 모델로 실행한다 (claude -p --model).
+# 2026-11-18: Claude Code 기본 모델이 사용량 크레딧이 필요한 모델(Fable 5.2)로 바뀌어 07:14 부터 claude -p 가 전부 실패했다
+#   ("requires usage credits") → 구독 안에서 되는 모델로 고정. 바꿀 때는 python -m pipeline.llm check 로 확인.
+claude_cli_model: opus
+
 stages:
   topics:          # 01 주간 주제 조사
     provider: gemini
@@ -31,7 +36,7 @@ stages:
 
   write:           # 02 작성 — 받아 둔 페이지 본문만 보고 사실·대본·블로그 (도구 없음)
     provider: claude_cli
-    # model: sonnet          # 생략하면 Claude Code 기본 모델
+    # model: sonnet          # 생략하면 위 claude_cli_model
     tools: []
     timeout_sec: 1500
 

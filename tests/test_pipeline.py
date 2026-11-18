@@ -162,6 +162,9 @@ def test_parse_json_handles_fences_and_prose():
 def test_llm_stage_models_come_from_config():
     assert llm.stage_config("sources")["provider"] == "gemini" and llm.stage_config("sources")["search"]
     assert llm.stage_config("write")["provider"] == llm.CLAUDE_CLI and llm.stage_config("write")["tools"] == []
+    # claude_cli 단계는 모두 모델이 정해져 있다 — Claude Code 기본 모델이 바뀌어도 운영이 멈추지 않게 (2026-11-18)
+    cli = [s for s, c in common.load_yaml("models.yaml")["stages"].items() if c.get("provider") == llm.CLAUDE_CLI]
+    assert cli and all(llm.stage_config(s)["model"] for s in cli)
     assert set(llm.stage_config("write_search")["tools"]) == {"WebSearch", "WebFetch"}
     assert not llm.is_external("cross_review") and not llm.is_external("source_check")
 
@@ -924,6 +927,8 @@ def test_claude_hold_until_reset_time(worker_env, error, now, until):
                  "modelUsage": {"claude-haiku-4-5": {"outputTokens": 40}, "claude-sonnet-5": {"outputTokens": 5000}}}), 0, "ok"),
     (json.dumps({"is_error": True, "result": "Claude AI usage limit reached|1759712400"}), 1, llm.RateLimited),
     (json.dumps({"is_error": True, "result": "Invalid model name"}), 1, llm.LLMError),
+    (json.dumps({"is_error": True, "result": "Fable 5.2 requires usage credits. Switch to another model, or manage usage credits"}),
+     1, "model"),
     ("not json", 1, llm.LLMError),
 ])
 def test_claude_cli_provider(monkeypatch, stdout, code, expect):
@@ -934,11 +939,17 @@ def test_claude_cli_provider(monkeypatch, stdout, code, expect):
         return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr="")
 
     monkeypatch.setattr(llm.subprocess, "run", fake_run)
-    cfg = {"provider": "claude_cli", "tools": ["WebSearch", "WebFetch"]}
+    cfg = {"provider": "claude_cli", "tools": ["WebSearch", "WebFetch"], "model": "opus"}
+    if expect == "model":  # 한도가 아니라 설정 문제 — 기다리지 않고 바꿀 곳을 알린다
+        with pytest.raises(llm.LLMError, match="claude_cli_model") as e:
+            llm._claude_cli("write", cfg, None, "PROMPT")
+        assert not isinstance(e.value, llm.RateLimited)
+        return
     if expect == "ok":
         r = llm._claude_cli("write", cfg, None, "PROMPT")
         assert r.text == '{"ok": true}' and r.model == "claude-sonnet-5"
         assert seen["input"] == "PROMPT" and "WebSearch,WebFetch" in seen["cmd"]
+        assert seen["cmd"][seen["cmd"].index("--model") + 1] == "opus"
         assert "skin-claude-" in seen["cwd"]  # 저장소 밖에서 실행 (CLAUDE.md 를 읽지 않게)
     else:
         with pytest.raises(expect):
