@@ -8,3 +8,4 @@ truststore>=0.10      # HTTPS 검증에 OS 인증서 저장소 사용 (출처 �
 matplotlib>=3.9       # 주간 리포트 그래프 (pipeline/trend.py) — 없으면 글자만
 pypdf>=5.0            # PDF 출처(FDA 문서·논문) 본문 추출 — 없으면 PDF 는 사람이 확인
 faster-whisper>=1.0   # 리믹스 번역 릴스 받아쓰기 (pipeline/reels_work.py, 로컬) — 없으면 transcribe 만 안 됨
+shapely>=2.0          # 외국인 의료 소비 지도 경계 합치기 (pipeline/foreign_medical.py export) — 없으면 export 만 안 됨
