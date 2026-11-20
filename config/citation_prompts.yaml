@@ -21,3 +21,16 @@ questions:
   - How long does bruising last after filler?
   - What aftercare is recommended after a skin booster injection?
   - How do I plan a Korea trip around a skin treatment?
+
+# 이름 질문 (2026-11-20) — AI 가 우리 사이트를 아는가(색인·인지). 주제 질문에서 골라 주는가와 따로 본다.
+brand:
+  - What is skinboundkorea.com?
+
+# 우리만 답할 수 있는 질문 (2026-11-20) — 공개 데이터(/data/, 시술 검색 순위)나 시술 × 한국 여행 조합처럼
+# 한 원출처가 질문 전체에 답하지 않는 것. 일반 질문은 AI 가 CDC·Mayo·병원 사이트를 직접 인용한다 (Dola·Gemini·ChatGPT 시험).
+original:
+  - How many dermatology clinics are there in Gangnam, Seoul?
+  - Which districts in Korea have the most dermatology clinics?
+  - How many dermatology clinics are there near Myeongdong in Seoul?
+  - What are the most searched skin treatments in Korea this month?
+  - Can I eat Korean BBQ and drink soju after a skin treatment in Korea?

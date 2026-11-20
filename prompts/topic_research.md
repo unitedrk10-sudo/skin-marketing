@@ -25,10 +25,12 @@ The weekly skincare topic is an Olive Young pick list for one concrete need afte
 
 Each topic must be answerable purely with public, sourceable information and must not require naming any clinic or doctor.
 
+Answer gap (2026-11-20): AI assistants cite the original source directly when one authoritative page (a medical society, a government page, a major medical site, the product's own leaflet) already answers the whole question — a page that only restates it is skipped. Prefer topics whose full question no single page answers: a treatment combined with a concrete Korea trip situation (food, drink, sauna, sun, flights, sights, seasons), or a question our own public data answers. Each fact still needs its own source. For every topic set "answered_elsewhere": true when one authoritative page already answers the whole question as asked, otherwise false.
+
 Formats that AI assistants and search engines quote most often — include at least one of these each week when sources allow:
 - A comparison of two procedures or ingredients ("Rejuran vs Juvelook", "laser toning vs pico toning"): how each works, downtime, sessions, side effects, side by side. Compare procedures only — never clinics, brands' prices or countries' clinics, and never declare a winner.
 - A decision guide ("How to think about choosing between skin boosters"): the questions and criteria a reader can take to a doctor, not a recommendation of any procedure.
-- A practical "how long / how many" answer built on aftercare leaflets and reviews (downtime, sun, makeup, sessions).
+- A practical "how long / how many" answer built on aftercare leaflets and reviews (downtime, sun, makeup, sessions) — best when tied to a Korea trip situation, since the plain question is usually answered by one leaflet already.
 
 Return ONLY a JSON object, no prose, in this exact shape:
 {
@@ -41,6 +43,7 @@ Return ONLY a JSON object, no prose, in this exact shape:
       "keywords": ["3-6 search keywords"],
       "hook": "a question-style hook for the first 3 seconds",
       "has_price": true or false,
+      "answered_elsewhere": true or false,
       "followup_of": "id from the evidence follow-ups list, only for a follow-up topic (otherwise omit)",
       "sources": [{"url": "https://...", "title": "..."}]
     }
