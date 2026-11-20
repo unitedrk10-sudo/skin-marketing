@@ -68,3 +68,18 @@ def test_match_registry_unique_names_only():
            {"상호명": "마바한의원", "기관구분": "한의원", "지역": "서울"}]   # 동명 2곳 → 버림
     ids, stats = fm.match_registry(insts, reg)
     assert ids == {"a", "b"} and stats == {"matched": 2, "ambiguous": 1, "missing": 0}
+
+
+def test_nat_yearly_uplift_and_ticket():
+    n = {"dept": [
+        {"ym": "202501", "nat": "중국", "dept": "피부과", "typ": "AMT", "v": 300e8},
+        {"ym": "202501", "nat": "중국", "dept": "약국", "typ": "AMT", "v": 100e8},
+        {"ym": "202501", "nat": "중국", "dept": "피부과", "typ": "CNT", "v": 10000},
+        {"ym": "202501", "nat": "미국", "dept": "피부과", "typ": "AMT", "v": 100e8},
+        {"ym": "202501", "nat": "미국", "dept": "피부과", "typ": "CNT", "v": 10000}],
+        "simplepay": {"중국": {"2025": {"medical_won": 40e8}}}, "region": {}}
+    rows = {r["nat"]: r for r in fm.nat_yearly_rows(n)}
+    assert rows["중국"]["simplepay_uplift"] == 0.1          # 간편결제 40억 ÷ 카드 의료 전체 400억
+    assert rows["중국"]["est_clinic_eok"] == 330.0          # 병의원(약국 제외) 300억 × 1.1
+    assert rows["중국"]["ticket_derm_manwon"] == 300.0
+    assert rows["미국"]["simplepay_uplift"] == 0 and rows["미국"]["card_share"] == 0.25

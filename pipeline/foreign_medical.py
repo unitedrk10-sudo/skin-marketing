@@ -9,12 +9,17 @@
      조회하면 비어 있어 구 코드까지 모두 받는다(합치기는 보는 쪽에서 `city_code`). 업종 분류가 데이터랩의 관광 업종
      대분류라 병의원 외 웰니스(약국·피부관리 등)가 섞일 수 있다.
   3) 동 상위 5곳 × 시도 × 진료과목 × 월 (의료관광 현황 "인기 소비 동네", 단위 원) — 동 단위는 상위 5곳만 공개된다.
+  5) 국적별 (fetch-nat, content/foreign_medical/nationality.json) — 전국 국적 × 진료과목 × 월 결제액·건수,
+     국적별 시군구 카드 소비 분포(모든 업종)·의료웰니스업 비중, 국적별 간편결제(제로페이) 의료웰니스업 금액·서울 비중.
+     국적은 데이터랩 표기 그대로(해외 발급 카드 기준일 가능성이 높다). 간편결제는 제로페이로 잡히는 일부뿐이고
+     전체 간편결제 1% 이상 국가(중국·대만·홍콩 등)만 나온다.
   4) 동 × 진료과목 점포 수 (export 때, 심평원 전국 병의원 및 약국 현황 분기 파일 — data.go.kr, 키 없음) — 좌표로 행정동을 정한다.
 
 월 단위 조회는 한 번에 18개월까지라 나눠서 부른다. 결과는 content/foreign_medical/data.json (git 제외).
 
     python -m pipeline.foreign_medical fetch [--start 202401] [--end 202610]
     python -m pipeline.foreign_medical show
+    python -m pipeline.foreign_medical fetch-nat [--start 202401]   # 국적별 (export 가 nat_*.csv 로 낸다)
     python -m pipeline.foreign_medical export [--refresh-stores]   # reports/foreign_medical/ 에 CSV·지도 경계·동별 점포 수 (shapely 필요)
 """
 
@@ -32,6 +37,8 @@ log = get_logger("foreign_medical")
 BASE = "https://datalab.visitkorea.or.kr"
 MED_PAGE = BASE + "/datalab/portal/theme/getMedicalTourSearch.do"
 AREA_PAGE = BASE + "/datalab/portal/loc/getAreaDataForm.do"
+NAT_PAGE = BASE + "/datalab/portal/nat/getNatFocTourAna.do"
+NAT_LIST = BASE + "/datalab/portal/theme/selectComNatList.do"
 QUERY = BASE + "/visualize/getTempleteData.do"
 SGG_LIST = BASE + "/portal/getSggCdMappingList.do"
 DATE_RANGE = BASE + "/portal/getSrchDteDivInitVal.do"
@@ -76,7 +83,7 @@ class Client:
     def __init__(self, session: requests.Session | None = None):
         self.s = session or requests.Session()
         self.s.headers["User-Agent"] = "Mozilla/5.0 (data research)"
-        for page in (MED_PAGE, AREA_PAGE):  # 세션 쿠키·Referer 가 있어야 조회가 채워진다
+        for page in (MED_PAGE, AREA_PAGE, NAT_PAGE):  # 세션 쿠키·Referer 가 있어야 조회가 채워진다
             for attempt in range(4):
                 try:
                     self.s.get(page, timeout=60).raise_for_status()
@@ -162,6 +169,137 @@ def cmd_fetch(args) -> int:
     log.info("저장: %s (%s ~ %s, 시군구 %d, 동 상위 %d행)", data_file(), data["start"], data["end"],
              len(data["sgg"]), len(data["top_dongs"]))
     return 0
+
+
+# ---- 국적별 (2026-11-20) ----
+
+def year_ranges(start: str, end: str) -> dict[str, tuple[str, str]]:
+    out = {}
+    for ym in months(start, end):
+        y = ym[:4]
+        out[y] = (out.get(y, (ym, ym))[0], ym)
+    return out
+
+
+def fetch_nationality(start: str, end: str | None = None, client: Client | None = None) -> dict:
+    c = client or Client()
+    end = end or c.latest_month()
+    nats = [(r["natCd"], r["natNm"]) for r in c.post(NAT_LIST, {}, MED_PAGE)]
+    if not nats:
+        raise FetchError("데이터랩 국가 목록이 비어 있음")
+    dept_rows = []
+    for cd, nm in nats:
+        for ym1, ym2 in chunks(start, end):
+            for typ in ("AMT", "CNT"):
+                for r in c.post(QUERY, {"qid": f"BY_TH_MEDIC_003_001_{typ}", "SGG_CD": "", "NAT_CD": cd, "BASE_YM1": ym1,
+                                        "BASE_YM2": ym2, "srchAreaDate": "1", "tabDiv": "3", "KTO_CATE_SCLS_CD": "ALL"}, MED_PAGE):
+                    dept_rows.append({"ym": r["BASE_YM"], "nat": r["CUST_NAT_NM"], "dept": r["KTO_CATE_SCLS_NM"], "typ": typ,
+                                      "v": r.get(f"CARD_COMPT_{typ}_SUM") or 0})
+        log.info("국적 %s: 진료과목 월 자료 누적 %d행", nm, len(dept_rows))
+    region, pay = {}, {}
+    for cd, nm in nats:
+        if cd == "999":  # 기타 — 지역·간편결제 화면에 없다
+            continue
+        for y, (a, b) in year_ranges(start, end).items():
+            base = {"natCd": cd, "natNm": nm, "tarCd": cd, "BASE_YM1": a, "BASE_YM2": b, "srchAreaDate": "1",
+                    "srchTypeText": "", "srchKwrdText": ""}
+            sgg = c.post(QUERY, {**base, "qid": "NAT_11_02_002", "tabDiv": "2"}, NAT_PAGE)
+            ind = c.post(QUERY, {**base, "qid": "NAT_11_02_003", "tabDiv": "2"}, NAT_PAGE)
+            med = [x["TOU_NUM"] for x in ind if x.get("DPTR_REGN_NM") == MEDICAL_BIZ]
+            region.setdefault(nm, {})[y] = {
+                "sgg": {x["SGG_CD"]: x["DTL_TOU_NUM"] for x in sgg if x.get("SGG_CD")},
+                "medical_pct": sum(med) / len(med) if med else None}  # 월별 비중의 평균
+            typ = c.post(QUERY, {**base, "qid": "NAT_12_01_002", "tabDiv": "3"}, NAT_PAGE)
+            reg = c.post(QUERY, {**base, "qid": "NAT_12_01_003", "tabDiv": "3"}, NAT_PAGE)
+            pay.setdefault(nm, {})[y] = {
+                "medical_won": sum(x["TOU_NUM"] for x in typ if x.get("DPTR_REGN_NM") == MEDICAL_BIZ) * 1000,  # 천원
+                "sido_pct": {x["DPTR_REGN_NM"]: x["TOU_NUM_RATE"] for x in reg}}
+        log.info("국적 %s: 지역·간편결제 연도 자료", nm)
+    return {"fetched_at": now_iso(), "start": start, "end": end, "dept": dept_rows, "region": region, "simplepay": pay}
+
+
+def nat_file():
+    return content_dir() / "foreign_medical" / "nationality.json"
+
+
+def cmd_fetch_nat(args) -> int:
+    data = fetch_nationality(args.start, args.end)
+    save_json(nat_file(), data)
+    log.info("저장: %s (%s ~ %s, 국적 %d)", nat_file(), data["start"], data["end"], len(data["region"]))
+    return 0
+
+
+def nat_yearly_rows(n: dict) -> list[dict]:
+    """국적 × 연도: 카드 결제(병의원·의료 전체)·건수·건당, 간편결제 보정 계수와 보정 추정."""
+    amt: dict[tuple, float] = {}
+    cnt: dict[tuple, float] = {}
+    for r in n["dept"]:
+        y = r["ym"][:4]
+        keys = [(y, r["nat"], r["dept"]), (y, r["nat"], "의료 전체")]
+        if r["dept"] in CLINIC_DEPTS:
+            keys.append((y, r["nat"], "병의원"))
+        for k in keys:
+            (amt if r["typ"] == "AMT" else cnt)[k] = (amt if r["typ"] == "AMT" else cnt).get(k, 0) + (r["v"] or 0)
+    years = sorted({k[0] for k in amt})
+    nats = sorted({k[1] for k in amt})
+    last = max(r["ym"] for r in n["dept"])
+    rows = []
+    for y in years:
+        tot_card = sum(amt.get((y, x, "병의원"), 0) for x in nats)
+        est = {}
+        for x in nats:
+            card_all = amt.get((y, x, "의료 전체"), 0)
+            pay = n["simplepay"].get(x, {}).get(y, {}).get("medical_won", 0)
+            uplift = pay / card_all if card_all else 0
+            est[x] = (uplift, amt.get((y, x, "병의원"), 0) * (1 + uplift))
+        tot_est = sum(v[1] for v in est.values())
+        for x in nats:
+            clinic = amt.get((y, x, "병의원"), 0)
+            if not clinic:
+                continue
+            tick = lambda d: round(amt.get((y, x, d), 0) / cnt[(y, x, d)] / 1e4, 1) if cnt.get((y, x, d)) else None
+            rows.append({"year": int(y), "months": f"1-{int(last[4:])}" if y == last[:4] else "1-12", "nat": x,
+                         "card_clinic_eok": round(clinic / 1e8, 2), "card_share": round(clinic / tot_card, 4),
+                         "simplepay_uplift": round(est[x][0], 4), "est_clinic_eok": round(est[x][1] / 1e8, 2),
+                         "est_share": round(est[x][1] / tot_est, 4), "card_cnt": round(cnt.get((y, x, "병의원"), 0)),
+                         "ticket_clinic_manwon": tick("병의원"), "ticket_derm_manwon": tick("피부과"),
+                         "ticket_plastic_manwon": tick("성형외과"),
+                         "derm_eok": round(amt.get((y, x, "피부과"), 0) / 1e8, 2),
+                         "plastic_eok": round(amt.get((y, x, "성형외과"), 0) / 1e8, 2)})
+    return rows
+
+
+def nat_region_rows(n: dict, yearly: list[dict], region_med: dict[tuple[str, str], float],
+                    names: dict[str, str]) -> list[dict]:
+    """지도 지역 × 국적 추정: (국적의 그 지역 카드 소비 × 국적의 의료웰니스 비중 × 간편결제 보정)을 지역 안에서 나눈 비율.
+    국적마다 의료 지출 비율이 지역과 상관없이 같다고 가정한다. 금액 = 그 지역 의료웰니스업 결제 × 비율."""
+    uplift = {(str(r["year"]), r["nat"]): r["simplepay_uplift"] for r in yearly}
+    out = []
+    for y in sorted({y for d in n["region"].values() for y in d}):
+        seed: dict[str, dict[str, float]] = {}
+        for nat, by_year in n["region"].items():
+            d = by_year.get(y)
+            if not d or not d["medical_pct"]:
+                continue
+            for code, v in d["sgg"].items():
+                if code[:2] not in SIDOS:
+                    continue
+                reg = region_of(code)
+                if reg not in names:
+                    continue
+                w = v * d["medical_pct"] / 100 * (1 + uplift.get((y, nat), 0))
+                seed.setdefault(reg, {})[nat] = seed.setdefault(reg, {}).get(nat, 0) + w
+        for reg, by_nat in seed.items():
+            tot = sum(by_nat.values())
+            if not tot:
+                continue
+            for nat, w in by_nat.items():
+                share = w / tot
+                if share < 0.001:
+                    continue
+                out.append({"year": int(y), "region": reg, "region_nm": names[reg], "nat": nat, "est_share": round(share, 4),
+                            "est_medical_eok": round(region_med.get((y, reg), 0) * share, 2)})
+    return out
 
 
 def cmd_show(_args) -> int:
@@ -482,6 +620,17 @@ def cmd_export(args) -> int:
     _write_csv(out / "top_dongs.csv", dongs)
     stores, as_of = dong_store_rows(hira_zip(refresh=args.refresh_stores), registry_rows(refresh=args.refresh_stores))
     _write_csv(out / "dong_stores.csv", stores)
+    if nat_file().exists():
+        n = load_json(nat_file())
+        yearly = nat_yearly_rows(n)
+        region_med: dict[tuple[str, str], float] = {}
+        for r in regions:
+            region_med[(str(r["year"]), r["region"])] = region_med.get((str(r["year"]), r["region"]), 0) + r["medical_eok"]
+        _write_csv(out / "nat_yearly.csv", yearly)
+        _write_csv(out / "nat_regions.csv", nat_region_rows(n, yearly, region_med, names))
+        log.info("국적별: 연도 %d행 (%s ~ %s)", len(yearly), n["start"], n["end"])
+    else:
+        log.warning("국적 자료 없음 — fetch-nat 을 먼저 실행하면 nat_*.csv 도 만든다")
     log.info("동별 점포 수: %d행 (심평원 %s 기준)", len(stores), as_of)
     region_geo, dong_geo = boundaries(names, {r["dong"] for r in dongs})
     missing = {r["dong"] for r in dongs} - {f["properties"]["dong"] for f in dong_geo["features"]}
@@ -501,6 +650,10 @@ def main() -> int:
     f.add_argument("--end", default=None, help="기본: 데이터랩 최신 기준월")
     f.set_defaults(fn=cmd_fetch)
     sub.add_parser("show").set_defaults(fn=cmd_show)
+    fn_ = sub.add_parser("fetch-nat", help="국적별 결제·지역 분포·간편결제 (약 10분)")
+    fn_.add_argument("--start", default="202401")
+    fn_.add_argument("--end", default=None)
+    fn_.set_defaults(fn=cmd_fetch_nat)
     e = sub.add_parser("export", help="대시보드용 CSV·경계·동별 점포 수 → reports/foreign_medical/")
     e.add_argument("--refresh-stores", action="store_true", help="심평원 병의원·유치기관 파일을 다시 받는다")
     e.set_defaults(fn=cmd_export)
