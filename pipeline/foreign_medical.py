@@ -269,6 +269,18 @@ def nat_yearly_rows(n: dict) -> list[dict]:
     return rows
 
 
+def nat_monthly_rows(n: dict, yearly: list[dict]) -> list[dict]:
+    """국적 × 월 병의원 카드 결제액과, 그 해 간편결제 보정 계수를 곱한 추정치 (월별 간편결제는 업종 비율만 있어 연간 계수를 쓴다)."""
+    uplift = {(str(r["year"]), r["nat"]): r["simplepay_uplift"] for r in yearly}
+    amt: dict[tuple[str, str], float] = {}
+    for r in n["dept"]:
+        if r["typ"] == "AMT" and r["dept"] in CLINIC_DEPTS:
+            amt[(r["ym"], r["nat"])] = amt.get((r["ym"], r["nat"]), 0) + (r["v"] or 0)
+    return [{"ym": ym, "year": int(ym[:4]), "month": int(ym[4:]), "nat": nat, "card_clinic_eok": round(v / 1e8, 2),
+             "est_clinic_eok": round(v * (1 + uplift.get((ym[:4], nat), 0)) / 1e8, 2)}
+            for (ym, nat), v in sorted(amt.items())]
+
+
 def nat_region_rows(n: dict, yearly: list[dict], region_med: dict[tuple[str, str], float],
                     names: dict[str, str]) -> list[dict]:
     """지도 지역 × 국적 추정: (국적의 그 지역 카드 소비 × 국적의 의료웰니스 비중 × 간편결제 보정)을 지역 안에서 나눈 비율.
@@ -627,6 +639,7 @@ def cmd_export(args) -> int:
         for r in regions:
             region_med[(str(r["year"]), r["region"])] = region_med.get((str(r["year"]), r["region"]), 0) + r["medical_eok"]
         _write_csv(out / "nat_yearly.csv", yearly)
+        _write_csv(out / "nat_monthly.csv", nat_monthly_rows(n, yearly))
         _write_csv(out / "nat_regions.csv", nat_region_rows(n, yearly, region_med, names))
         log.info("국적별: 연도 %d행 (%s ~ %s)", len(yearly), n["start"], n["end"])
     else:
