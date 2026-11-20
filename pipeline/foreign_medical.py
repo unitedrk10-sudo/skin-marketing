@@ -299,7 +299,7 @@ def _write_csv(path, rows: list[dict]) -> None:
 #   피부과·성형외과·안과: 의원·병원 중 그 진료과목을 신고했거나 이름에 그 과 이름이 있는 곳 (겹치면 양쪽에 센다).
 #     심평원 진료과목은 전문의가 없어도 신고할 수 있어 간판 기준보다 넓다 (서초4동 피부과: 신고 152곳, 이름·전문의 13곳).
 #   치과: 치과의원·치과병원 / 한의학과: 한의원·한방병원 / 대학/종합병원: 상급종합·종합병원 / 약국: 약국
-#   한약방: 심평원 자료에 없음 / 전체(약국 포함): 위 종별 전부
+#   한약방: 심평원 자료에 없음 / 전체(약국 포함): 위 종별 전부 / 의원 전체: 종별 "의원" 전부(과목 무관)
 
 HIRA_PAGE = "https://www.data.go.kr/data/15051059/fileData.do"
 HIRA_TOKEN = "https://www.data.go.kr/tcs/dss/selectFileDataDownload.do"
@@ -309,6 +309,7 @@ KIND_DEPTS = {"치과의원": "치과", "치과병원": "치과", "한의원": "
               "상급종합": "대학/종합병원", "종합병원": "대학/종합병원", "약국": "약국"}
 ALL_KINDS = {"의원", "병원", *KIND_DEPTS}
 ALL_DEPT = "전체(약국 포함)"
+CLINIC_ALL = "의원 전체"  # 종별 "의원" 전부 — 진료과목을 신고하지 않은 미용 의원까지 피부과로 볼 때 (2026-11-20 요청)
 
 
 def hira_zip(refresh: bool = False):
@@ -348,6 +349,8 @@ def store_depts(inst: dict, subjects: set[str]) -> list[str]:
         out += [d for d, (word, code) in NAME_DEPTS.items() if word in name or code in subjects]
     if kind in KIND_DEPTS:
         out.append(KIND_DEPTS[kind])
+    if kind == "의원":
+        out.append(CLINIC_ALL)
     if kind in ALL_KINDS:
         out.append(ALL_DEPT)
     return out
