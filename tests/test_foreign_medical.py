@@ -36,3 +36,12 @@ def test_region_rows_sum_children_and_skip_empty_parent():
 def test_clinic_depts_exclude_pharmacy():
     assert "약국" not in fm.CLINIC_DEPTS and "한약방" not in fm.CLINIC_DEPTS
     assert len(fm.CLINIC_DEPTS) == 6
+
+
+def test_store_depts_rules():
+    clinic = {"종별코드명": "의원", "요양기관명": "OO클리닉의원"}
+    assert set(fm.store_depts(clinic, {"14", "08"})) == {"피부과", "성형외과", fm.ALL_DEPT}
+    assert fm.store_depts({"종별코드명": "의원", "요양기관명": "OO피부과의원"}, set()) == ["피부과", fm.ALL_DEPT]
+    assert fm.store_depts({"종별코드명": "치과의원", "요양기관명": "OO치과"}, {"49"}) == ["치과", fm.ALL_DEPT]
+    assert fm.store_depts({"종별코드명": "약국", "요양기관명": "OO약국"}, set()) == ["약국", fm.ALL_DEPT]
+    assert fm.store_depts({"종별코드명": "보건소", "요양기관명": "OO보건소"}, {"14"}) == []
