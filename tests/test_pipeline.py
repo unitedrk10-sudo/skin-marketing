@@ -3932,6 +3932,38 @@ def test_site_markdown_versions_and_ai_robots(site_env, monkeypatch):
     assert "Disallow" not in robots                                         # 막는 크롤러 없음 (2026-11-20)
 
 
+def _link_post(slug, title, md="", kind="procedure", date="2026-11-01", keywords=(), **draft):
+    return {"slug": slug, "date": date, "draft": {"content_type": kind, "topic": {"keywords": list(keywords)},
+                                               "blog": {"title": title, "markdown": md}, **draft}}
+
+
+def test_aftercare_product_link_matches_needs_not_forced(monkeypatch):
+    site_links = importlib.import_module("pipeline.site_links")
+    # 시술·여행 글 끝에 관리 권고가 맞는 화장품 글 1편 (2026-11-20) — 관련도 먼저, 제휴 링크는 동점일 때만
+    laser = _link_post("laser", "Laser toning in Korea", "Use sunscreen daily. SPF 50 and UV care matter. Moisturize.")
+    sun = _link_post("sun", "How to choose a sunscreen at Olive Young", kind="skincare", date="2026-10-01")
+    cream = _link_post("cream", "Olive Young moisturizer picks", kind="skincare", date="2026-11-15")
+    labels = _link_post("labels", "How to read Korean cosmetic labels", kind="skincare", date="2026-11-18")
+    ad = _link_post("ad", "Sunscreen sponsored", kind="skincare", sponsor={"id": "x"})
+    posts = [laser, sun, cream, labels, ad]
+    rel = site_links.related(laser, posts)
+    assert [q["slug"] for q in rel["products"]] == ["sun"]               # 자외선 3번 > 보습 1번, 최신보다 관련도
+    assert sun not in rel["more"]                                         # 같은 글 두 번 안 건다
+    plain = _link_post("plain", "Botox basics", "Ask your doctor.")
+    assert site_links.related(plain, posts + [plain])["products"] == []    # 맞는 게 없으면 안 붙인다
+    assert site_links.related(sun, posts)["products"] == []                # 화장품 글 자신에는 없음
+    sponsored = _link_post("sp", "Laser at a clinic", "sunscreen", sponsor={"id": "x"})
+    assert site_links.related(sponsored, posts + [sponsored])["products"] == []  # 스폰서 글에는 없음
+    # 동점이면 제휴 링크 있는 글 먼저 (날짜보다)
+    monkeypatch.setattr(site_links, "has_affiliate", lambda q: q["slug"] == "sun2")
+    sun2 = _link_post("sun2", "Gentle sunscreen picks", kind="skincare", date="2026-09-01")
+    assert site_links.related(laser, posts + [sun2])["products"][0]["slug"] == "sun2"
+    monkeypatch.setattr("pipeline.site.category_label", lambda d: "Guide")
+    out = site_links.related_html(laser, posts + [sun2])
+    assert "Choosing everyday aftercare products" in out and "· affiliate links" in out
+    assert "recover" not in out.lower() and "heal" not in out.lower()   # 회복 효과를 암시하지 않는다
+
+
 def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
     cc = importlib.import_module("pipeline.citation_check")
     monkeypatch.setattr(cc, "questions", lambda: ["q1", "q2"])

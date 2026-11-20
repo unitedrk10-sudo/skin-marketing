@@ -7,19 +7,27 @@
   - 점수가 같으면 최신 글 먼저.
 광고와 무관 (기획서 12-3): 코스 광고 카드·스폰서 계약 유무는 고르는 기준에 들어가지 않고, 관련 글에 스폰서 글은 넣지 않는다.
 시술별 목록은 게시일 순서만 (스폰서 글은 첫 화면처럼 광고 배지를 달고 같은 순서에).
+사후관리 화장품 글 (2026-11-20): 시술·여행 글 끝에 그 글의 관리 권고(자외선·보습·세안)와 시술이 맞는 화장품 글 1편.
+관련도가 먼저고 제휴 링크 유무는 동점일 때만 본다. 문구는 제품 고르는 법까지 — 회복 효과를 암시하지 않는다.
 """
 
 from __future__ import annotations
 
 import html
 
-from pipeline import analytics
+import re
+
+from pipeline import affiliates, analytics
 from pipeline.common import load_yaml
 
 TRAVEL_AXES = {"procedure_travel", "travel_guide"}
 GENERIC = {"travel", "skincare", "other"}  # 시술이 아닌 분류 — 시술 목록 페이지를 만들지 않는다
 MIN_TREATMENT_POSTS = 2  # 글 1편짜리 목록 페이지는 독자·검색 모두에 얇다
 TRIP_LINKS, MORE_LINKS = 2, 3
+# 글 본문의 관리 권고 → 화장품 글 제목·키워드의 같은 낱말 (영어 소문자 접두어)
+AFTERCARE_NEEDS = {"sun": ("sunscreen", "sun", "spf", "uv"), "moisture": ("moistur", "barrier", "hydrat", "dry"),
+                   "cleanse": ("cleans",)}
+NEED_CAP = 3
 
 
 def procedures() -> dict[str, dict]:
@@ -56,6 +64,41 @@ def score(a: dict, b: dict) -> int:
             + 2 * len(ta["attractions"] & tb["attractions"]) + len(ta["generic"] & tb["generic"]))
 
 
+def is_skincare(post: dict) -> bool:
+    return post["draft"].get("content_type") == "skincare"
+
+
+def has_affiliate(post: dict) -> bool:
+    return affiliates.applies(post["draft"]) and bool(affiliates.products(post["draft"]))
+
+
+def needs(text: str) -> dict[str, int]:
+    """관리 권고 종류별 낱말 수 (낱말 앞부분이 맞으면 센다: moistur → moisturizer)."""
+    text = text.lower()
+    return {n: sum(len(re.findall(rf"\b{w}", text)) for w in words) for n, words in AFTERCARE_NEEDS.items()}
+
+
+def aftercare_product(post: dict, pool: list[dict]) -> list[dict]:
+    """시술·여행 글에 붙일 화장품 글 1편 — 본문에 나온 관리 권고와 화장품 글 주제가 겹치거나 시술이 같을 때만 (억지로 붙이지 않는다)."""
+    if is_skincare(post) or post["draft"].get("sponsor"):
+        return []
+    want = needs(post["draft"]["blog"].get("markdown", ""))
+    mine = tags(post)
+    scored = []
+    for q in pool:
+        if not is_skincare(q):
+            continue
+        meta = " ".join([q["draft"]["blog"].get("title", ""), *((q["draft"].get("topic") or {}).get("keywords") or [])])
+        have, theirs = needs(meta), tags(q)
+        # 권고 낱말은 NEED_CAP 번까지만 — 자외선 얘기가 긴 글에서도 같은 시술을 다룬 화장품 글이 이길 수 있게
+        s = sum(min(want[n], NEED_CAP) for n in have if have[n]) + 3 * len(mine["procedures"] & theirs["procedures"]) \
+            + len(mine["families"] & theirs["families"])
+        if s > 0:
+            scored.append((s, has_affiliate(q), q["date"], q))
+    scored.sort(key=lambda x: x[:3], reverse=True)
+    return [x[3] for x in scored[:1]]
+
+
 def _by_score_then_date(post: dict, pool: list[dict]) -> list[dict]:
     """점수 높은 순, 같으면 최신 순 (점수 0 은 뺀다)."""
     scored = [(score(post, q), q["date"], q) for q in pool]
@@ -65,10 +108,13 @@ def _by_score_then_date(post: dict, pool: list[dict]) -> list[dict]:
 
 
 def related(post: dict, posts: list[dict]) -> dict[str, list[dict]]:
-    """{"trip": 여행 일정 글, "treatments": 이 글의 시술 설명 글, "guides": 시술 설명 글(일반), "more": 그 밖의 관련 글}.
+    """{"trip": 여행 일정 글, "treatments": 이 글의 시술 설명 글, "guides": 시술 설명 글(일반), "products": 사후관리 화장품 글,
+    "more": 그 밖의 관련 글}.
     시술 글: trip = 같은 시술·계열의 여행 글 (없으면 시술과 무관하게 쓰는 일정·비행 글), more = 관련 시술 글 (모자라면 최신 글).
     여행 글: treatments = 이 글에 나오는 시술의 설명 글 (없으면 guides = 최신 시술 설명 글), more = 같은 시술·관광지의 다른 여행 글."""
     pool = [q for q in posts if q is not post and q["slug"] != post["slug"] and not q["draft"].get("sponsor")]
+    products = aftercare_product(post, pool)
+    pool = [q for q in pool if q not in products]  # 같은 글을 두 번 걸지 않는다
     travel = [q for q in pool if is_travel(q)]
     guides = [q for q in pool if not is_travel(q)]
     newest = lambda qs: sorted(qs, key=lambda q: q["date"], reverse=True)
@@ -78,7 +124,8 @@ def related(post: dict, posts: list[dict]) -> dict[str, list[dict]]:
                       if mine & (tags(q)["procedures"] | tags(q)["families"])][:MORE_LINKS]
         more = _by_score_then_date(post, travel)[:TRIP_LINKS]
         explainers = [q for q in newest(guides) if tags(q)["procedures"]]  # 시술을 다루는 글 (일정·화장품 일반 글 제외)
-        return {"trip": [], "treatments": treatments, "guides": [] if treatments else explainers[:2], "more": more}
+        return {"trip": [], "treatments": treatments, "guides": [] if treatments else explainers[:2], "products": products,
+                "more": more}
     trip = _by_score_then_date(post, travel)[:TRIP_LINKS]
     if not trip:  # 이 시술의 여행 글이 아직 없으면 — 어느 시술에나 쓰는 일정 글 (분류 '여행')
         trip = [q for q in newest(pool) if "travel" in tags(q)["generic"]][:TRIP_LINKS]
@@ -86,7 +133,7 @@ def related(post: dict, posts: list[dict]) -> dict[str, list[dict]]:
     more = _by_score_then_date(post, rest)[:MORE_LINKS]
     if len(more) < 2:  # 관련 글이 모자라면 최신 글로 채운다 (제목은 "More guides" 라 관련성을 주장하지 않는다)
         more += [q for q in newest(rest) if q not in more][: 2 - len(more)]
-    return {"trip": trip, "treatments": [], "guides": [], "more": more}
+    return {"trip": trip, "treatments": [], "guides": [], "products": products, "more": more}
 
 
 # ---------------- 시술별 목록 ----------------
@@ -137,10 +184,11 @@ def related_html(post: dict, posts: list[dict], pages: dict[str, list[dict]] | N
 
     def items(qs: list[dict]) -> str:
         return "".join(f'<li><a href="/{q["slug"]}/"><span class="cat">{esc(category_label(q["draft"]))}</span>'
-                       f'{esc(q["draft"]["blog"].get("title", ""))}</a></li>' for q in qs)
+                       f'{esc(q["draft"]["blog"].get("title", ""))}'
+                       + (' <span class="aff">· affiliate links</span>' if has_affiliate(q) else "") + "</a></li>" for q in qs)
 
     groups = [("Plan it around your trip", rel["trip"]), ("The treatments in this guide", rel["treatments"]),
-              ("Treatment guides", rel["guides"]),
+              ("Treatment guides", rel["guides"]), ("Choosing everyday aftercare products", rel["products"]),
               ("More Seoul &amp; recovery guides" if is_travel(post) else "More guides", rel["more"])]
     blocks = "".join(f'<h3>{title}</h3><ul>{items(qs)}</ul>' for title, qs in groups if qs)
     chips = "".join(f'<a class="chip" href="/treatments/{treatment_slug(k)}/">{esc(short_name(k, procs))}</a>'
