@@ -8,6 +8,7 @@
     python -m pipeline.reels check                     # 토큰·계정·해시태그 검색 권한 점검
     python -m pipeline.reels find [주제] [--limit N] [--send]
     python -m pipeline.reels list                      # 마지막 후보 목록
+    python -m pipeline.reels accounts [아이디…]        # 계정별 시술 관련 영상, 조회수순 (Business Discovery)
 
 토큰·계정 ID 는 환경변수로만: INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_USER_ID (값은 로그에 남기지 않는다).
 """
@@ -396,6 +397,104 @@ def probe_message(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# ── 계정 ───────────────────────────────────────────────────────────────────
+# 해시태그 결과에는 계정 이름·조회수가 없다. 운영자가 앱에서 찾은 계정 이름을 받아 Business Discovery(공식 API,
+# 프로페셔널 계정만)로 최근 영상을 보고, 시술 관련 영상이 많은 계정의 영상을 조회수순으로 낸다 (2026-11-16).
+# 이 경로는 영상 주소(media_url)를 주지 않는다 → 고른 릴스는 화면 녹화(transcribe --file).
+
+ACCOUNT_FIELDS = ("business_discovery.username({u}){{username,name,followers_count,media_count,biography,"
+                  "media.limit({n}){{id,media_type,media_product_type,permalink,like_count,comments_count,view_count,"
+                  "timestamp,caption}}}}")
+USERNAME = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+
+def username_of(text: str) -> str:
+    """'@name', 'name', 프로필 주소 → 계정 아이디. 아이디 모양이 아니면 오류 (API 요청 문자열에 그대로 들어간다)."""
+    t = text.strip()
+    m = re.match(r"https?://(?:www\.)?instagram\.com/([A-Za-z0-9._]+)/?(?:\?.*)?$", t)
+    name = (m.group(1) if m else t).lstrip("@")
+    if not USERNAME.match(name) or name in ("reel", "p", "explore"):
+        raise ReelsError(f"계정 아이디가 아님: {text} (프로필의 영문 아이디 — 릴스 주소·표시 이름으로는 조회할 수 없다)")
+    return name
+
+
+def _related(cfg: dict) -> re.Pattern:
+    """시술 관련 영상인지 보는 단어 = 주제 해시태그 + 받아쓰기 힌트 + accounts.keywords."""
+    words = {h for t in (cfg.get("topics") or {}).values() for h in t.get("hashtags") or []}
+    words |= set((cfg.get("transcribe") or {}).get("hints") or []) | set((cfg.get("accounts") or {}).get("keywords") or [])
+    return re.compile("|".join(sorted(map(re.escape, words), key=len, reverse=True)) or r"(?!)", re.IGNORECASE)
+
+
+def account(username: str, cfg: dict | None = None) -> dict:
+    """계정 하나: 최근 영상 수·협찬 표시·시술 관련 수와, 캡션 검사를 통과한 관련 영상(조회수순)."""
+    cfg = cfg or settings()
+    opt = cfg.get("accounts") or {}
+    d = graph(user_id(), {"fields": ACCOUNT_FIELDS.format(u=username, n=int(opt.get("media_limit", 30)))}).get("business_discovery") or {}
+    ignore = set((cfg.get("transcribe") or {}).get("speech_ignore") or [])  # 소개글의 '협업 문의' 같은 말은 병원 신호가 아니다
+    clinic_rules = {"clinic": [p for p in (cfg.get("exclude") or {}).get("clinic") or [] if p not in ignore]}
+    bio = " ".join(f"{d.get('name') or ''} {d.get('biography') or ''}".split())
+    videos = [m for m in (d.get("media") or {}).get("data") or [] if _is_video(m)]
+    related, now = _related(cfg), datetime.fromisoformat(now_iso())
+    max_age = int(cfg.get("max_age_days", 365))
+    sponsored = [m for m in videos if "sponsored" in exclusion_reasons(m.get("caption", ""), cfg.get("exclude", {}))]
+    on_topic = [m for m in videos if related.search(m.get("caption") or "")]
+    clean = [m for m in on_topic if not exclusion_reasons(m.get("caption", ""), cfg.get("exclude", {})) and not too_old(m, max_age, now)]
+    clean.sort(key=lambda m: -(m.get("view_count") or 0))
+    excerpt = int(cfg.get("caption_excerpt", 160))
+    return {"username": d.get("username") or username, "name": d.get("name") or "", "followers": d.get("followers_count"),
+            "clinic": bool(exclusion_reasons(bio, clinic_rules)), "videos": len(videos), "sponsored": len(sponsored),
+            "related": len(on_topic), "clean": len(clean),
+            "items": [{"id": m["id"], "permalink": m.get("permalink", ""), "view_count": m.get("view_count"),
+                       "like_count": m.get("like_count"), "comments_count": m.get("comments_count"),
+                       "posted": (m.get("timestamp") or "")[:10], "caption": _excerpt(m.get("caption", ""), excerpt),
+                       "warn": exclusion_reasons(m.get("caption", ""), cfg.get("warn", {}))}
+                      for m in clean[:int(opt.get("per_account", 5))]]}
+
+
+def accounts(names: list[str]) -> list[dict]:
+    """계정 이름들을 조회하고 요약을 state 에 남긴다 (캡션은 남기지 않는다). 이름이 없으면 저장해 둔 계정(병원 신호 없는 곳)을 다시."""
+    cfg, state = settings(), load_state()
+    saved = state.setdefault("accounts", {})
+    names = [username_of(n) for n in names] or [u for u, a in saved.items() if not a.get("clinic")]
+    if not names:
+        raise ReelsError("계정 이름이 없습니다 — python -m pipeline.reels accounts <아이디…>")
+    rows = []
+    for name in dict.fromkeys(names):
+        try:
+            row = account(name, cfg)
+        except ReelsError as e:
+            rows.append({"username": name, "error": str(e)})
+            continue
+        saved[row["username"]] = {k: row[k] for k in ("name", "followers", "clinic", "videos", "sponsored", "related", "clean")} | {"at": now_iso()}
+        rows.append(row)
+    save_state(state)
+    return rows
+
+
+def accounts_message(rows: list[dict]) -> str:
+    lines = [f"[계정 후보] {len(rows)}개 계정 — 시술 관련·캡션 검사 통과 영상, 조회수순"]
+    for r in rows:
+        if r.get("error"):
+            lines += ["", f"✗ @{r['username']}: 조회 안 됨 (없는 아이디이거나 프로페셔널 계정이 아님) — "
+                            f"{r['error'].split('→', 1)[-1].strip()[:120]}"]  # 요청 경로(우리 계정 ID)는 내보내지 않는다
+            continue
+        followers = f"{r['followers']:,}" if isinstance(r.get("followers"), int) else "?"
+        lines += ["", f"● @{r['username']} · {r['name']} · 팔로워 {followers}" + (" · ⛔ 소개에 병원·의사 신호" if r["clinic"] else ""),
+                  f"  최근 영상 {r['videos']}개: 협찬 표시 {r['sponsored']} · 시술 관련 {r['related']} · 통과 {r['clean']}"]
+        if r["clinic"]:
+            continue  # 병원·의사 계정은 고르지 않는다 — 영상 목록을 내지 않는다
+        for it in r["items"]:
+            views = f"▶ {it['view_count']:,}" if isinstance(it.get("view_count"), int) else "▶ ?"
+            likes = f"❤ {it['like_count']:,}" if isinstance(it.get("like_count"), int) else "❤ 숨김"
+            warn = "".join(f" · ⚠️ {REASON_LABEL.get(w, w)}" for w in it.get("warn") or [])
+            lines += [f"  - {views} · {likes} · 💬 {it.get('comments_count') or 0:,} · {it['posted']}{warn}", f"    {it['permalink']}"]
+            if it.get("caption"):
+                lines.append(f"    {it['caption']}")
+    lines += ["", "앱에서 확인: 리믹스 허용 · 협찬·병원 신호 · 시술 장면(주사)·전후 비교 · 원작자 외 얼굴",
+              "고르면 화면 녹화 후: python -m pipeline.reels transcribe --file 녹화.mp4 --permalink <주소> --about <시술>"]
+    return "\n".join(lines)
+
+
 def traffic(days: int = 7, views: int | None = None, today=None, stats_fn=None, requests_fn=None) -> str:
     """릴스 성과 1순위 지표 = 인스타그램에서 홈페이지에 도착한 수 (2026-11-10 운영자 결정).
     프로필 링크(추적 링크, landing.link_label) 누름을 추적기에서 세고, /ig/ 페이지 요청(서버 기록, 봇 일부 포함 상한)을 같이 본다.
@@ -446,6 +545,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list")
     p = sub.add_parser("tags", help="해시태그별 영상 수 점검 (후보로 기록하지 않음)")
     p.add_argument("tags", nargs="+")
+    p = sub.add_parser("accounts", help="계정 아이디 → 시술 관련 영상 조회수순 (이름 없으면 저장한 계정 다시)")
+    p.add_argument("names", nargs="*")
     p = sub.add_parser("transcribe", help="고른 영상 받아쓰기·번역·자막·캡션 (pipeline/reels_work.py)")
     p.add_argument("ref", nargs="?", help="list 의 후보 번호 또는 media id")
     p.add_argument("--file", help="운영자 화면 녹화 파일 (media_url 이 없을 때)")
@@ -466,6 +567,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "tags":
             print(probe_message(probe(args.tags)))
+        elif args.cmd == "accounts":
+            print(accounts_message(accounts(args.names)))
         elif args.cmd == "traffic":
             print(traffic(args.days, args.views))
         elif args.cmd == "transcribe":

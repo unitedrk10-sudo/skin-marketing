@@ -31,6 +31,13 @@ topics:
     title: Skin boosters & lifting
     posts: [juvelook-pdlla-collagen-booster-explained, skin-booster-price-korea-vs-us-southeast-asia, thermage-korea-monopolar-rf-vs-hifu]
 
+# 계정 단위 후보 (2026-11-16, `reels accounts <아이디…>`): 운영자가 앱에서 찾은 계정을 Business Discovery 로 조회 —
+# 조회수는 이 경로에서만 온다 (해시태그 결과에는 계정 이름·조회수가 없다). 영상 주소는 안 와서 고른 릴스는 화면 녹화.
+accounts:
+  media_limit: 30        # 계정마다 볼 최근 게시물 수
+  per_account: 5         # 계정마다 보여 줄 영상 수 (조회수순)
+  keywords: [올타이트, 티타늄, 덴서티, 스킨바이브, 힐로웨이브, 인모드, 토닝, 리프팅, 레이저, 관리, 부스터]   # 주제 해시태그·받아쓰기 힌트에 더할 '시술 관련' 단어
+
 # 인스타그램 프로필 링크 도착 페이지 /ig/ (2026-11-10 운영자 결정, pipeline/ig_page.py) — 릴스 → 홈페이지 연결.
 # 주제별 posts 칸 + 여행 칸. 스폰서 글·코스 광고 카드가 붙은 글은 코드가 뺀다. 검색 제외(noindex)·sitemap 제외.
 # 프로필 링크는 이 페이지의 추적 링크로: python -m pipeline.tracker add --target https://skinboundkorea.com/ig/ --label "Instagram profile"
