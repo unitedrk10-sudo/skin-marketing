@@ -13,10 +13,15 @@ Channel formats:
 Audience demand by procedure and by place (higher = more interest from our English-speaking audience, based on our own page views and clinic-search clicks plus prior research). Weight your picks toward high-demand procedures, but keep the content-axis variety and include at most 2 topics about the same procedure or place. High-demand places are useful for procedure_travel topics:
 {{demand}}
 
+Evidence follow-ups: we already published these claims based on a SINGLE study (stated as "one study"). When one of them is a good fit, propose at most 1 topic (axis "procedure") that looks for other studies on the same question and presents both sides — what supports the claim and what limits or contradicts it — e.g. "What other studies say about Rejuran sessions: support and limits". Put the item's id in "followup_of". Do not invent studies; the draft step will search for real ones.
+{{followups}}
+
 Do NOT repeat or closely overlap these recent topics:
 {{recent_titles}}
 
 {{rules}}
+
+The weekly skincare topic is an Olive Young pick list for one concrete need after a skin treatment or on a trip (for example gentle sunscreen, simple moisturizer, mild cleanser): state the selection criteria, then give several products as examples. No ranking and no "best" claim.
 
 Each topic must be answerable purely with public, sourceable information and must not require naming any clinic or doctor.
 
@@ -36,6 +41,7 @@ Return ONLY a JSON object, no prose, in this exact shape:
       "keywords": ["3-6 search keywords"],
       "hook": "a question-style hook for the first 3 seconds",
       "has_price": true or false,
+      "followup_of": "id from the evidence follow-ups list, only for a follow-up topic (otherwise omit)",
       "sources": [{"url": "https://...", "title": "..."}]
     }
   ]

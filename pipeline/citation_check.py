@@ -32,13 +32,28 @@ def _host(url: str) -> str:
     return urllib.parse.urlparse(url).netloc.lower().removeprefix("www.")
 
 
+ASK = "Search the web first, then answer from what you find and cite your sources.\n\nQuestion: {q}"
+TRIES = 2
+
+
+def _ask(q: str):
+    """검색 연동은 모델이 쓸지 정한다 — 출처 없이 답하면 한 번 더 (2026-11-02: 20개 중 16개가 출처 없이 왔다)."""
+    res = llm.generate("citation_check", ASK.format(q=q))
+    for _ in range(TRIES - 1):
+        if res.grounding_urls:
+            break
+        res = llm.generate("citation_check", ASK.format(q=q))
+    return res
+
+
 def check(limit: int | None = None) -> dict:
-    """{date, total, cited, results: [{q, cited, sources}]} — 저장까지."""
+    """{date, total, measured, cited, results: [{q, measured, cited, sources}]} — 저장까지.
+    출처가 없으면 인용 여부를 알 수 없으므로 '측정 실패' 로 따로 센다."""
     site = domain()
     results = []
     for q in questions()[:limit]:
         try:
-            res = llm.generate("citation_check", q)
+            res = _ask(q)
         except llm.LLMError as e:
             log.warning("인용 점검 실패: %s — %s", q, e)
             continue
@@ -46,9 +61,9 @@ def check(limit: int | None = None) -> dict:
                  for u in res.grounding_urls]  # 검색 연동 리디렉션 주소는 title 에 실제 도메인이 온다
         hosts = [h for h in hosts if h]
         cited = bool(site) and (any(site in h for h in hosts) or site in res.text.lower())
-        results.append({"q": q, "cited": cited, "sources": list(dict.fromkeys(hosts))[:8]})
-    out = {"date": date.today().isoformat(), "total": len(results), "cited": sum(r["cited"] for r in results),
-           "results": results}
+        results.append({"q": q, "measured": bool(hosts) or cited, "cited": cited, "sources": list(dict.fromkeys(hosts))[:8]})
+    out = {"date": date.today().isoformat(), "total": len(results), "measured": sum(r["measured"] for r in results),
+           "cited": sum(r["cited"] for r in results), "results": results}
     save_json(content_dir() / "reports" / "citations" / f"{out['date']}.json", out)
     return out
 
@@ -56,15 +71,18 @@ def check(limit: int | None = None) -> dict:
 def previous() -> dict | None:
     folder = content_dir() / "reports" / "citations"
     files = sorted(folder.glob("*.json")) if folder.exists() else []
-    return load_json(files[-2]) if len(files) >= 2 else None
+    # 측정 실패를 구분하기 전(2026-11-02 이전) 결과는 비교하지 않는다
+    return next((d for d in map(load_json, reversed(files[:-1])) if "measured" in d), None)
 
 
 def report_lines(result: dict) -> list[str]:
     if not result["total"]:
         return ["🔎 AI 인용 점검: 질문을 돌리지 못함"]
     prev = previous()
-    trend = f" (지난번 {prev['cited']}/{prev['total']})" if prev else ""
-    lines = [f"🔎 AI 인용 점검 (Gemini 검색, 질문 {result['total']}개): 우리 사이트 인용 {result['cited']}/{result['total']}{trend}"]
+    trend = f" (지난번 {prev['cited']}/{prev['measured']})" if prev else ""
+    failed = result["total"] - result["measured"]
+    lines = [f"🔎 AI 인용 점검 (Gemini 검색, 질문 {result['total']}개): 우리 사이트 인용 {result['cited']}/{result['measured']}{trend}"
+             + (f" · 측정 실패 {failed}" if failed else "")]
     top = {}
     for r in result["results"]:
         for h in r["sources"]:
@@ -82,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     res = check(args.limit)
     print("\n".join(report_lines(res)))
     for r in res["results"]:
-        print(f"{'✅' if r['cited'] else '·'} {r['q']}  ← {', '.join(r['sources'][:4])}")
+        print(f"{'✅' if r['cited'] else '·' if r['measured'] else '?'} {r['q']}  ← {', '.join(r['sources'][:4])}")
     return 0
 
 

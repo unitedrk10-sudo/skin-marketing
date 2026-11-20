@@ -13,6 +13,11 @@
 # 역할 (2026-10-06 변경): Gemini 는 찾기·검수, Claude 는 읽고 쓰기.
 #   Gemini 가 쓰기까지 하면 출처 페이지에 없는 내용을 사실로 적는 문제가 반복돼 작성을 Claude 로 옮겼다.
 
+# claude_cli 단계에서 model 을 따로 적지 않으면 이 모델로 실행한다 (claude -p --model).
+# 2026-11-18: Claude Code 기본 모델이 사용량 크레딧이 필요한 모델(Fable 5.2)로 바뀌어 07:14 부터 claude -p 가 전부 실패했다
+#   ("requires usage credits") → 구독 안에서 되는 모델로 고정. 바꿀 때는 python -m pipeline.llm check 로 확인.
+claude_cli_model: opus
+
 stages:
   topics:          # 01 주간 주제 조사
     provider: gemini
@@ -31,7 +36,7 @@ stages:
 
   write:           # 02 작성 — 받아 둔 페이지 본문만 보고 사실·대본·블로그 (도구 없음)
     provider: claude_cli
-    # model: sonnet          # 생략하면 Claude Code 기본 모델
+    # model: sonnet          # 생략하면 위 claude_cli_model
     tools: []
     timeout_sec: 1500
 
@@ -57,15 +62,132 @@ stages:
     timeout_sec: 60  # 한 줄은 보통 5~10초 — 실제 운영에서 응답 없이 멈춘 호출이 있어 짧게 끊고 재시도
 
   # 검수 단계는 작성 모델(Claude)과 다른 회사 모델이 맡는다.
+  reddit_find:     # Reddit 답변 후보 찾기 (pipeline/reddit.py) — 찾기는 Gemini
+    provider: gemini
+    model: gemini-3.8-flash
+    search: true
+    thinking: low
+
+  dataset_regions: # 지역 영문명 채우기 (pipeline/dataset.py, 새 지역이 생겼을 때만)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  data_note_write: # 공공 데이터 글 설명 (숫자는 코드가 계산, pipeline/data_notes.py)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  data_note_review: # 공공 데이터 글 검수 (쓴 회사와 다른 모델) + 한국어 번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
+  reddit_rules:    # 처음 보는 커뮤니티의 규칙 찾기 (검색 근거가 있을 때만 사용)
+    provider: gemini
+    model: gemini-3.8-flash
+    search: true
+    thinking: low
+
+  reddit_rules_extract:  # 규칙 검색 보고를 JSON 으로 (검색 안 함)
+    provider: gemini
+    model: gemini-3.8-flash
+    thinking: low
+
+  reddit_answer:   # Reddit 답변 초안 — 게시된 글의 사실 목록만, 쓰기는 Claude
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  reddit_direct:   # 운영자 방향 → 커뮤니티 말투 영어 댓글 (시술 추천은 거절)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  reddit_brief:    # 질문 정리·우리 글 근거·작성 권고 — 운영자에게만 보내는 한국어 브리핑 (게시 안 함, 2026-11-03)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  reddit_facts:    # 직접 작성용 사실 고르기 (AI 글 금지 커뮤니티) — 고르기만, 사실 문장은 코드가 목록에서 원문 그대로
+    provider: claude_cli
+    tools: []
+    timeout_sec: 300
+
+  reddit_light_check:  # 운영자가 직접 쓴 Reddit 글 가벼운 검사 (2026-11-02) — 일반 의학 지식으로 틀린 의료 내용·법적 문제 문장만 골라 빼게 함, 관련 글 고르기·번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
+  reddit_research: # Reddit 질문 조사 — 읽을 출처 페이지 후보만 고른다 (찾기는 Gemini, 2026-11-05)
+    provider: gemini
+    model: gemini-3.8-flash
+    search: true
+
+  reddit_research_read:  # 받아 둔 출처 페이지에서 질문에 맞는 사실·원문 인용 뽑기 (읽기는 Claude, 코드가 인용 대조)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 600
+
+  reddit_review:   # Reddit 답변 검수 (쓴 회사와 다른 모델) — 사실 대조·과장·광고·한국어 번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
   pick_opener:     # SNS 첫 줄 고르기 (2026-10-20, pipeline/social.pick_openers) — Claude 가 쓴 후보 5개 중 하나, 쓴 회사와 다른 모델
     provider: gemini
     model: gemini-3.8-flash
+    thinking: low
+
+  shorts_review:   # 숏폼 대본 검수 (쓴 회사와 다른 모델) — 사실 대조·과장·위험 안내 줄 + 한국어 번역
+    provider: gemini
+    model: gemini-3.1-pro-preview
+    thinking: low
+
+  reels_screen:    # 리믹스 번역 릴스 — 프레임을 보고 화면 글자·장면 신호(주사·전후·병원) 읽기 (pipeline/reels_work.py)
+    provider: claude_cli
+    tools: [Read]
+    timeout_sec: 600
+
+  reels_translate: # 리믹스 번역 릴스 — 받아쓰기·화면 글자 → 원문 그대로의 영어 자막 (쓰기 = Claude)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 600
+
+  reels_review:    # 리믹스 번역 릴스 — 원문 대조·원문 과장 검수 (쓴 회사와 다른 모델)
+    provider: gemini
+    model: gemini-3.1-pro-preview
     thinking: low
 
   translate:       # 03 검수용 한국어 번역 (텔레그램 검수 메시지·첨부 — 게시되지 않는 참고용, pipeline/translate.py)
     provider: gemini
     model: gemini-3.8-flash
     thinking: low
+
+  shorts_write:    # 숏폼 대본 — 블로그 글을 한 영상 = 한 질문으로 (pipeline/shorts.py, 사실 목록만)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 900
+
+  figure_plan:     # 블로그 설명 그림 — 승인된 본문에서 그림이 필요한 섹션·도식 (pipeline/figures.py)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 600
+
+  telegram_chat:   # 텔레그램의 자유로운 말 해석·원인 찾기 (pipeline/telegram_router.py). 도구 없음 — 코드가 지운 기록을 프롬프트로 받는다, 명령은 제안만
+    provider: claude_cli
+    tools: []  # Read 는 차단 규칙을 줘도 .env 까지 읽혔다 (2026-11-01 시험). 도구를 주지 않는다
+    timeout_sec: 300
+
+  figure_check:    # 완성된 블로그 그림을 눈으로 검사 (글자 겹침·그림과 설명 불일치·사실 목록 대조). 그림은 Claude 로만 (사람 결정 2026-11-01), 최종은 사람 승인
+    provider: claude_cli
+    tools: [Read]
+    timeout_sec: 300
+
+  explainer_plan:  # 숏폼 실험 E·BE — 대본 줄마다 설명 도식 종류·글자 (pipeline/explainer.py, 글자는 사실 목록만 → 코드 검사)
+    provider: claude_cli
+    tools: []
+    timeout_sec: 600
 
   scene_prompts:   # 숏폼 화면 소스 실험 B·C — 검증된 대본으로 AI 영상 장면 프롬프트 (pipeline/experiment.py)
     provider: claude_cli

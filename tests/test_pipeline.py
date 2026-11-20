@@ -16,6 +16,7 @@ from pipeline import common, llm, web
 
 topics_mod = importlib.import_module("pipeline.01_topics")
 draft_mod = importlib.import_module("pipeline.02_draft")
+REAL_HERMES_SEND = importlib.import_module("pipeline.worker").hermes_send  # 자동 픽스처가 바꾸기 전 (보낼 방 전달 시험용)
 review_mod = importlib.import_module("pipeline.02b_auto_review")
 human_mod = importlib.import_module("pipeline.03_review")
 
@@ -91,7 +92,7 @@ def ok_fetch(url):
 @pytest.fixture(autouse=True)
 def no_real_telegram(monkeypatch):
     """테스트가 실제 hermes send 로 텔레그램에 보내지 않게 한다 (기본: 보내기 실패 → 한 메시지 + 첨부 방식)."""
-    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: False)
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text, target=None: False)
 
 
 @pytest.fixture
@@ -108,6 +109,8 @@ def env(tmp_path, monkeypatch):
         monkeypatch.delenv(k, raising=False)  # 셸에 .env 를 불러 둔 상태로 테스트해도 실제 API 를 부르지 않게
     monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "threads_token.json"))
     monkeypatch.setattr(importlib.import_module("pipeline.site"), "publish_schedule", lambda: None)  # 기본: 승인 즉시 게시
+    monkeypatch.setattr(importlib.import_module("pipeline.affiliates"), "product_status",
+                        lambda pid: {"status": "ok"})  # 올리브영 제품 확인도 네트워크 없이 (기본: 판매 중)
     for name in ("pipeline.02b_auto_review", "pipeline.03_review", "pipeline.translate"):  # 기본: 숏폼 켠 상태로 시험
         monkeypatch.setattr(importlib.import_module(name), "shortform_on", lambda: True)
     monkeypatch.setattr(importlib.import_module("pipeline.experiment"), "config",
@@ -142,6 +145,15 @@ def test_render_rejects_missing_variables():
         common.render("{{a}} {{b}}", a="x")
 
 
+def test_render_leaves_braces_inside_values_alone():
+    # 출처 페이지 본문에 템플릿 자리표시자가 있어도 누락으로 보지 않고, 다른 변수로 치환하지도 않는다 (2026-11-05)
+    page = "Ships to {{dlvyCntryName}}. {{rules}}"
+    out = common.render("{{rules}}\nPAGE: {{page}}", rules="R", page=page)
+    assert out == "R\nPAGE: Ships to {{dlvyCntryName}}. {{rules}}"
+    out = common.render("{{n}}", n={"a": 1})
+    assert out == '{"a": 1}'
+
+
 def test_parse_json_handles_fences_and_prose():
     assert common.parse_json('Here:\n```json\n{"a": 1}\n```') == {"a": 1}
     assert common.parse_json('sure {"a": [1, 2]} done') == {"a": [1, 2]}
@@ -150,6 +162,9 @@ def test_parse_json_handles_fences_and_prose():
 def test_llm_stage_models_come_from_config():
     assert llm.stage_config("sources")["provider"] == "gemini" and llm.stage_config("sources")["search"]
     assert llm.stage_config("write")["provider"] == llm.CLAUDE_CLI and llm.stage_config("write")["tools"] == []
+    # claude_cli 단계는 모두 모델이 정해져 있다 — Claude Code 기본 모델이 바뀌어도 운영이 멈추지 않게 (2026-11-18)
+    cli = [s for s, c in common.load_yaml("models.yaml")["stages"].items() if c.get("provider") == llm.CLAUDE_CLI]
+    assert cli and all(llm.stage_config(s)["model"] for s in cli)
     assert set(llm.stage_config("write_search")["tools"]) == {"WebSearch", "WebFetch"}
     assert not llm.is_external("cross_review") and not llm.is_external("source_check")
 
@@ -164,8 +179,8 @@ def test_gemini_stages_use_no_deprecated_parameters():
 def test_writing_and_review_use_different_vendors():
     """기획서 6-0: 같은 회사 모델이 쓰고 검수하지 않는다 (작성 Claude ↔ 검수 Gemini)."""
     vendor = {"claude_cli": "anthropic", "claude_code": "anthropic", "anthropic": "anthropic", "gemini": "google"}
-    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search")}
-    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener")}
+    writers = {vendor[llm.stage_config(s)["provider"]] for s in ("write", "write_search", "shorts_write", "reddit_answer", "reddit_direct", "data_note_write", "reels_translate")}
+    reviewers = {vendor[llm.stage_config(s)["provider"]] for s in ("source_check", "cross_review", "pick_opener", "shorts_review", "reddit_review", "data_note_review", "reels_review")}
     assert writers.isdisjoint(reviewers)
 
 
@@ -397,7 +412,11 @@ def test_clean_draft_has_no_rule_findings():
     ("See before and after photos.", "금지 표현"),
     ("Real patients' results, before and after.", "금지 표현"),
     ("The result is guaranteed, not a guess.", "금지 표현"),  # 부정어가 뒤에 있으면 그대로 차단
-    ("No other way: it is the best option.", "금지 표현"),     # 최상급은 부정문 예외 없음
+    ("No other way: it is the best laser option.", "금지 표현"),  # 최상급은 부정문 예외 없음
+    ("Gangnam has the #1 Rejuran provider.", "금지 표현"),        # 시술 순위
+    ("Which clinic is the safest?", "금지 표현"),                 # 병원 순위 (대상이 앞에)
+    ("Our dermatologists explain each step.", "자격"),            # 우리 자격을 내세움
+    ("This guide was medically reviewed.", "자격"),
     ("Visit Seoul Glow Dermatology today.", "병원명"),
 ])
 def test_rule_violations_block(voice, expected):
@@ -417,6 +436,11 @@ def test_rule_violations_block(voice, expected):
     "The fall foliage is at its best in late October.",  # 관용 표현
     "That part is best confirmed directly with your treating clinic.",  # 권고 (best + 과거분사)
     "None of this is a guarantee of a pain-free session.",  # none 부정문
+    # 시술·병원 순위가 아닌 최상급, 제3자 자격 설명은 허용 (2026-11-05 운영자 결정)
+    "Travelers often search for the best korean sunscreen for sensitive skin.",
+    "Olive Young is one of the best places to shop for sunscreen.",
+    "The survey covered 235 Korean board-certified dermatologists.",
+    "Ask whether the doctor is a board-certified dermatologist.",
 ])
 def test_allowed_phrases_pass(voice):
     msgs, _ = rules_for(script={"voice": voice})
@@ -554,7 +578,7 @@ def test_approve_all_holds_caution_without_confirm(env):
     out = human_mod.apply("전체 승인")
     assert (common.content_dir("approved") / first).exists()
     assert (common.content_dir("drafts") / second).exists()
-    assert any("재확인" in line for line in out)
+    assert any("번호로 골라 승인" in line for line in out)
     human_mod.apply("전체 승인", confirm=True)
     assert (common.content_dir("approved") / second).exists()
 
@@ -903,6 +927,8 @@ def test_claude_hold_until_reset_time(worker_env, error, now, until):
                  "modelUsage": {"claude-haiku-4-5": {"outputTokens": 40}, "claude-sonnet-5": {"outputTokens": 5000}}}), 0, "ok"),
     (json.dumps({"is_error": True, "result": "Claude AI usage limit reached|1759712400"}), 1, llm.RateLimited),
     (json.dumps({"is_error": True, "result": "Invalid model name"}), 1, llm.LLMError),
+    (json.dumps({"is_error": True, "result": "Fable 5.2 requires usage credits. Switch to another model, or manage usage credits"}),
+     1, "model"),
     ("not json", 1, llm.LLMError),
 ])
 def test_claude_cli_provider(monkeypatch, stdout, code, expect):
@@ -913,11 +939,17 @@ def test_claude_cli_provider(monkeypatch, stdout, code, expect):
         return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr="")
 
     monkeypatch.setattr(llm.subprocess, "run", fake_run)
-    cfg = {"provider": "claude_cli", "tools": ["WebSearch", "WebFetch"]}
+    cfg = {"provider": "claude_cli", "tools": ["WebSearch", "WebFetch"], "model": "opus"}
+    if expect == "model":  # 한도가 아니라 설정 문제 — 기다리지 않고 바꿀 곳을 알린다
+        with pytest.raises(llm.LLMError, match="claude_cli_model") as e:
+            llm._claude_cli("write", cfg, None, "PROMPT")
+        assert not isinstance(e.value, llm.RateLimited)
+        return
     if expect == "ok":
         r = llm._claude_cli("write", cfg, None, "PROMPT")
         assert r.text == '{"ok": true}' and r.model == "claude-sonnet-5"
         assert seen["input"] == "PROMPT" and "WebSearch,WebFetch" in seen["cmd"]
+        assert seen["cmd"][seen["cmd"].index("--model") + 1] == "opus"
         assert "skin-claude-" in seen["cwd"]  # 저장소 밖에서 실행 (CLAUDE.md 를 읽지 않게)
     else:
         with pytest.raises(expect):
@@ -1040,6 +1072,8 @@ def test_sponsored_approval_requires_current_clinic_confirmation(sponsored):
     draft_mod.revise(draft_id, "tone")  # 내용이 바뀌면 병원 확인 무효
     assert "병원 확인 전" in human_mod.apply("1 승인", confirm=True)[0]
     human_mod.apply("1 병원확인")
+    common.save_json(path / "review.json", {"grade": "block", "findings": []})
+    assert "스폰서 글 자동검수 차단" in human_mod.apply("1 승인")[0] and path.exists()   # 스폰서 ⛔ 만 재확인 (2026-11-05)
     human_mod.apply("1 승인", confirm=True)
     assert (common.content_dir("approved") / draft_id / "sponsor_approval.json").exists()
 
@@ -1164,6 +1198,80 @@ def test_medical_facts_link_inline_travel_facts_use_footnotes():
     assert [s["url"] for s in sources] == ["https://www.aad.org/a", "https://english.visitkorea.or.kr/x"]
 
 
+def test_naver_trends_rank_page_and_post_line(site_env, tmp_path, monkeypatch):
+    nt = importlib.import_module("pipeline.naver_trends")
+    today = date.today()
+    months = nt.month_list(today, 13)
+    true = {"aqua_peel": [400] * 13, "botox": [200] * 13, "rejuran": [50] * 12 + [100], "juvelook": [90] * 12 + [80]}
+    calls = []
+
+    def api(body):                                              # 실제 API 처럼: 요청마다 가장 큰 값이 100
+        keys = [g["groupName"] for g in body["keywordGroups"]]
+        calls.append(keys)
+        assert len(keys) <= 5 and keys[0] == "botox" and body["timeUnit"] == "month" and body["startDate"] == f"{months[0]}-01"
+        rows = {k: true.get(k, [10] * 13) for k in keys}
+        top = max(max(v) for v in rows.values())
+        return {"results": [{"title": k, "data": [{"period": f"{m}-01", "ratio": v / top * 100} for m, v in zip(months, rows[k])]}
+                            for k in keys]}
+    nt.set_caller(api)
+    try:
+        data = nt.refresh(today)
+    finally:
+        nt.set_caller(None)
+    assert len(calls) == 5 and data["month"] == months[-1] and len(data["items"]) == 18
+    by = {it["key"]: it for it in data["items"]}
+    # 요청이 달라도(아쿠아필은 마지막 요청) 기준 주제어로 눈금이 맞는다
+    assert (by["aqua_peel"]["rank"], by["botox"]["rank"], by["rejuran"]["rank"], by["juvelook"]["rank"]) == (1, 2, 3, 4)
+    assert (by["aqua_peel"]["index"], by["botox"]["index"], by["rejuran"]["index"], by["titanium"]["index"]) == (100, 50, 25, 2.5)
+    assert by["rejuran"]["prev_rank"] == 4 and by["rejuran"]["change"] == 100.0 and by["botox"]["change"] == 0
+    prev = nt.month_label(months[-2], year=False)
+    line = f"Rejuran ranks 3rd of the 18 treatments we track (index 25, where the most-searched is 100), up from 4th in {prev}."
+    assert nt.sentence(by["rejuran"], data) == line
+    assert nt.sentence(by["botox"], data).endswith(f"unchanged from {prev}.") and nt.ordinal(11) == "11th" and nt.ordinal(22) == "22nd"
+    up, down = nt.movers(data)
+    assert up["key"] == "rejuran" and down["key"] == "juvelook"
+    text = nt.summary(data, published=False)
+    assert "3. 리쥬란 25 (▲1, +100%)" in text and "trends_page 가 꺼져" in text
+
+    site_env.responses["blog"] = blog(FAQ_BLOG)
+    approved = make_draft(site_env)
+    review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
+    _approve(site_env, approved)
+    dist = tmp_path / "dist"
+    site_mod.build()                                            # 기본: trends_page 꺼짐 → 아무것도 안 나감
+    assert "Search interest in Korea" not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert not (dist / "trends").exists() and "/trends/" not in (dist / "sitemap.xml").read_text(encoding="utf-8")
+
+    older = {**data, "month": months[-2], "months": months[:-1]}                         # 지난 달 판도 남아 있다
+    common.save_json(nt.store_dir() / f"{months[-2]}.json", older)
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example", "trends_page": True})
+    site_mod.build()
+    post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert line in post and 'href="/trends/"' in post and "not a measure of results, safety" in post
+    page = (dist / "trends" / "index.html").read_text(encoding="utf-8")
+    assert nt.month_label(months[-1]) in page and '<a href="/rejuran/">Rejuran explained</a>' in page     # 순위 → 우리 글
+    assert "Search interest is not treatment volume" in page and "NAVER DataLab" in page and "리쥬란" in page
+    assert ".csv" not in page and f'href="/trends/{months[-2]}/"' in page                # 원자료 내려받기 없음, 지난 달 링크
+    assert (dist / "trends" / months[-2] / "index.html").exists()
+    assert "https://skinbound.example/trends/" in (dist / "sitemap.xml").read_text(encoding="utf-8")
+    assert "Korea treatment search trends" in (dist / "llms.txt").read_text(encoding="utf-8")
+    assert line in (dist / "rejuran" / "index.md").read_text(encoding="utf-8")
+    log_file = site_mod.content_log_file()
+    assert not common.load_json(log_file)[approved]["updated_at"]                        # 문장이 붙어도 글 수정일은 그대로
+
+    posts = site_mod.collect_posts()
+    assert [it["key"] for it in nt.post_items(posts[0], data)] == ["rejuran"]
+    ad = {**posts[0], "draft": {**posts[0]["draft"], "sponsor": {"id": "glow", "name_en": "Glow"}}}
+    assert nt.post_items(ad, data) == [] and nt.post_html(ad, data) == ""                 # 스폰서 글에는 인기 문장 없음
+    assert nt.item_posts(by["rejuran"], [ad]) == []                                      # 순위 페이지가 잇는 글에도 없음
+    assert nt.current([data], today) is data
+    assert nt.current([data], today + timedelta(days=100)) is None                       # 묵은 데이터로 "지금" 이라 하지 않는다
+    monkeypatch.delenv("NAVER_CLIENT_ID", raising=False)
+    assert nt.main(["refresh"]) == 0                                                     # 키 없으면 크론은 조용히 지나간다
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("시술 트렌드") == {"args": ["pipeline.naver_trends", "show"]}
+
+
 def test_site_publishes_only_approved_posts(site_env, tmp_path):
     site_env.responses["blog"] = blog(FAQ_BLOG)
     approved = make_draft(site_env)
@@ -1209,9 +1317,11 @@ def test_site_sponsored_post_labels_and_tracked_link(sponsored, tmp_path, monkey
 
 def test_partners_page_is_opt_in_korean_and_noindex(site_env, tmp_path, monkeypatch):
     out = tmp_path / "dist"
-    site_mod.build(out)
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example", "partners_page": False})
+    site_mod.build(out)                                                                  # 끄면 페이지도 꼬리말 링크도 없다
     assert not (out / "partners").exists() and "/partners/" not in (out / "index.html").read_text(encoding="utf-8")
-    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "partners_page": True})
+    assert common.load_yaml("site.yaml")["partners_page"] is True                        # 2026-11-10 운영자 결정으로 공개
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "domain": "skinbound.example"})
     site_mod.build(out)
     page_html = (out / "partners" / "index.html").read_text(encoding="utf-8")
     assert '<html lang="ko"' in page_html and 'content="noindex"' in page_html
@@ -1471,6 +1581,33 @@ def test_analytics_report_joins_links_and_procedures(env, tmp_path, monkeypatch)
     assert "visitor" not in data[0] and data[0]["week"] == "2026-W40"
 
 
+def test_clinic_click_report_is_a_separate_file_with_rules(env, tmp_path, monkeypatch, capsys):
+    """2026-11-10: 병원별 클릭은 영업 자료로 쓴다 — 합산 리포트·CSV 와 다른 파일, 지킬 선을 파일에 적는다."""
+    links = {
+        "_clinic:a:1": {"url": "u", "code": "c1", "kind": "clinic", "clinic": "가까운피부과의원", "attraction": "coex", "title": "Coex walk"},
+        "_clinic:b:1": {"url": "u", "code": "c2", "kind": "clinic", "clinic": "가까운피부과의원", "attraction": "bukchon", "title": "Bukchon walk"},
+        "_clinic:a:2": {"url": "u", "code": "c3", "kind": "clinic", "clinic": "먼피부과의원", "attraction": "coex", "title": "Coex walk"},
+        "_registry:a": {"url": "u", "code": "r1", "kind": "registry", "title": "Coex walk"},
+    }
+    common.save_json(common.content_dir() / "site" / "tracked_links.json", links)
+    row = lambda code, clicks, **kw: {"day": "2026-10-05", "code": code, "source": "blog", "country": "US", "is_bot": 0,  # noqa: E731
+                                      "clicks": clicks, "unique_visitors": clicks, **kw}
+    rows = [row("c1", 3), row("c2", 2, day="2026-10-06", country="SG"), row("c3", 1), row("c1", 40, is_bot=1), row("r1", 9)]
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: {"rows": rows})
+    monkeypatch.setattr(analytics_mod, "reports_dir", lambda: tmp_path / "reports")
+    assert analytics_mod.main(["clinics", "--month", "2026-10"]) == 0
+    md = (tmp_path / "reports" / "clinics-2026-10.md").read_text(encoding="utf-8")
+    assert "| 가까운피부과의원 | 5 | 5 | 2 | bukchon, coex | 2 | US 3, SG 2 |" in md        # 여러 글의 같은 병원은 합침, 봇 제외
+    assert "| 먼피부과의원 | 1 |" in md and "병원 2곳 · 클릭 6" in md                       # 등록기관 목록 클릭은 병원 것이 아님
+    assert "요금은 정액" in md and "도착까지" in md and "그 병원 줄만" in md
+    assert "가까운피부과의원: 5" in capsys.readouterr().out
+    assert analytics_mod.main(["report", "--month", "2026-10"]) == 0                       # 합산 리포트에는 여전히 병원명 없음
+    for name in ("2026-10.md", "2026-10.csv"):
+        assert "피부과의원" not in (tmp_path / "reports" / name).read_text(encoding="utf-8")
+
+
 def test_analytics_silent_without_tracker(monkeypatch, capsys):
     monkeypatch.delenv("TRACKER_URL", raising=False)
     assert analytics_mod.main(["report"]) == 0 and capsys.readouterr().out == ""
@@ -1527,7 +1664,7 @@ def test_travel_topics_compete_on_attraction_demand(env):
 def test_weekly_topics_follow_axis_quota(env):
     week = topics_mod.from_seed("2026-W40", 6)
     axes = Counter(t["axis"] for t in week["topics"])
-    assert len(week["topics"]) == 6 and axes["procedure_travel"] == 2 and sum(axes.values()) - axes["procedure_travel"] == 4
+    assert len(week["topics"]) == 6 and axes["procedure_travel"] == 2 and axes["skincare"] == 2  # 2026-11-10: 유형마다 2개 후보
     scores = [t["demand"]["score"] for t in week["topics"]]
     assert scores == sorted(scores, reverse=True)  # 메시지는 수요 점수 순
 
@@ -1537,7 +1674,7 @@ def test_quota_fills_from_other_groups_when_short():
               for i in range(6)] + [{"axis": "procedure_travel", "title": "t", "demand": {"score": 0.1, "focus": "x:t"}}]
     picked = topics_mod.pick(topics, 6)
     assert [t["title"] for t in picked] == ["p0", "p1", "p2", "p3", "p4", "t"]  # 여행 1개뿐 → 시술로 채움
-    assert topics_mod.quota(12) == [("info", topics_mod.quota(6)[0][1], 8), ("procedure_travel", ["procedure_travel"], 4)]
+    assert topics_mod.quota(12) == [("info", topics_mod.quota(6)[0][1], 4), ("procedure_travel", ["procedure_travel"], 4), ("skincare", ["skincare"], 4)]
 
 
 # ---- 관광지 트렌드 ----
@@ -2200,10 +2337,64 @@ def test_weekly_report_counts_pipeline_activity(env, monkeypatch, tmp_path):
     assert data["created"] >= 1 and data["moves"]["approved"] == 1 and data["posts"]["tiktok"] == 1
     assert data["waiting"]["ready_to_publish"] == 1
     monkeypatch.setattr(report_mod, "ROOT", tmp_path)
-    monkeypatch.setattr(report_mod, "extras", lambda: ["🌐 블로그 글 1개 (스폰서 0)"])
+    monkeypatch.setattr(report_mod, "extras", lambda *a: ["🌐 블로그 글 1개 (스폰서 0)"])
+    monkeypatch.setattr(report_mod, "headline", lambda *a: {"link_clicks": (77, 60)})
+    monkeypatch.setattr(importlib.import_module("pipeline.trend"), "collect", lambda *a, **k: None)
+    monkeypatch.setattr(report_mod, "link_stats", lambda: None)
     assert report_mod.main([]) == 0
     text = next((tmp_path / "reports" / "weekly").glob("*.md")).read_text(encoding="utf-8")
-    assert "[주간 리포트" in text and "승인 1" in text and "tiktok 1" in text and "게시 키트 1" in text
+    summary, detail = text.split(report_mod.DETAIL_MARK)
+    assert "전주 → 이번 주]" in summary and "링크 클릭 77 → 60 (−17)" in summary and "할 일: 게시 키트 1" in summary
+    assert "승인 1" not in summary                                                 # 파이프라인 현황은 상세로
+    assert "[주간 리포트 상세" in detail and "승인 1" in detail and "tiktok 1" in detail and "블로그 글 1개" in detail
+    assert report_mod.detail_text() == detail.strip()                              # 텔레그램 "리포트 상세"
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("리포트 상세") == {"args": ["pipeline.07_report", "--detail"]}
+
+
+def test_weekly_summary_shows_change_from_the_week_before(env, monkeypatch):
+    trend = importlib.import_module("pipeline.trend")
+
+    def row(slug, published, prev, now):
+        return {"slug": slug, "title": slug.upper(), "date": date.fromisoformat(published), "views": [prev, now], "first7": None, "age": 30}
+    windows = [{"from": date(2026, 11, 1), "to": date(2026, 11, 7), "new": 0, "existing": 60, "home": 20, "new_posts": 0},
+               {"from": date(2026, 11, 8), "to": date(2026, 11, 14), "new": 4, "existing": 70, "home": 25, "new_posts": 1}]
+    rows = [row("a", "2026-10-01", 10, 22), row("b", "2026-10-02", 12, 9), row("c", "2026-10-03", 8, 8),
+            row("d", "2026-10-04", 15, 16), row("e", "2026-10-05", 15, 15), row("new", "2026-11-09", 0, 4)]
+    data = {"windows": windows, "rows": rows, "rum": 41, "rum_prev": 27, "daily": []}
+    assert trend.bot_suspect(data) == ""
+    up, down = trend.movers(data)
+    assert [r["slug"] for r in up] == ["a", "d"] and [r["slug"] for r in down] == ["b"]   # 새 글은 증감에서 뺀다
+
+    social, ai = importlib.import_module("pipeline.social"), importlib.import_module("pipeline.ai_traffic")
+    monkeypatch.setattr(importlib.import_module("pipeline.search_console"), "gsc_configured", lambda: False)
+    monkeypatch.setattr(tracker_mod, "configured", lambda: False)
+    views = {"n": 310}
+    monkeypatch.setattr(social, "threads_reactions", lambda days: {"views": views["n"]})
+    monkeypatch.setattr(ai, "crawls", lambda a, b: {"live": Counter({"ChatGPT": 22 if a == date(2026, 11, 8) else 17})})
+    monkeypatch.setattr(ai, "referrals", lambda a, b: {"total": 0})
+    links = ({"totals": {"clicks": 60}}, {"totals": {"clicks": 77}})
+    today = date(2026, 11, 15)
+    numbers = report_mod.with_history(report_mod.headline(data, links, today), today)
+    waiting = {"waiting": {"drafts": 1, "rendered": 0, "ready_to_publish": 0}}
+    text = report_mod.summary(waiting, numbers, data, ["🧭 신뢰 단계 점검"], today)
+    assert text.startswith("[주간 리포트 2026-W46 · 11/08~11/14 · 전주 → 이번 주]")
+    assert "글 조회 27 → 41 (+14)" in text and "서버 요청 60 → 74 (+14) · 홈 20 → 25 (+5)" in text
+    assert "새 글 1편 · 서버 요청 4" in text and "링크 클릭 77 → 60 (−17)" in text
+    assert "Threads 조회 – → 310" in text                                          # 전주를 직접 못 읽는 숫자: 첫 주
+    assert "AI 실시간 조회 17 → 22 (+5) · AI 답변에서 온 방문 0 → 0 (±0)" in text
+    assert "📈 10 → 22  A" in text and "📉 12 → 9  B" in text and "할 일: 검수 1" in text and "🧭 신뢰 단계 점검" in text
+    assert "구글" not in text and "제휴" not in text                                # 못 읽은 항목은 줄을 내지 않는다
+    views["n"] = 250                                                               # 다음 주: 쌓아 둔 값과 비교
+    later = date(2026, 11, 22)
+    assert report_mod.change(report_mod.with_history(report_mod.headline(data, links, later), later)["threads_views"]) == "310 → 250 (−60)"
+    assert report_mod.change((0, 1), plus=True) == "+0 → +1"
+
+    bots = {**data, "rows": [row(x, "2026-10-01", 30, 5) for x in "abcdef"]}      # 글이 전부 같이 움직인 주
+    assert "절반 이하" in trend.bot_suspect(bots)
+    text = report_mod.summary(waiting, numbers, bots, [], today)
+    assert "수집 봇" in text and "📉" not in text
+    assert "2배 이상 늘었음" in trend.bot_suspect({**data, "rows": [row(x, "2026-10-01", 5, 30) for x in "abcdef"]})
 
 
 def test_site_share_images_and_icons(sponsored, tmp_path, monkeypatch):
@@ -2251,6 +2442,17 @@ SOCIAL = {"link": SOCIAL_LINK,
 MONDAY = datetime(2026, 10, 12, 9, 30, tzinfo=social_mod.KST)
 
 
+@pytest.fixture
+def old_social(monkeypatch):
+    """2026-11-10 이전 방식(X 수동 게시·AI-assisted 끝줄·Threads 승인 후 게시) — 설정을 되돌리면 그대로 돌아가야 한다."""
+    real = social_mod.settings
+
+    def settings():
+        cfg = real()
+        return {**cfg, "ai_label": True, "x": {**cfg["x"], "enabled": True}, "threads": {**cfg["threads"], "auto_post": False}}
+    monkeypatch.setattr(social_mod, "settings", settings)
+
+
 def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="approved", live=True):
     slug = "what-is-rejuran" if draft_id == "2026-W40-01-what-is-rejuran" else draft_id
     draft = {"id": draft_id, "content_type": "procedure", "facts": [{"id": "F1", "text": "Downtime is 1-3 days.", "url": URL}],
@@ -2268,7 +2470,7 @@ def _published(draft_id="2026-W40-01-what-is-rejuran", sponsor=None, state="appr
     return path
 
 
-def test_social_only_for_deployed_posts_and_x_length_counts_link(env):
+def test_social_only_for_deployed_posts_and_x_length_counts_link(env, old_social):
     env.responses["social"] = SOCIAL
     _published(live=False)
     assert social_mod.pending_paths() == []                                     # 배포 전: 링크가 열리지 않으니 안 만든다
@@ -2281,7 +2483,7 @@ def test_social_only_for_deployed_posts_and_x_length_counts_link(env):
     assert social_mod.x_length("Source: aad.org · x") == len("Source:  · x") + 23  # 도메인만 써도 X 는 링크로 센다
 
 
-def test_social_compose_three_kinds_list_and_x_reply_link(env):
+def test_social_compose_three_kinds_list_and_x_reply_link(env, old_social):
     env.responses["social"] = SOCIAL
     _published()
     assert social_mod.main(["compose"]) == 0
@@ -2335,18 +2537,23 @@ def test_social_blocked_kind_retried_alone_and_sponsored_skipped(env):
     assert [p.name for p in social_mod.pending_paths()] == []                    # 스폰서 글: 정책 확인 전 제외
 
 
-def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkeypatch):
+def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkeypatch, old_social):
     env.responses["social"] = SOCIAL
     social_mod.compose(_published())
     assert social_mod.daily_message(MONDAY.replace(hour=8)) == ""                # 9시 전
     msg = social_mod.daily_message(MONDAY)
-    assert msg.startswith("[오늘의 SNS 글] 10/12(월) · 새 글 소개 — What is Rejuran?")
+    assert msg.startswith("[오늘의 SNS 글 1/2] 10/12(월) · 새 글 소개 — What is Rejuran?")
     assert "'오늘 게시 완료 x <주소>' → 답글로 붙일 블로그 링크 문구" in msg
-    assert social_mod.daily_message(MONDAY.replace(hour=15)) == ""               # 하루 한 번
-    assert "사실 하나" in social_mod.daily_message(MONDAY + timedelta(days=1))
-    assert "여행 팁·흔한 오해" in social_mod.daily_message(MONDAY + timedelta(days=2))
-    assert "독자에게 질문" in social_mod.daily_message(MONDAY + timedelta(days=3))
-    assert social_mod.daily_message(MONDAY + timedelta(days=4)) == ""            # 보낼 게 없으면 조용히
+    assert social_mod.daily_message(MONDAY.replace(hour=15)) == ""               # 칸마다 한 번 (9시 칸은 보냄)
+    evening = social_mod.daily_message(MONDAY.replace(hour=20))                  # 20시 두 번째 칸 (2026-10-29)
+    assert evening.startswith("[오늘의 SNS 글 2/2] 10/12(월) · 사실 하나")
+    assert social_mod.daily_message(MONDAY.replace(hour=22)) == ""
+    monkeypatch.setattr(social_mod, "now_kst", lambda: MONDAY.replace(hour=21))
+    assert social_mod.resolve("오늘").kind == "fact"                              # "오늘" = 가장 최근에 보낸 칸
+    assert "여행 팁·흔한 오해" in social_mod.daily_message(MONDAY + timedelta(days=1))
+    assert "독자에게 질문" in social_mod.daily_message(MONDAY + timedelta(days=2))
+    assert social_mod.daily_message(MONDAY + timedelta(days=3)) == ""            # 보낼 게 없으면 조용히
+    assert social_mod.daily_message(MONDAY + timedelta(days=4)) == ""
     _published("2026-W41-08-laser")                                             # 정리 글은 그 주 2편 이상일 때만
     sunday = social_mod.daily_message(MONDAY + timedelta(days=6))
     assert "한 주 정리" in sunday and "%E2%86%92%20What%20is%20Rejuran%3F" in sunday   # 작성 링크 안: "→ What is Rejuran?"
@@ -2354,6 +2561,12 @@ def test_social_daily_queue_link_first_then_facts_and_sunday_roundup(env, monkey
     assert social_mod.resolve("오늘") == social_mod.Ref("roundup-2026-W42", "roundup")
     out = social_mod.record("오늘", "x", "https://x.com/Skinboundkorea/status/9")
     assert "`All guides with sources: https://skinboundkorea.com/`" in out
+    social_mod.compose(_published("2026-W41-08-laser"))
+    sunday_eve = (MONDAY + timedelta(days=6)).replace(hour=20)
+    monkeypatch.setattr(social_mod, "BACKLOG", 99)
+    assert social_mod.daily_message(sunday_eve) == ""                            # 일요일은 정리 1개만 (밀린 글 없으면)
+    monkeypatch.setattr(social_mod, "BACKLOG", 1)
+    assert "[오늘의 SNS 글 2/2]" in social_mod.daily_message(sunday_eve)          # 밀려 있으면 일요일도 2개
 
 
 def test_social_daily_waits_for_todays_blog_post(env, monkeypatch):
@@ -2397,7 +2610,7 @@ def test_blog_publish_schedule_assigns_mon_wed_fri_one_per_day(env, monkeypatch)
     assert [p["draft"]["id"] for p in posts] == ["2026-W41-07-a"] and posts[0]["date"].startswith("2026-10-12T07:00")
 
 
-def test_threads_api_post_and_token_refresh(env, tmp_path, monkeypatch):
+def test_threads_api_post_and_token_refresh(env, tmp_path, monkeypatch, old_social):
     env.responses["social"] = SOCIAL
     path = _published()
     social_mod.compose(path)
@@ -2525,6 +2738,30 @@ def test_site_tracks_modified_date_and_pings_indexnow_for_new_and_changed(site_e
     assert "- 수정: https://skinbound.example/what-is-rejuran/" in msg and pinged[-1][0].endswith("/what-is-rejuran/")
     html_ = (site_mod.dist_dir() / "what-is-rejuran" / "index.html").read_text(encoding="utf-8")
     assert "<span>Updated 20" in html_ and '"dateModified": "20' in html_
+    about = (site_mod.dist_dir() / "about" / "index.html").read_text(encoding="utf-8")   # 수정 기록은 About 에도
+    assert "Posts changed after they were first published" in about and '<a href="/what-is-rejuran/">' in about
+
+
+def test_about_names_the_operator_and_never_claims_registration(site_env):
+    cfg = {**site_mod.load_yaml("site.yaml"), "domain": "skinbound.example"}
+    page = site_mod.render_about(cfg, [])
+    assert "Who runs Skinbound" in page and "run by an independent publisher based in Seoul, South Korea." in page
+    assert "publishing since October 2026" in page and 'rel="me">Threads</a>' in page
+    assert "not a registered foreign-patient facilitator" in page and "registration no." not in page
+    assert "planned for 2027" in page                                              # 계획이라고만 쓴다
+    assert '"foundingDate": "2026-10"' in page and '"addressCountry": "KR"' in page and "legalName" not in page
+    assert "No post has been changed after publication so far." in page and "0 sponsored or partner posts" in page
+    corp = {**cfg, "operator": {**cfg["operator"], "legal_name": "Skinbound Co., Ltd.", "representative": "Hong Gildong",
+                                "business_no": "123-45-67890"}}                    # 법인 설립 뒤 칸만 채운다
+    page = site_mod.render_about(corp, [])
+    assert ("operated by <strong>Skinbound Co., Ltd.</strong> (business registration no. 123-45-67890; "
+            "representative: Hong Gildong)") in page and '"legalName": "Skinbound Co., Ltd."' in page
+    assert "not a registered foreign-patient facilitator" in page                  # 유치업 등록번호가 없으면 그대로
+    done = {**corp, "operator": {**corp["operator"], "facilitator_no": "A-2027-01-01-0001"}}
+    page = site_mod.render_about(done, [])
+    assert "registered foreign-patient facilitator in Korea (registration no. A-2027-01-01-0001)" in page
+    assert "we do not arrange" not in page
+    assert "Who runs" not in site_mod.render_about({**cfg, "operator": {}}, [])   # 설정이 없으면 단락을 내지 않는다
 
 
 def test_ai_traffic_classifies_referrers_and_bots():
@@ -2574,8 +2811,8 @@ def test_reopen_unpublished_post_keeps_its_slot_and_block_needs_confirm(env, mon
         f.unlink()                                                                      # 워커가 수정 요청을 처리한 뒤
     common.save_json(common.content_dir("drafts") / "2026-W41-07-a" / "review.json", {"grade": "block", "findings": []})
     human.build_batch("drafts")
-    assert "⛔ 자동검수 차단" in human.apply("1 승인")[0]                             # 번호로 골라도 ⛔ 는 재확인
-    assert "승인 → approved" in human.apply("1 승인", confirm=True)[0]
+    out = human.apply("1 승인")[0]                                                  # 번호로 고르면 ⛔ 도 승인 (2026-11-05)
+    assert "승인 → approved" in out and "⛔ 걸린 항목 그대로" in out
     assert common.load_json(site_mod.schedule_file())["2026-W41-07-a"]["date"] == "2026-10-12"   # 같은 날 유지
     human.build_batch("approved")
     common.save_json(site_mod.state_file(), {"hash": "h", "slugs": ["2026-w41-07-a"]})
@@ -2608,7 +2845,7 @@ def test_review_message_in_korean_with_stable_post_number(env):
     draft["blog"]["markdown"] += "\nNew sentence."                                       # 내용이 바뀌면 다시 번역
     common.save_json(path / "draft.json", draft)
     assert translate.cached(path) is None
-    assert "승인 → approved" in human_mod.apply("W40-01 승인", confirm=True)[0]             # 글번호로 답해도 된다
+    assert "승인 → approved" in human_mod.apply("w40 01 승인", confirm=True)[0]             # 글번호로 답해도 된다 (띄어 써도)
 
 
 def test_shortform_off_hides_script_everywhere(env, monkeypatch):
@@ -2646,6 +2883,987 @@ def test_approve_waits_for_pending_revise(env):
 def test_cosmetic_rule_skips_non_claim_uses(text, flagged):
     m = review_mod.COSMETIC_PATTERNS.search(text)
     assert m and (not review_mod._cosmetic_context_ok(text, m)) == flagged
+
+
+def test_auto_approve_only_clean_unsampled_passes(env, monkeypatch):
+    review = importlib.import_module("pipeline.03_review")
+    report = importlib.import_module("pipeline.07_report")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_start": "2026-10-05", "trust_stage": 2}} if n == "channels.yaml" else _o(n))
+    ids = [f"2026-W46-{i:02d}-post" for i in range(1, 40)]
+    free = [i for i in ids if not review.human_sampled(i, 20)]
+    sampled = next(i for i in ids if review.human_sampled(i, 20))
+
+    def make(draft_id, grade="pass", human=(), **extra):
+        path = common.content_dir("drafts") / draft_id
+        path.mkdir(parents=True)
+        common.save_json(path / "draft.json", {"id": draft_id, "topic": {"title": draft_id}, "blog": {"title": draft_id, "markdown": "x"}, "facts": [], **extra})
+        common.save_json(path / "review.json", {"grade": grade, "always_human": list(human), "findings": []})
+    good, caution, priced, sponsored, revised = free[:5]
+    make(good); make(sampled); make(caution, "caution"); make(priced, human=["가격 포함"])
+    make(sponsored, sponsor={"name_ko": "병원"}); make(revised, revisions=[{"note": "고쳐"}])
+
+    message = review.auto_approve_message()
+    assert (common.content_dir("approved") / good).exists() and "W46" in message
+    for other in (sampled, caution, priced, sponsored, revised):
+        assert (common.content_dir("drafts") / other).exists()
+    assert not review.auto_approve_message()                                # 두 번 돌려도 그대로
+
+    review.build_batch("approved")
+    review.apply("1 되돌리기", "approved")                                   # 되돌린 글은 다시 자동 승인되지 않는다
+    assert (common.content_dir("drafts") / good).exists() and not review.auto_candidates()
+    rows = (common.log_dir() / "review_agreement.csv").read_text(encoding="utf-8")
+    assert ",auto," in rows and ",auto_undone," in rows
+    assert report.agreement(date(2000, 1, 1)) == (0, 1)                      # 자동 승인 줄은 일치율에 안 들어간다
+
+
+def test_stage_four_auto_approves_every_clean_pass_but_nothing_else(env, monkeypatch):
+    """2026-11-10: ✅ 는 표본 없이 전부 자동 승인. ⚠️·⛔·사람 확인 항목·스폰서·수정 요청 글은 그대로 사람."""
+    review = importlib.import_module("pipeline.03_review")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_stage": 4}} if n == "channels.yaml" else _o(n))
+    ids = [f"2026-W46-{i:02d}-post" for i in range(1, 40)]
+    sampled = [i for i in ids if review.human_sampled(i, 20)][:2]            # 2단계였다면 사람에게 갔을 글
+    rest = [i for i in ids if i not in sampled]
+
+    def make(draft_id, grade="pass", human=(), **extra):
+        path = common.content_dir("drafts") / draft_id
+        path.mkdir(parents=True)
+        common.save_json(path / "draft.json", {"id": draft_id, "topic": {"title": draft_id}, "blog": {"title": draft_id, "markdown": "x"}, "facts": [], **extra})
+        common.save_json(path / "review.json", {"grade": grade, "always_human": list(human), "findings": []})
+    caution, block, priced, sponsored, revised = rest[:5]
+    for i in sampled:
+        make(i)
+    make(caution, "caution"); make(block, "block"); make(priced, human=["가격 포함"])
+    make(sponsored, sponsor={"name_ko": "병원"}); make(revised, revisions=[{"note": "고쳐"}])
+    assert sorted(p.name for p in review.auto_candidates()) == sorted(sampled)
+    review.auto_approve_message()
+    assert all((common.content_dir("approved") / i).exists() for i in sampled)
+    for other in (caution, block, priced, sponsored, revised):
+        assert (common.content_dir("drafts") / other).exists()
+    assert int(_real_channels()["review"]["trust_stage"]) == 4               # 실제 설정도 4단계
+
+
+def _real_channels() -> dict:
+    import yaml
+    return yaml.safe_load((common.ROOT / "config" / "channels.yaml").read_text(encoding="utf-8"))
+
+
+def test_auto_approve_off_in_stage_one(env, monkeypatch):
+    review = importlib.import_module("pipeline.03_review")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_stage": 1}} if n == "channels.yaml" else _o(n))
+    assert review.auto_candidates() == [] and review.auto_approve_message() == ""
+
+
+def test_trend_compares_finished_weeks_and_splits_new_posts(env):
+    trend = importlib.import_module("pipeline.trend")
+    posts = [{"slug": "old", "date": "2026-10-01T07:00:00+09:00", "draft": {"blog": {"title": "Old"}}},
+             {"slug": "new", "date": "2026-10-28T07:00:00+09:00", "draft": {"blog": {"title": "New"}}}]
+    calls = []
+
+    def fetch(a, b):
+        calls.append((a, b))
+        if a < date(2026, 10, 18):
+            raise RuntimeError("too old")
+        if str(b) == "2026-11-01" or a == date(2026, 10, 28):
+            return {"/new/": 9}
+        return {"/old/": 5 if a == date(2026, 10, 18) else 8, "/new/": 3, "/": 40}
+    data = trend.collect(date(2026, 11, 2), posts=posts, fetch=fetch, rum=lambda a, b: {"/": 10, "/new/": 2})
+    assert [str(w["to"]) for w in data["windows"]] == ["2026-10-24", "2026-10-31"]   # 일~토, 못 읽는 옛 주는 뺀다
+    last = data["windows"][-1]
+    assert (last["existing"], last["new"], last["new_posts"]) == (8, 3, 1) and data["rum"] == 2 and data["rum_prev"] == 2
+    days = data["daily"]                                                             # 날짜별 선 (최근 4주)
+    assert len(days) == 28 and str(days[-1]["date"]) == "2026-10-31" and (days[-1]["requests"], days[-1]["views"]) == (11, 2)
+    assert days[0]["requests"] is None                                               # 보관 기간이 지난 날
+    assert next(r for r in data["rows"] if r["slug"] == "new")["first7"] == 9
+    text = "\n".join(trend.report_lines(data))
+    assert "위장 봇" in text and "새 글 1편 3 vs 바로 전 1편 8" in text and "5일째" in text
+    before = len(calls)
+    trend.collect(date(2026, 11, 2), posts=[], fetch=fetch, rum=lambda a, b: {})      # 다 찬 주는 쌓아 둔 것을 쓴다
+    assert not [c for c in calls[before:] if str(c[0]) == "2026-10-25"]
+    assert trend.chart(data, common.log_dir() / "t.png").exists()
+
+
+REDDIT_TEST_CFG = {"max_per_week": 2, "max_per_community_week": 1, "max_words": 180, "max_age_days": 150, "find_count": 8, "find_weekday": 1, "find_hour": 10,
+                   "communities": {"NoMods": {"status": "ask_mods", "note": "운영자 글 금지로 해석"}, "Banned": {"status": "excluded"},
+                                   "NoAI": {"status": "unverified", "ai_text": "banned"}}}
+REDDIT_POST_TEXT = "Swelling may last 2 days, so ask your doctor first."
+
+
+def _reddit_env(monkeypatch, **cfg):
+    rd = importlib.import_module("pipeline.reddit")
+    post = {"key": "fly", "title": "Flying", "url": "https://skinboundkorea.com/fly/",
+            "facts": [{"id": "F1", "text": "Swelling may last 2 days.", "url": "https://aad.org/x"}]}
+    monkeypatch.setattr(rd, "_live_posts", lambda: [post])
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, **cfg})
+    return rd
+
+
+def _reddit_answers(rd, monkeypatch, **override):
+    answers = {"reddit_answer": {"answerable": True, "body": REDDIT_POST_TEXT, "fact_ids": ["P1:F1", "P9:F9"]},
+               "reddit_review": {"ok": True, "issues": [], "ko": "번역"},
+               "reddit_facts": {"answerable": True, "fact_ids": ["P1:F1"], "gaps_ko": "비행 시간은 없음"},
+               "reddit_light_check": {"remove": [], "related_post": "P1", "ko": "번역"},
+               "reddit_research": {"sources": []}, "reddit_research_read": {"facts": []},
+               "reddit_brief": {"summary_ko": "시술 뒤 비행 질문", "asks_ko": ["다음 날 비행 가능?"], "covered": [{"fact_id": "P1:F1", "why_ko": "붓기 기간"}],
+                                "related_post": "P1", "gaps_ko": ["기내 기압"], "consider_ko": ["의사 확인 권고"], "skip_ko": ""}, **override}
+    stages = []
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (stages.append(stage), (answers[stage], None))[1])
+    return answers, stages
+
+
+def _reddit_items(rd, *pairs):
+    state = rd.load()
+    for n, (sub, question) in enumerate(pairs, 1):
+        rd._add(state, f"https://www.reddit.com/r/{sub}/comments/abc{n}/x/", question, question)
+    rd.save(state)
+
+
+def test_reddit_find_filters_and_unknown_rules_give_facts_only(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    new, new2 = "1zz0000", "1zz0001"                                       # 글 번호로 어림한 나이: 큰 번호 = 새 글
+    assert rd.estimated_date("1nm7hfq").year == 2025 and rd.estimated_date("1cx0tpm").year == 2024
+    threads = [{"url": f"https://www.reddit.com/r/travelsub/comments/{new}/fly/", "title": "Fly after booster?", "question": "Can I fly the next day?"},
+               {"url": f"https://www.reddit.com/r/travelsub/comments/{new2}/x/", "title": "Best clinic in Seoul?", "question": "Which clinic should I go to?"},
+               {"url": "https://www.reddit.com/r/Banned/comments/1zz0002/x/", "title": "Flying", "question": "Can I fly?"},
+               {"url": "https://example.com/r/travelsub/comments/1zz0003/", "title": "Flying", "question": "Can I fly?"},
+               {"url": "https://www.reddit.com/r/travelsub/comments/1cx0tpm/x/", "title": "Old", "question": "Can I fly?"}]
+    prompts = []
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), ({"threads": threads}, None))[1])
+    message = rd.find()
+    assert [i["thread"] for i in rd.load()["items"]] == [new, new2] and "미확인" in message and "Banned" in prompts[0]  # 병원 질문도 후보 (기준으로 답함)
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="NOT FOUND", model="m", stage=stage, grounding_urls=[]))
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    item = rd.draft(1)                                                     # 규칙을 모르는 곳: AI 글 없이 사실 정리만
+    assert item["status"] == "manual" and item["practice"] and stages == ["reddit_facts"]
+    note = rd.paste_messages(item)
+    assert len(note) == 1 and "Swelling may last 2 days." in note[0] and "https://aad.org/x" in note[0] and "게시용 아님" in note[0]
+    assert rd.load()["subs"]["travelsub"]["research"]["found"] is False   # 못 찾은 것도 기록 (다시 찾으려면 규칙초기화)
+    with pytest.raises(rd.RedditError):
+        rd.allow("Banned", False)
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 규칙확인 r/travelsub 링크허용")["args"] == ["pipeline.reddit", "allow", "travelsub", "--links"]
+    assert router.parse("레딧 규칙확인 travelsub AI금지")["args"] == ["pipeline.reddit", "allow", "travelsub", "--no-ai"]
+
+
+def test_reddit_stages_human_read_does_not_override_operator_ban(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    state = rd.load()
+    state["subs"]["nomods"] = {"checked": "2026-11-02", "links": True, "source": "human"}   # 예전 "직접 확인" 기록 (r/KoreanBeauty)
+    rd.save(state)
+    assert rd.standing(rd.load(), "NoMods")["mode"] == "ask_mods"           # 원문 확인만으로는 문의 필요가 안 풀린다
+    rd.allow("NoMods", True)
+    assert rd.standing(rd.load(), "NoMods")["mode"] == "ask_mods"
+    assert "1" not in rd.asked("NoMods").split("보냄")[0] and rd.load()["subs"]["nomods"]["asked"]
+    rd.mods("NoMods", "allowed", links=True, note="모드메일")
+    st = rd.standing(rd.load(), "NoMods")
+    assert st["mode"] == "active" and st["writer"] == "post" and st["links"]
+    rd.allow("NoAI", False)
+    assert rd.standing(rd.load(), "NoAI")["mode"] == "manual"               # AI 글 금지는 원문 확인으로 안 풀린다
+    rd.mods("NoAI", "refused")
+    assert rd.standing(rd.load(), "NoAI")["mode"] == "excluded"
+    rd.allow("fresh", False, no_ai=True)
+    assert rd.standing(rd.load(), "fresh")["mode"] == "manual"
+    state = rd.load()
+    state["subs"]["fresh"]["read"] = "2025-01-01"
+    assert any("다시 확인" in w for w in rd.standing(state, "fresh")["why"])
+    rd.reset("fresh")
+    assert "fresh" not in rd.load()["subs"]
+    message = rd.communities_message()
+    assert "r/NoMods  AI ? · 링크 ○ · 시술 ○ → 활동" in message and "r/NoAI  AI ✕ · 링크 ? · 시술 ○ → 제외" in message
+
+
+def test_reddit_draft_makes_paste_only_message_and_limits(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("testsub", "Can I fly the next day?"), ("testsub", "Can I fly?"), ("othersub", "Can I fly?"), ("thirdsub", "Can I fly?"))
+    rd.allow("testsub", False)
+    answers, _stages = _reddit_answers(rd, monkeypatch)
+    item = rd.draft(1)
+    assert item["status"] == "ready" and not item["practice"] and rd.DISCLOSURE in item["paste"] and "skinboundkorea" not in item["paste"]
+    meta, paste = rd.paste_messages(item)
+    assert paste == item["paste"] and item["url"] in meta and "번역" in meta and "aad.org" not in meta  # 출처 나열 없음 (2026-11-05)
+    rd.allow("testsub", True)
+    assert "https://skinboundkorea.com/fly/" in rd.draft(1)["paste"]        # 허용한 곳만 링크
+
+    answers["reddit_answer"]["body"] = "It is guaranteed safe, 99 days."     # 규칙에 걸리면 붙여넣을 글이 없다
+    item = rd.draft(1)
+    assert item["status"] == "blocked" and not item["paste"] and len(rd.paste_messages(item)) == 1
+    answers["reddit_answer"]["body"] = REDDIT_POST_TEXT
+    answers["reddit_review"] = {"ok": False, "issues": [{"problem": "과장"}], "ko": ""}
+    prompts = []
+    real = rd.llm.generate_json
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text) if stage == "reddit_answer" else None, real(stage, text))[1])
+    assert rd.draft(1)["problems"] == ["과장"] and len(prompts) == 2 and "과장" in prompts[1]   # 지적을 주고 한 번 더
+    answers["reddit_review"] = {"ok": True, "issues": [], "ko": "번역"}
+    rd.draft(1)
+    item_state = rd.load()
+    rd._item(item_state, 1)["paste"] = "tampered"
+    with pytest.raises(rd.RedditError):
+        rd.paste_messages(rd._item(item_state, 1))                           # 만든 뒤 바뀐 본문은 보내지 않는다
+
+    assert "기준 밖" not in rd.done(1, "https://www.reddit.com/r/testsub/comments/abc1/x/c1/")
+    with pytest.raises(rd.RedditError):
+        rd.done(2, "https://evil.example/x/")
+    with pytest.raises(rd.RedditError) as e:
+        rd.draft(2)                                                          # 커뮤니티당 주 1개
+    assert "r/testsub" in str(e.value)
+    rd.allow("othersub", False)
+    rd.draft(3)
+    rd.done(3, "https://www.reddit.com/r/othersub/comments/abc3/x/c1/")
+    rd.allow("thirdsub", False)
+    with pytest.raises(rd.RedditError) as e:
+        rd.draft(4)                                                          # 전체 주 2개
+    assert "최근 7일 게시가 2개" in str(e.value)
+
+
+def test_reddit_practice_draft_is_not_for_posting(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("NoMods", "Can I fly the next day?"), ("testsub", "Can I fly?"))
+    _reddit_answers(rd, monkeypatch)
+    item = rd.draft(1)                                                       # 문의 필요: 연습 초안 (한도와 무관)
+    assert item["status"] == "ready" and item["practice"] and "http" not in item["paste"]
+    message = rd.paste_messages(item)
+    assert len(message) == 1 and "게시용 아님" in message[0] and REDDIT_POST_TEXT in message[0]
+    assert "기준 밖" in rd.done(1, "https://www.reddit.com/r/NoMods/comments/abc1/x/c1/") and rd._item(rd.load(), 1)["outside_standard"]
+
+    rd.allow("testsub", False)
+    item = rd.draft(2)
+    assert len(rd.paste_messages(item)) == 2
+    rd.reset("testsub")                                                      # 만든 뒤 기준이 바뀌면 붙여넣기 글을 보내지 않는다
+    assert len(rd.paste_messages(rd._item(rd.load(), 2))) == 1
+
+
+def test_reddit_ai_banned_community_gets_facts_and_checks_operator_text(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("NoAI", "Can I fly the next day?"))
+    rd.allow("NoAI", True)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    for item in (rd.draft(1), rd.draft(1, "비행 이야기")):                   # 초안도 방향 영작도 AI 글이라 사실 정리로
+        assert item["status"] == "manual" and not item["practice"]
+    assert "reddit_answer" not in stages and "reddit_direct" not in stages
+    note = rd.paste_messages(rd._item(rd.load(), 1))[0]
+    assert "Swelling may last 2 days." in note and "검사:" in note and "비행 시간은 없음" in note
+
+    item = rd.check(1, "I'd recommend Re2O for this.")                    # 남는 내용이 없으면 붙여넣을 글 없음
+    assert item["status"] == "blocked" and "Re2O" in item["removed"][0]["sentence"] and "검사:" in rd.paste_messages(item)[0]
+
+    text = ("I flew home soon after and it was fine for me. Swelling can last a while, so ask your doctor. "
+            "This clinic in Gangnam is the best, call them today. Ice the area all night long.")
+    answers["reddit_light_check"] = {"remove": [{"sentence": "Ice the area all night long.", "why": "잘못된 사후관리"},
+                                                {"sentence": "Not in the reply.", "why": "x"}], "related_post": "P1", "ko": "번역"}
+    item = rd.check(1, text)                                                 # 고쳐 쓰지 않고 문장만 뺀다. 못 찾은 문장은 사람에게
+    assert item["status"] == "blocked" and any("Not in the reply" in p for p in item["problems"])
+    answers["reddit_light_check"]["remove"] = answers["reddit_light_check"]["remove"][:1]
+    item = rd.check(1, text)
+    assert item["status"] == "ready" and item["written_by"] == "operator"
+    assert item["body"] == "I flew home soon after and it was fine for me. Swelling can last a while, so ask your doctor."
+    assert {r["sentence"] for r in item["removed"]} == {"This clinic in Gangnam is the best, call them today.", "Ice the area all night long."}
+    assert item["paste"].endswith(rd.DISCLOSURE_OPERATOR) and "AI-assisted" not in item["paste"]
+    assert "https://skinboundkorea.com/fly/" in item["paste"] and len(rd.paste_messages(item)) == 2   # 링크 허용 기록 → 관련 글 링크
+    assert "뺀 문장" in rd.paste_messages(item)[0] and "Gangnam" in rd.paste_messages(item)[0]
+    answers["reddit_light_check"]["remove"] = []
+    item = rd.check(1, "Swelling can last 2 days. Avoid saunas for two weeks. Use it twice daily. Swelling can last a while, so ask your doctor first.")
+    assert item["body"] == "Swelling can last a while, so ask your doctor first." and len(item["removed"]) == 3   # 숫자 든 문장은 뺀다
+    assert all("숫자" in r["why"] for r in item["removed"])
+    item = rd.check(1, "I got Rejuran and loved my results. Swelling can last a while, so ask your doctor.")
+    assert item["status"] == "ready" and item["removed"]                     # 시술 경험담만 뺀다
+    assert not rd.check(1, "I tried a mild sunscreen and my skin liked it. Swelling can last a while, ask your doctor.")["removed"]
+    with pytest.raises(rd.RedditError) as e:                                 # 번역 허용 기록이 없으면 한국어 글은 번역하지 않는다
+        rd.check(1, "붓기는 한동안 갈 수 있으니 의사에게 물어보세요.")
+    assert "번역허용" in str(e.value)
+    rd.allow("NoAI", False)                                                  # 링크 허용 확인이 없으면 안내 메시지에만
+    item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
+    assert "http" not in item["paste"] and "관련 글: https://skinboundkorea.com/fly/" in rd.paste_messages(item)[0]
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "disclosure_ai_label": "always"})
+    assert "AI-assisted" in rd.check(1, "Swelling can last a while, so ask your doctor about it.")["paste"]
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 1 사실")["args"] == ["pipeline.reddit", "facts", "1"]
+    assert router.parse("레딧 1 검사: - Swelling may last.")["args"] == ["pipeline.reddit", "check", "1", "--", "- Swelling may last."]
+    assert router.split_commands("레딧 1 검사: First line.\nSecond line.") == ["레딧 1 검사: First line.\nSecond line."]
+
+
+def test_reddit_records_stop_conditions_and_report(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("testsub", "Can I fly?"), ("testsub", "Can I fly 2?"), ("othersub", "Can I fly?"), ("othersub", "Can I fly 2?"))
+    for sub in ("testsub", "othersub"):
+        rd.allow(sub, False)
+    _reddit_answers(rd, monkeypatch)
+    rd.draft(1)
+    rd.done(1, "https://www.reddit.com/r/testsub/comments/abc1/x/c1/")
+    assert any("반응 기록" not in x for x in rd.report_lines()) and "게시 1" in rd.report_lines()[0]
+    assert "삭제" in rd.removed(1, "스팸")                                   # 삭제 → 그 커뮤니티 정지
+    assert rd.standing(rd.load(), "testsub")["mode"] == "stopped"
+    with pytest.raises(rd.RedditError):
+        rd.draft(2)
+    with pytest.raises(rd.RedditError):
+        rd.allow("testsub", False)                                           # 정지는 원문 확인으로 못 푼다
+    assert rd._add(rd.load(), "https://www.reddit.com/r/testsub/comments/zzz9/x/", "Fly?", "Fly?") is None
+    rd.resume("testsub")
+    assert rd.standing(rd.load(), "testsub")["mode"] == "unverified"         # 재개하면 원문 확인부터 다시
+
+    state = rd.load()                                                        # 같은 커뮤니티 연속 2개 0점 이하 → 정지
+    for n, day in ((3, "2026-10-01"), (4, "2026-10-02")):
+        rd._item(state, n).update(status="posted", done_at=f"{day}T10:00:00+09:00")
+    rd.save(state)
+    assert "멈췄" not in rd.react(3, 0, 1)
+    assert "멈췄" in rd.react(4, -1)
+    assert rd.standing(rd.load(), "othersub")["mode"] == "stopped"
+    with pytest.raises(rd.RedditError):
+        rd.react(2, 3)                                                       # 게시 안 한 글
+
+    rd.warn("all", "계정 제한")                                              # 경고 → 전체 정지
+    assert rd.standing(rd.load(), "anything")["mode"] == "paused"
+    assert "정지" in rd.find() and rd.weekly_message(datetime(2026, 11, 3, 11)) == ""
+    lines = "\n".join(rd.report_lines())
+    assert "전체 정지" in lines and "r/othersub" in lines and "삭제 누적 1" in lines
+    rd.resume("전체")
+    assert rd.standing(rd.load(), "anything")["mode"] == "unverified"
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 3 반응 5 답글 2")["args"] == ["pipeline.reddit", "react", "3", "5", "--replies", "2"]
+    assert router.parse("레딧 3 삭제됨 스팸")["args"] == ["pipeline.reddit", "removed", "3", "--note", "스팸"]
+    assert router.parse("레딧 경고 전체 계정 제한")["args"] == ["pipeline.reddit", "warn", "all", "--note", "계정 제한"]
+    assert router.parse("레딧 재개 testsub")["args"] == ["pipeline.reddit", "resume", "testsub"]
+    assert router.parse("레딧 운영진답변 NoMods 허용 링크허용 메일 답장")["args"] == [
+        "pipeline.reddit", "mods", "NoMods", "allowed", "--links", "--note", "메일 답장"]
+    assert router.parse("레딧 문의 NoMods")["args"] == ["pipeline.reddit", "asked", "NoMods"]
+    assert router.parse("레딧 기준")["args"] == ["pipeline.reddit", "communities"] and router._read_only("레딧 기준")
+
+
+def test_reddit_shared_link_asks_for_text_then_drafts(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    router = importlib.import_module("pipeline.telegram_router")
+    link = "https://www.reddit.com/r/SomeBeauty/s/r9B5i7yHB3"
+    assert router._reddit_request(link) == ["pipeline.reddit", "want", link, ""]
+    assert router._reddit_request(f"{link}?utm_source=share 비행 질문") == ["pipeline.reddit", "want", link, "비행 질문"]
+    assert router._reddit_request("레딧 1 완료 https://www.reddit.com/r/a/comments/b/c/") is None
+    assert router._reddit_request("언급 추가 커뮤니티 Reddit https://www.reddit.com/r/a/comments/b/c/") is None
+    assert "붙여 넣어" in rd.want(link) and rd.waiting_url() == link
+    assert router._reddit_request("Can I fly after this?") == ["pipeline.reddit", "want", link, "Can I fly after this?"]
+    assert router._reddit_request("1 승인") is None                          # 정해진 명령은 그대로
+    real_brief = rd.brief
+    monkeypatch.setattr(rd, "brief", lambda n: (_ for _ in ()).throw(rd.RedditError("정리 실패")))
+    assert "정리 실패" in rd.want(link, "Can I fly after this?") and not rd.waiting_url()
+    assert rd.load()["items"][0]["wanted"] and "정리 실패" in rd.want("https://www.reddit.com/r/SomeBeauty/s/other", "Which clinic is best?")  # 병원 질문도 정리한다
+    monkeypatch.setattr(rd, "brief", real_brief)          # monkeypatch.undo() 는 임시 content 폴더 설정까지 풀어 실제 state.json 에 쓴다
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+    assert rd.want(link, "Can I fly after this?") == "✅ 보냈습니다"                 # 정리는 커뮤니티 단계와 상관없이
+    assert rd.load()["items"][0]["status"] == "briefed" and stages == ["reddit_brief"]  # 규칙 모르는 곳은 초안 없음
+    assert "직접 써서" in sent[0] and "초안은 만들지 않았습니다" in sent[1] and "미확인" in sent[1]   # 초안이 없으면 이유를 알린다
+
+
+def test_reddit_brief_then_draft_in_active_community(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rd.allow("KoreaPlasticSurgery", False)                                   # 활동 단계 (AI 글 허용)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+    link = "https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0000/fly/"
+    assert rd.want(link, "Can I fly the next day after a skin booster?") == "✅ 보냈습니다"
+    assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"]
+    item = rd.load()["items"][0]
+    assert item["status"] == "ready" and item["brief"]["summary"] and rd.DISCLOSURE in item["paste"]   # AI 초안 = AI-assisted 표시
+    assert len(sent) == 4 and "이어서 조사·초안" in sent[0] and "찾지 못해" in sent[1] and sent[3] == item["paste"] and "레딧 1 방향:" in sent[2]
+    answers["reddit_answer"] = {"answerable": False, "reason": "사실 없음"}            # 초안이 막혀도 정리는 그대로 가고 이유를 알린다
+    sent.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0001/x/", "What should I pack for Seoul?")
+    assert len(sent) == 3 and "레딧 2 검사:" in sent[2]
+    answers["reddit_brief"] = {**answers["reddit_brief"], "skip_ko": "병원 추천 요청"}   # 답하지 말라는 정리면 초안 없음
+    stages.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0002/x/", "Where should I get a booster?")
+    assert stages == ["reddit_brief"]
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "auto_draft": False})
+    stages.clear()
+    rd.want("https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0003/x/", "Can I sauna after a booster?")
+    assert stages == ["reddit_brief"]
+
+
+def test_reddit_direction_keeps_opinion_but_blocks_treatment_promotion(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("testsub", "What 3 products should I buy in Korea?"))
+    rd.allow("testsub", True)
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_direct={"answerable": True, "body": "Personally I'd look for a mild sunscreen and a simple moisturizer.", "fact_ids": []})
+    item = rd.draft(1, "선크림과 보습제를 말해줘")
+    assert item["status"] == "ready" and stages[0] == "reddit_direct" and rd.DISCLOSURE in item["paste"]
+    assert "http" not in item["paste"]                                       # 근거 글이 없으면 링크도 없다
+    answers["reddit_direct"] = {"answerable": True, "body": "I'd recommend Re2O, and filler if you need it.", "fact_ids": []}
+    item = rd.draft(1, "리투오를 추천")
+    assert item["status"] == "blocked" and not item["paste"] and any("추천" in p for p in item["problems"])
+    answers["reddit_direct"] = {"answerable": False, "reason": "시술 추천은 쓰지 않습니다"}
+    assert "시술 추천" in rd.draft(1, "리투오를 추천")["problems"][0]
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 1 방향: 선크림 이야기")["args"] == ["pipeline.reddit", "direct", "1", "선크림 이야기"]
+
+
+def test_reddit_reads_unknown_rules_only_with_search_evidence(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("TravelBeauty", "Can I fly the next day?"), ("skincare", "Can I fly?"))
+    grounded = llm.LLMResult(text="rules", model="m", stage="reddit_rules", grounding_urls=[{"url": "https://reddit.com/x", "title": "reddit.com"}])
+    plain = llm.LLMResult(text="rules", model="m", stage="reddit_rules", grounding_urls=[])
+    search = [grounded]
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: search[0])
+    rules = {"found": True, "rules_ko": ["친절"], "source_url": "https://reddit.com/r/x/about/rules", "self_promotion": "limited", "ai_text": "unknown"}
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_rules_extract=rules)
+    item = rd.draft(1)                                                       # AI 가 찾은 규칙만으로는 연습 초안
+    assert item["status"] == "ready" and item["practice"] and "http" not in item["paste"]
+    assert rd.standing(rd.load(), "TravelBeauty")["mode"] == "unverified"
+    rd.allow("TravelBeauty", True)
+    assert "친절" in rd.paste_messages(rd.draft(1))[0]                       # 원문 확인 뒤 게시용, AI 요약 규칙도 같이
+
+    for change, mode in (({"self_promotion": "banned"}, "ask_mods"), ({"operators_banned": True}, "ask_mods"), ({"ai_text": "banned"}, "unverified")):
+        rd.reset("skincare")
+        answers["reddit_rules_extract"] = {**rules, **change}
+        item = rd.draft(2)
+        assert rd.standing(rd.load(), "skincare")["mode"] == mode
+        assert item["status"] == ("manual" if "ai_text" in change else "ready") and item["practice"]
+    rd.mods("skincare", "allowed")
+    assert rd.standing(rd.load(), "skincare")["mode"] == "manual"            # 허락돼도 AI 글 금지면 직접 작성
+
+    rd.reset("skincare")
+    search[0] = plain                                                        # 검색 근거 없는 답은 믿지 않는다
+    stages.clear()
+    assert rd.draft(2)["status"] == "manual" and "reddit_rules_extract" not in stages
+
+
+def test_reddit_weekly_find_runs_once_a_week(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: ({"threads": []}, None))
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
+    tuesday = datetime(2026, 11, 3, 11)
+    first = rd.weekly_message(tuesday)
+    assert "규칙 주간 조사" in first and "후보" in first and rd.weekly_message(tuesday) == ""   # 주 1회: 규칙 조사 → 후보
+    assert rd.weekly_message(datetime(2026, 11, 4, 11)) == ""
+    monkeypatch.setattr(rd, "settings", lambda: {**REDDIT_TEST_CFG, "weekly_find": False})
+    assert rd.weekly_message(datetime(2026, 11, 10, 11)) == ""                   # 끄면 화요일에도 안 찾는다 (2026-11-09)
+
+
+def test_reddit_real_config_sets_initial_stages(env):
+    rd = importlib.import_module("pipeline.reddit")
+    state = rd.load()
+    stages = {sub: rd.standing(state, sub) for sub in ("KoreanBeauty", "KoreaTravelBeauty", "koreatravel", "SkincareAddiction", "PlasticSurgery")}
+    assert {k: v["mode"] for k, v in stages.items()} == {"KoreanBeauty": "ask_mods", "KoreaTravelBeauty": "ask_mods", "koreatravel": "excluded",
+                                                        "SkincareAddiction": "unverified", "PlasticSurgery": "excluded"}
+    assert stages["KoreaTravelBeauty"]["writer"] == "facts" and stages["SkincareAddiction"]["writer"] == "facts"
+    assert not [s for s in stages.values() if s["writer"] == "post"]          # 2026-11-02: 바로 게시할 수 있는 곳 없음
+    assert rd.standing(state, "SeoulPlasticSurgery")["writer"] == "facts"      # 단계만 있고 조사 없는 곳은 규칙을 모르는 곳
+    assert rd.standing(state, "AsianBeauty")["mode"] == "excluded"               # 원문 확인: AI·시술 주제 금지
+    assert rd.check_marks(state, "AsianBeauty") == {"AI": "✕", "링크": "△", "시술": "✕"}
+    assert rd.OPERATOR_LINE in rd.DISCLOSURE and rd.OPERATOR_LINE in rd.DISCLOSURE_OPERATOR
+
+
+def test_reddit_korean_text_uses_machine_translation_where_allowed(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    mt = importlib.import_module("pipeline.machine_translate")
+    assert mt.is_korean("붓기는 한동안 갈 수 있어요. Rejuran 후에") and not mt.is_korean("Swelling may last. 한국")
+    _reddit_items(rd, ("NoAI", "Can I fly the next day?"))
+    rd.allow("NoAI", False, mt=True)
+    _reddit_answers(rd, monkeypatch)
+    calls = []
+    monkeypatch.setattr(mt, "_translator", lambda text: (calls.append(text), "Swelling can last a while, so ask your doctor. It lasts 3 days.")[1])
+    item = rd.check(1, "붓기는 한동안 갈 수 있으니 의사에게 물어보세요. 3일 정도 가요.")
+    assert calls and item["translated"] and item["original"].startswith("붓기는")
+    assert item["body"] == "Swelling can last a while, so ask your doctor."             # 번역 뒤에도 숫자 문장은 뺀다
+    assert rd.TRANSLATED_LINE in item["paste"] and rd.OPERATOR_LINE in item["paste"] and "AI-assisted" not in item["paste"]
+    assert "Google 번역" in rd.paste_messages(item)[0]
+    monkeypatch.setattr(mt, "_translator", None)
+    monkeypatch.delenv("GOOGLE_TRANSLATE_API_KEY", raising=False)
+    with pytest.raises(rd.RedditError) as e:
+        rd.check(1, "붓기는 한동안 갈 수 있어요.")
+    assert "GOOGLE_TRANSLATE_API_KEY" in str(e.value)
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 운영진답변 NoAI 허용 번역허용")["args"] == ["pipeline.reddit", "mods", "NoAI", "allowed", "--mt"]
+
+
+def test_reddit_weekly_rules_research_reports_changes(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("testsub", "Can I fly?"))
+    rd.allow("testsub", False)
+    grounded = llm.LLMResult(text="rules", model="m", stage="reddit_rules", grounding_urls=[{"url": "https://reddit.com/r/testsub/about/rules", "title": "r"}])
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: grounded)
+    rules = {"found": True, "rules_ko": ["친절"], "self_promotion": "limited", "ai_text": "unknown", "links": "banned"}
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_rules_extract=rules)
+    lines = rd.refresh_rules()                                               # 설정 커뮤니티(제외 빼고) + 기록된 커뮤니티 전부
+    assert {line.split(":")[0] for line in lines} == {"r/NoMods", "r/NoAI", "r/testsub"}
+    assert rd.refresh_rules() == [] and stages.count("reddit_rules_extract") == 3   # 7일 안에는 다시 안 본다
+    answers["reddit_rules_extract"] = {**rules, "links": "allowed"}
+    lines = rd.refresh_rules(force=True)
+    assert any(line.startswith("r/testsub: 링크 금지→허용") for line in lines)
+    st = rd.standing(rd.load(), "testsub")
+    assert not st["links"] and rd.check_marks(rd.load(), "testsub")["링크"] == "○"   # 조사 결과는 표시만, 링크는 운영자가 켤 때만
+    item = rd.check(1, "Swelling can last a while, so ask your doctor before flying.")
+    assert "http" not in item["paste"] and "링크허용" in rd.paste_messages(item)[0]
+    rd.allow("testsub", True)
+    assert "https://skinboundkorea.com/fly/" in rd.check(1, "Swelling can last a while, so ask your doctor before flying.")["paste"]
+    answers["reddit_rules_extract"] = {**rules, "operators_banned": True, "links": "allowed"}
+    assert any("단계 활동→문의 필요" in line for line in rd.refresh_rules(force=True))   # 더 엄격해지면 바로 반영
+    monkeypatch.setattr(rd.llm, "generate", lambda stage, text: llm.LLMResult(text="x", model="m", stage=stage, grounding_urls=[]))
+    rd.refresh_rules(force=True)                                             # 못 찾으면 전 조사를 지우지 않는다
+    assert rd.load()["subs"]["testsub"]["research"]["found"] and rd.load()["subs"]["testsub"]["research"]["refresh_failed"]
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙 조사")["args"] == ["pipeline.reddit", "rules", "--force"]
+
+
+def test_reddit_treatment_topic_ban_uses_skincare_posts_only(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    posts = [{"key": "fly", "title": "Flying", "url": "https://skinboundkorea.com/fly/", "skincare": False,
+              "facts": [{"id": "F1", "text": "Swelling may last after a booster.", "url": "https://aad.org/x"}]},
+             {"key": "spf", "title": "Sunscreen", "url": "https://skinboundkorea.com/spf/", "skincare": True,
+              "facts": [{"id": "F1", "text": "Reapply sunscreen when outdoors.", "url": "https://fda.gov/x"}]}]
+    monkeypatch.setattr(rd, "_live_posts", lambda: posts)
+    _reddit_items(rd, ("beautysub", "Sunscreen for Seoul trip?"))
+    rd.allow("beautysub", True, no_treatments=True)
+    st = rd.standing(rd.load(), "beautysub")
+    assert st["treatments_banned"] and rd.check_marks(rd.load(), "beautysub") == {"AI": "?", "링크": "○", "시술": "✕"}
+    prompts = []
+    answers, _stages = _reddit_answers(rd, monkeypatch, reddit_answer={"answerable": True, "body": "Reapply sunscreen when you are outdoors.", "fact_ids": ["P1:F1"]})
+    real = rd.llm.generate_json
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), real(stage, text))[1])
+    item = rd.draft(1)
+    assert item["status"] == "ready" and "Sunscreen" in prompts[0] and "Flying" not in prompts[0]    # 화장품 글만 근거
+    item = rd.check(1, "Reapply sunscreen when you are outdoors in Seoul. A skin booster procedure needs downtime.")
+    assert item["body"] == "Reapply sunscreen when you are outdoors in Seoul." and "시술 주제 금지" in item["removed"][0]["why"]
+    monkeypatch.setattr(rd, "_live_posts", lambda: posts[:1])
+    with pytest.raises(rd.RedditError) as e:
+        rd.draft(1)
+    assert "화장품 글" in str(e.value)
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 규칙확인 beautysub AI금지 시술금지")["args"] == [
+        "pipeline.reddit", "allow", "beautysub", "--no-ai", "--no-treatments"]
+    assert "AI 글 · 링크 · 시술 주제" in rd.communities_message()
+
+
+def test_reddit_focus_limits_search_and_rules_research(env, monkeypatch):
+    rd = _reddit_env(monkeypatch, focus=["KoreaPlasticSurgery", "CosmeticSurgery"])
+    threads = [{"url": "https://www.reddit.com/r/KoreaPlasticSurgery/comments/1zz0000/fly/", "title": "Fly?", "question": "Can I fly after a booster?"},
+               {"url": "https://www.reddit.com/r/SeoulPlasticSurgery/comments/1zz0001/fly/", "title": "Fly?", "question": "Can I fly?"},
+               {"url": "https://www.reddit.com/r/cosmeticsurgery/comments/1zz0002/x/", "title": "Downtime?", "question": "How long is downtime?"}]
+    prompts = []
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append(text), ({"threads": threads}, None))[1])
+    rd.find()
+    assert [i["sub"] for i in rd.load()["items"]] == ["KoreaPlasticSurgery", "cosmeticsurgery"]      # 보는 곳 밖은 버림
+    assert "r/KoreaPlasticSurgery, r/CosmeticSurgery" in prompts[0]
+    researched = []
+    monkeypatch.setattr(rd, "look_up_rules", lambda sub: (researched.append(sub), {"found": False, "checked": "2026-11-03"})[1])
+    rd.refresh_rules(force=True)
+    assert researched == ["KoreaPlasticSurgery", "CosmeticSurgery"]                                  # 규칙 조사도 보는 곳만
+    message = rd.communities_message()
+    assert message.splitlines()[1].startswith("★ r/") and "★ = 보는 커뮤니티" in message
+
+
+def test_reddit_brief_is_private_and_ignores_community_stage(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    _reddit_items(rd, ("koreatravel", "Can I fly the next day?"))
+    state = rd.load()                                                        # 제외 커뮤니티 글도 운영자용 정리는 만든다
+    rd._add(state, "https://www.reddit.com/r/Banned/comments/abc9/x/", "Fly?", "Can I fly the next day?", any_sub=True)
+    rd.save(state)
+    answers, stages = _reddit_answers(rd, monkeypatch)
+    item = rd.brief(2)
+    assert stages == ["reddit_brief"] and item["status"] == "briefed"
+    message = rd.paste_messages(item)
+    assert len(message) == 1
+    text = message[0]
+    for part in ("시술 뒤 비행 질문", "붓기 기간", "https://skinboundkorea.com/fly/", "기내 기압", "의사 확인 권고", "레딧 2 검사:", "제외"):
+        assert part in text, part
+    answers["reddit_brief"] = {**answers["reddit_brief"], "covered": [{"fact_id": "P9:F9", "why_ko": "없는 사실"}], "skip_ko": "병원 추천 요청"}
+    text = rd.paste_messages(rd.brief(2))[0]
+    assert "없는 사실" not in text and "답하지 않는 게 좋습니다" in text   # 목록에 없는 사실 번호는 버린다
+    assert "정리됨" in rd.list_message()
+    assert importlib.import_module("pipeline.telegram_router").parse("레딧 2 정리")["args"] == ["pipeline.reddit", "brief", "2"]
+
+
+def test_reddit_room_pasted_text_and_claude_context(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    router = importlib.import_module("pipeline.telegram_router")
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: True)
+    pasted = "r/KoreaPlasticSurgery\nFlying home after skin booster in Seoul?\n" + "I had a skin booster in Gangnam and my flight is the next morning. " * 3
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER", raising=False)
+    assert router._reddit_request(pasted) is None                              # 방을 나누지 않으면 붙여 넣은 글로 보지 않는다
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009")
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009")
+    assert router._reddit_request(pasted) == ["pipeline.reddit", "want-text", "--", pasted.strip()]
+    assert router._reddit_request("왜 정리가 안 와?") is None                     # 짧은 말은 Claude 대화로
+    assert rd.want_text(pasted) == "✅ 보냈습니다" and stages == ["reddit_brief"]
+    item = rd.load()["items"][0]
+    assert item["sub"] == "KoreaPlasticSurgery" and item["url"] == "" and item["status"] == "briefed"
+    assert item["title"] == "Flying home after skin booster in Seoul?"
+    rd.want_text(pasted)
+    assert len(rd.load()["items"]) == 1                                         # 같은 글은 한 번만
+    rd.want_text("No subreddit named here. " * 8)
+    assert rd._item(rd.load(), 2)["sub"] == "unknown" and "커뮤니티 KoreaSeoulBeauty" in rd.brief_message(rd._item(rd.load(), 2))
+    assert router.parse("레딧 2 커뮤니티 r/CosmeticSurgery")["args"] == ["pipeline.reddit", "set-sub", "2", "CosmeticSurgery"]
+    rd.set_sub(2, "CosmeticSurgery")
+    assert rd._item(rd.load(), 2)["sub"] == "CosmeticSurgery"
+    assert rd.want_text("Which clinic is best for skin boosters in Seoul? " * 4) == "✅ 보냈습니다"           # 병원 질문도 정리 (이름 없이 기준으로)
+
+    seen = {}
+    monkeypatch.setattr(router, "run", lambda args: f"[{args[1]}]")
+    monkeypatch.setattr(router.llm, "generate_json", lambda stage, text: (seen.update(text=text), ({"reply": "답", "commands": []}, None))[1])
+    router.chat("2번 왜 아직 안 됐어?")
+    assert "[Reddit 방 명령어]" in seen["text"] and "[list]" in seen["text"] and "[communities]" in seen["text"]
+    assert "reddit state.json" in seen["text"] and "검수 목록" not in seen["text"].split("COMMANDS:")[1].split("CURRENT STATUS:")[0]
+
+
+def test_reddit_rules_are_separate_and_clinic_questions_get_criteria(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rules = common.read_prompt("_reddit_rules")
+    assert "clinic" in rules and "medicalkorea.or.kr" in rules and "how do I choose" in rules
+    for name in ("reddit_answer", "reddit_brief", "reddit_direct", "reddit_facts"):        # 블로그 규칙 대신 Reddit 규칙
+        text = rd.prompt(name, subreddit="s", title="t", question="q", facts="f", direction="d")
+        assert "REDDIT RULES" in text and "Olive Young" not in text, name
+    for text in ("Which clinic is best for skin boosters in Seoul?", "Need Korean skin clinic recs", "Any good derms in Gangnam?",
+                 "How do I choose a clinic for Rejuran? Any red flags?", "Tips for choosing a dermatologist in Seoul"):
+        assert rd.clinic_question(text), text                                    # 병원 질문은 거르지 않고 기준으로 답한다
+    assert not rd.clinic_question("What did your doctor say about flying?")
+    assert "Answer any question" in rules and "do not rank them or end with a pick" in rules
+    rd.allow("KoreaSeoulBeauty", False)
+    answers, stages = _reddit_answers(rd, monkeypatch, reddit_answer={"answerable": True, "fact_ids": [],
+        "body": "Check that the clinic is on Medical Korea's registered list, and ask for a written quote before paying. Your doctor can confirm what suits you."})
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: True)
+    rd.want("https://www.reddit.com/r/KoreaSeoulBeauty/comments/1zz0000/x/", "How do I choose a clinic for skin boosters? Any red flags?")
+    assert rd.load()["items"][0]["status"] == "ready"                            # 기준 답변은 사실 번호 없이도 된다
+
+
+def test_reddit_research_step_finds_sources_and_keeps_only_quoted_facts(env, monkeypatch):
+    rd = _reddit_env(monkeypatch)
+    rd.allow("KoreaSeoulBeauty", False)
+    page = "Rejuran is a polynucleotide injection. Mild swelling and redness may last a few days after treatment. " * 8
+    pages = {"https://pubmed.ncbi.nlm.nih.gov/123/": (200, page), "https://www.seoulskinclinic.com/rejuran": (200, page)}
+    fetched = []
+    web.set_fetcher(lambda url: (fetched.append(url), pages.get(url, (0, "")))[1])
+    try:
+        answers, stages = _reddit_answers(rd, monkeypatch,
+            reddit_research={"sources": [{"url": "https://pubmed.ncbi.nlm.nih.gov/123/", "title": "Review"},
+                                         {"url": "https://www.seoulskinclinic.com/rejuran", "title": "Clinic"}]},
+            reddit_research_read={"facts": [
+                {"id": "F1", "text": "Mild swelling and redness may last a few days after Rejuran.", "source": "S1",
+                 "quote": "Mild swelling and redness may last a few days after treatment."},
+                {"id": "F2", "text": "Rejuran is painless.", "source": "S1", "quote": "Rejuran is painless."}], "summary_ko": ["리쥬란: 주사 뒤 붓기·붉어짐이 며칠 갈 수 있음"], "missing_ko": ["Prime 통증 비교는 병원 홍보 자료뿐"]},
+            reddit_answer={"answerable": True, "fact_ids": ["R:F1"], "body": "Mild swelling and redness may last a few days after Rejuran, so ask your doctor what applies to you."})
+        sent = []
+        monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+        rd.want("https://www.reddit.com/r/KoreaSeoulBeauty/comments/1zz0000/x/", "Rejuran or Juvelook for my first trip? How long is the swelling?")
+    finally:
+        web.set_fetcher(None)
+    item = rd.load()["items"][0]
+    assert stages == ["reddit_brief", "reddit_research", "reddit_research_read", "reddit_research", "reddit_answer", "reddit_review"]  # 빈 부분은 한 번 더 찾는다
+    router = importlib.import_module("pipeline.telegram_router")
+    seen = {}
+    monkeypatch.setattr(router.subprocess, "run", lambda *a, **k: (seen.update(k), subprocess.CompletedProcess(a, 0, "ok", ""))[1])
+    router.run(["pipeline.reddit", "want", "x", "y"])
+    assert seen["timeout"] == router.LONG_RUN_TIMEOUT > router.RUN_TIMEOUT                   # 정리→조사→초안은 10분을 넘길 수 있다
+    assert "https://www.seoulskinclinic.com/rejuran" not in fetched                 # 병원 사이트는 출처로 받지 않는다
+    assert [f["id"] for f in item["research"]["facts"]] == ["F1"]                    # 인용이 페이지에 없는 사실은 버린다
+    assert "[Reddit 1번 조사]" in sent[1] and "http" not in sent[1] and "Prime 통증 비교" in sent[1]   # 출처 나열 없이
+    assert "초안에 이렇게 반영합니다" in sent[1] and "리쥬란: 주사 뒤 붓기" in sent[1]                    # 무엇을 반영하는지 한국어로
+    assert item["status"] == "ready" and "https://pubmed.ncbi.nlm.nih.gov/123/" in item["sources"]
+    assert "skinboundkorea.com" not in item["paste"]                                 # 조사 출처는 관련 글 링크가 아니다
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("레딧 1 조사")["args"] == ["pipeline.reddit", "research", "1"]
+    assert router.parse("레딧 1 조사: 스킨부스터, 컨시어지")["args"] == ["pipeline.reddit", "research", "1", "--", "스킨부스터, 컨시어지"]
+    prompts = []
+    real = rd.llm.generate_json
+    monkeypatch.setattr(rd.llm, "generate_json", lambda stage, text: (prompts.append((stage, text)), real(stage, text))[1])
+    stages.clear()
+    rd.research_and_draft(1, "스킨부스터, 컨시어지")                                    # 주제를 더 찾고 초안까지 다시
+    assert "reddit_answer" in stages and "- 스킨부스터" in prompts[0][1] and "- 컨시어지" in prompts[0][1]
+
+
+def test_reddit_pasted_text_without_subreddit_uses_home_and_set_sub_continues(env, monkeypatch):
+    rd = _reddit_env(monkeypatch, focus=["KoreaSeoulBeauty", "KoreaPlasticSurgery"])
+    rd.allow("KoreaSeoulBeauty", False)
+    _answers, stages = _reddit_answers(rd, monkeypatch)
+    sent = []
+    monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda m, target=None: sent.append(m) or True)
+    rd.want_text("Ultherapy vs Ultherapy Prime, anyone done both? I had it once four years ago and want it redone. " * 3)
+    item = rd.load()["items"][0]
+    assert item["sub"] == "KoreaSeoulBeauty" and "본거지 글로 봄" in sent[0]   # r/이름이 없으면 본거지
+    assert stages == ["reddit_brief", "reddit_research", "reddit_answer", "reddit_review"] and item["status"] == "ready"
+    state = rd.load()                                                                # 예전에 r/unknown 으로 기록된 같은 글을 다시 보내면 본거지로
+    state["items"][0].update(sub="unknown", status="briefed")
+    rd.save(state)
+    rd.want_text("Ultherapy vs Ultherapy Prime, anyone done both? I had it once four years ago and want it redone. " * 3)
+    assert rd.load()["items"][0]["sub"] == "KoreaSeoulBeauty"
+    state = rd.load()                                                                # 정리만 받은 글에 커뮤니티를 알려 주면 바로 조사 → 초안
+    state["items"].append({**item, "n": 2, "thread": "x2", "sub": "unknown", "status": "briefed"})
+    rd.save(state)
+    stages.clear()
+    rd.set_sub(2, "KoreaSeoulBeauty")
+    assert stages == ["reddit_research", "reddit_answer", "reddit_review"] and rd._item(rd.load(), 2)["status"] == "ready"
+
+
+def test_mentions_ledger(env):
+    mentions = importlib.import_module("pipeline.mentions")
+    item = mentions.add("디렉터리", "Seoul travel blog list", "https://example.com/list", paid=True)
+    assert item["kind"] == "directory" and "sponsored" in mentions.list_message()
+    for name in ("Wikipedia", "Best clinic Seoul list"):
+        with pytest.raises(mentions.MentionError):
+            mentions.add("기타", name)
+    with pytest.raises(mentions.MentionError):
+        mentions.add("뉴스", "x")
+    mentions.set_status(1, "신청")
+    with pytest.raises(mentions.MentionError):
+        mentions.set_status(1, "게재")                                       # 게재는 주소와 함께
+    state = mentions.load()
+    state["items"][0]["history"][-1]["at"] = "2026-09-01T10:00:00+09:00"
+    mentions.save(state)
+    assert "답 없음" in "\n".join(mentions.report_lines())
+    mentions.set_status(1, "게재", "https://example.com/list#skinbound")
+    assert "게재 1 (이번 주 새로 1)" in mentions.report_lines()[0]
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("언급 추가 기고 Korea Travel Mag https://mag.example/write 유료")["args"] == [
+        "pipeline.mentions", "add", "기고", "Korea Travel Mag", "--url", "https://mag.example/write", "--paid"]
+    assert router.parse("언급 1 거절 답장 옴")["args"] == ["pipeline.mentions", "set", "1", "거절", "--note", "답장 옴"]
+    assert router._read_only("언급 목록")
+
+
+def test_dataset_refresh_keeps_previous_baseline(env, monkeypatch):
+    ds = importlib.import_module("pipeline.dataset")
+    common = importlib.import_module("pipeline.common")
+    monkeypatch.setattr(ds, "near_attractions", lambda: [])
+    monkeypatch.setattr(ds, "fill_regions", lambda: [])
+    old = {"as_of": "2026-11-02", "regions": [], "totals": {"total": 1}}
+    common.save_json(ds.data_file(), old)
+    raw = [{"sidoCdNm": "서울", "sgguCdNm": "강남구", "clCdNm": "의원", "yadmNm": "일반의원"}]
+    ds.refresh(lambda params: {"totalCount": 1, "items": {"item": raw}})
+    assert common.load_json(ds.history_dir() / "2026-11-02.json") == old
+    assert ds.load()["totals"]["total"] == 1 and ds.load()["regions"]
+
+
+def test_dataset_aggregates_without_institution_details(env, monkeypatch):
+    ds = importlib.import_module("pipeline.dataset")
+    site = importlib.import_module("pipeline.site")
+    secret = {"yadmNm": "비밀피부과의원", "addr": "SECRET-ADDR", "telno": "02-SECRET", "hospUrl": "https://secret.example", "XPos": "1", "YPos": "2"}
+    raw = [{**secret, "sidoCdNm": "서울", "sgguCdNm": "강남구", "clCdNm": "의원"},
+           {**secret, "yadmNm": "일반의원", "sidoCdNm": "서울", "sgguCdNm": "강남구", "clCdNm": "의원"},
+           {**secret, "yadmNm": "대학병원", "sidoCdNm": "부산", "sgguCdNm": "해운대구", "clCdNm": "상급종합"}]
+    calls = []
+
+    def get(params):
+        calls.append(params)
+        return {"totalCount": 3, "items": {"item": raw}}
+    monkeypatch.setattr(ds, "near_attractions", lambda: [{"name": "Coex", "radius_m": 700, "institutions": 5, "as_of": "2026-10-01"}])
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "강남구": "Gangnam-gu", "부산": "Busan", "해운대구": "Haeundae-gu"})
+    data = ds.refresh(get)
+    assert calls[0]["dgsbjtCd"] == "14" and data["totals"] == {"total": 3, "clinics": 2, "hospitals": 1, "named_dermatology": 1}
+    assert data["regions"][0]["sggu"] == "강남구" and data["regions"][0]["total"] == 2
+    cfg = {**site.config(), "data_page": True}
+    published = "\n".join([ds.data_file().read_text(encoding="utf-8"), ds.to_csv(data), site.render_data(cfg, data)])
+    for word in ("비밀", "SECRET", "secret.example", "일반의원", "대학병원"):
+        assert word not in published                                          # 공개물에 기관 정보 없음
+    assert "not counts of dermatologists" in published and '"@type": "Dataset"' in published
+    assert site.data_ready({"data_page": False}) is None                      # 켜기 전에는 공개하지 않는다
+    assert "/data/" not in site.render_sitemap({**site.config(), "data_page": False}, [])
+    with pytest.raises(ds.DatasetError):
+        ds.fetch_rows(lambda p: {"totalCount": 3, "items": {"item": raw[:1]}})  # 덜 읽으면 실패
+
+
+def test_index_effect_compares_slopes_with_control_group(env):
+    sc = importlib.import_module("pipeline.search_console")
+    assert sc.slope([1, 2, 3]) == 1 and sc.slope([5]) == 0
+    requested = next(iter(sc.INDEX_REQUESTED))
+    control = next(iter(sc.INDEX_CONTROL))
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            rows = []
+            for week, (req, ctl) in enumerate([(0, 1), (1, 1), (2, 1), (5, 1), (15, 2), (30, 3)]):
+                day = (date(2026, 10, 12) + timedelta(days=7 * week)).isoformat()
+                rows += [{"keys": [day, f"https://x/{requested}/"], "impressions": req}, {"keys": [day, f"https://x/{control}/"], "impressions": ctl},
+                         {"keys": [day, "https://x/new-post/"], "impressions": 99}]
+            return {"rows": rows}
+
+    class Session:
+        def post(self, url, json, timeout):
+            return Resp()
+    early = sc.index_effect(date(2026, 11, 12), Session())
+    assert early["done"] == 1 and "판정 전" in sc.effect_verdict(early)
+    data = sc.index_effect(date(2026, 11, 30), Session())
+    assert data["weeks"]["requested"] == [0, 1, 2, 5, 15, 30] and data["requested"]["before"] == 1 and data["requested"]["after"] == 12.5
+    assert "효과 가능성" in sc.effect_verdict(data)
+    assert "판정 불가" in sc.effect_verdict({**data, "weeks": {"requested": [0, 0, 0, 1, 2, 3], "control": [0] * 6}})
+    assert "비교군도" in sc.effect_verdict({**data, "control": {"before": 0, "after": 20}})
+    assert "변화 없음" in sc.effect_verdict({**data, "requested": {"before": 3, "after": 1}})
+
+
+def test_bing_submit_and_index_line_hide_the_key(env, monkeypatch):
+    sc = importlib.import_module("pipeline.search_console")
+    sent = []
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"d": [{"InIndex": 1, "InLinks": 0}, {"InIndex": 11, "InLinks": 2}]}'
+
+    def urlopen(req, timeout=0):
+        sent.append(req)
+        return Resp()
+    monkeypatch.setattr(sc.urllib.request, "urlopen", urlopen)
+    assert sc.bing_submit([f"https://x/{i}/" for i in range(150)], "KEY") == 100
+    assert len(json.loads(sent[0].data)["urlList"]) == 100 and "SubmitUrlBatch" in sent[0].full_url
+    assert sc.bing_index("KEY") == {"in_index": 11, "in_links": 2}
+
+    def fail(req, timeout=0):
+        raise urllib.error.URLError("https://x?apikey=KEY")
+    monkeypatch.setattr(sc.urllib.request, "urlopen", fail)
+    with pytest.raises(sc.SearchError) as e:
+        sc.bing_submit(["https://x/"], "KEY")
+    assert "KEY" not in str(e.value)
+
+
+def test_search_console_reports_changes_and_missing_setup(env, monkeypatch):
+    sc = importlib.import_module("pipeline.search_console")
+    monkeypatch.delenv("GSC_SERVICE_ACCOUNT_FILE", raising=False)
+    monkeypatch.delenv("BING_WEBMASTER_KEY", raising=False)
+    assert sc.report_lines() == ["🔍 구글 검색: 연결 안 됨", "🔍 Bing 검색: 연결 안 됨"]
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    class Session:
+        def post(self, url, json, timeout):
+            if "urlInspection" in url:
+                return Resp({"inspectionResult": {"indexStatusResult": {"coverageState": "Submitted and indexed"}}})
+            key = json["dimensions"][0]
+            recent = json["startDate"] == "2026-10-24"
+            return Resp({"rows": [{"keys": ["https://x/a/" if key == "page" else "rejuran"], "clicks": 2 if recent else 1, "impressions": 30 if recent else 10, "position": 12.5}]})
+    data = sc.gsc_stats(7, date(2026, 11, 2), Session())
+    assert data["totals"] == {"clicks": 2, "impressions": 30} and data["previous"]["impressions"] == 10
+    assert sc.index_status(["https://x/a/"], Session())["Submitted and indexed"] == 1
+    monkeypatch.setenv("GSC_SERVICE_ACCOUNT_FILE", "x.json")
+    monkeypatch.setattr(sc, "_session", Session)
+    monkeypatch.setattr(sc, "index_status", lambda urls, session=None: Counter({"Submitted and indexed": 1}))
+    monkeypatch.setattr(sc, "effect_lines", lambda today=None, session=None: [])
+    text = "\n".join(sc.report_lines(7, date(2026, 11, 2)))
+    assert "노출 10 → 30" in text and "rejuran (30)" in text and "12.5위" in text and "색인: Submitted and indexed 1" in text
+
+
+def _note_data():
+    return {"as_of": "2026-11-02", "totals": {"total": 1000, "clinics": 900, "hospitals": 100, "named_dermatology": 100},
+            "regions": [{"sido": "서울", "sggu": "강남구", "total": 500, "clinics": 490, "hospitals": 10, "named_dermatology": 80},
+                        {"sido": "부산", "sggu": "해운대구", "total": 300, "clinics": 290, "hospitals": 10, "named_dermatology": 10},
+                        {"sido": "경기", "sggu": "분당구", "total": 200, "clinics": 120, "hospitals": 80, "named_dermatology": 10}], "attractions": []}
+
+
+def test_data_note_checks_numbers_and_publishes_only_after_approval(env, monkeypatch):
+    dn = importlib.import_module("pipeline.data_notes")
+    ds = importlib.import_module("pipeline.dataset")
+    site = importlib.import_module("pipeline.site")
+    monkeypatch.setattr(ds, "load", _note_data)
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "강남구": "Gangnam-gu", "부산": "Busan", "해운대구": "Haeundae-gu", "경기": "Gyeonggi", "분당구": "Bundang-gu"})
+    assert "50.0%" in dn.build_where(_note_data())["numbers"] and "Gangnam-gu, Seoul: 500" in dn.build_where(_note_data())["numbers"]
+    good = {"title": "Half of institutions are in Seoul", "description": "As of 2026-11-02.", "markdown": "As of 2026-11-02, Seoul has 500 institutions, 50.0% of 1,000.\n\n<script>x</script>## Why?\nThe data cannot say."}
+    answers = {"data_note_write": good, "data_note_review": {"ok": True, "issues": [], "ko": "번역"}}
+    monkeypatch.setattr(dn.llm, "generate_json", lambda stage, text: (answers[stage], None))
+    note = dn.draft("where")
+    assert note["status"] == "review" and "데이터글 승인" in dn.review_message(note) and dn.published() == []
+    cfg = {**site.config(), "data_page": True}
+    assert "/data/notes/where/" not in site.render_sitemap(cfg, [])            # 승인 전에는 공개 안 됨
+    assert dn.main(["approve"]) == 0                                           # 검수 대기 글이 하나면 id 없이
+    assert [n["id"] for n in dn.published()] == ["where"]
+    html = site.render_note(cfg, dn.published()[0])
+    assert "not a count of dermatologists" in html and "<script" not in html.split("</head>")[1].split("<footer")[0] and "/data/notes/where/" in site.render_sitemap(cfg, [])
+
+    answers["data_note_write"] = {**good, "markdown": "Seoul has 777 institutions."}   # 목록에 없는 숫자
+    note = dn.draft("where")
+    assert note["status"] == "blocked" and any("777" in p for p in note["problems"]) and "⛔" in dn.review_message(note)
+    assert dn.main(["approve", "where"]) == 2 and dn.published() == []         # 걸린 글은 승인 불가
+    answers["data_note_write"] = good
+    answers["data_note_review"] = {"ok": False, "issues": [{"problem": "과한 해석"}], "ko": ""}
+    assert dn.draft("where")["problems"] == ["과한 해석"]
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse("데이터글 승인 where")["args"] == ["pipeline.data_notes", "approve", "where"]
+    assert router.parse("데이터글 승인")["args"] == router.parse("Where 승인")["args"] == ["pipeline.data_notes", "approve"]
+
+
+def test_changes_note_compares_snapshots_by_hand_checked_numbers(env, monkeypatch):
+    dn = importlib.import_module("pipeline.data_notes")
+    ds = importlib.import_module("pipeline.dataset")
+    row = lambda sido, sggu, total: {"sido": sido, "sggu": sggu, "total": total}
+    old = {"as_of": "2026-11-02", "totals": {"total": 340}, "regions": [row("서울", "강남구", 200), row("부산", "해운대구", 100), row("경기", "분당구", 30), row("서울", "옛구", 10)]}
+    new = {"as_of": "2027-01-01", "totals": {"total": 347}, "regions": [row("서울", "강남구", 210), row("부산", "해운대구", 95), row("경기", "분당구", 30), row("서울", "새구", 12)]}
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "부산": "Busan", "경기": "Gyeonggi", "강남구": "Gangnam-gu", "해운대구": "Haeundae-gu", "분당구": "Bundang-gu", "옛구": "Old-gu", "새구": "New-gu"})
+    spec = dn.build_changes(new, old)
+    text = spec["numbers"]
+    assert "nationwide: increased by 7, from 340 to 347 (+2.1%)" in text
+    assert "Seoul: increased by 12, from 210 to 222 (+5.7%)" in text and "Busan: decreased by 5, from 100 to 95 (-5.0%)" in text
+    assert "Gangnam-gu, Seoul: increased by 10, from 200 to 210 (+5.0%)" in text and "Haeundae-gu, Busan: decreased by 5, from 100 to 95 (-5.0%)" in text
+    assert "Districts compared: 3" in text and "Districts that increased: 1" in text and "Districts that decreased: 1" in text and "Districts unchanged: 1" in text
+    assert "only one date, not compared: 2" in text and "Old-gu" not in text and "New-gu" not in text     # 이름 변경을 증감으로 치지 않는다
+    assert spec["table"][1] == ["Gangnam-gu, Seoul", "200", "210", "+10", "+5.0%"] and spec["table"][2][3] == "-5"
+
+    monkeypatch.setattr(ds, "load", lambda: new)
+    with pytest.raises(dn.NoteError, match="이전 데이터"):
+        dn.draft("changes")                                                    # 기준이 없으면 만들지 않는다
+    common.save_json(ds.history_dir() / "2026-11-02.json", old)
+    common.save_json(ds.history_dir() / "2027-01-01.json", new)                # 같은 날 다시 갱신해도
+    assert ds.previous_snapshot("2027-01-01")["as_of"] == "2026-11-02"         # 자기 자신과 비교하지 않는다
+    good = {"title": "A small net rise", "description": "From 2026-11-02 to 2027-01-01.", "markdown": "From 340 to 347 between 2026-11-02 and 2027-01-01, per HIRA."}
+    answers = {"data_note_write": good, "data_note_review": {"ok": True, "issues": [], "ko": "번역"}}
+    monkeypatch.setattr(dn.llm, "generate_json", lambda stage, text: (answers[stage], None))
+    note = dn.draft("changes")
+    assert note["id"] == "changes-2027-01-01" and note["status"] == "review" and note["compare_to"] == "2026-11-02" and "2026-11-02 대비" in dn.review_message(note)
+    answers["data_note_write"] = {**good, "markdown": "It rose by 8."}         # 틀린 증감 숫자는 차단
+    assert dn.draft("changes")["status"] == "blocked"
+    assert dn.number_problems("Over a two-month period.", "") and not dn.number_problems("It compares two dates.", "")
+    tie = lambda *values: [{"value": v} for v in values]
+    assert dn._leaders(tie(9, 5, 4, 4), 3) == (tie(9, 5, 4, 4), None)           # 동률이 조금이면 함께
+    assert dn._leaders(tie(9, 5, 1, 1, 1, 1, 1, 1), 3) == (tie(9, 5), {"count": 6, "value": 1})   # 많으면 이름 없이 개수만
+    many = [row("서울", f"구{i}", 5) for i in range(10)]
+    grown = [row("서울", f"구{i}", 6) for i in range(10)]
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", **{f"구{i}": f"Gu{i}" for i in range(10)}})
+    spec = dn.build_changes({"as_of": "2027-01-01", "totals": {"total": 60}, "regions": grown}, {"as_of": "2026-11-02", "totals": {"total": 50}, "regions": many})
+    assert "Tied at the next level: 10, each increased by 1. The source names them" in spec["numbers"] and spec["table"] == [["Province", "2026-11-02", "2027-01-01", "Change", "Change %"], ["Seoul", "50", "60", "+10", "+20.0%"]]
+    monkeypatch.setattr(ds, "regions_en", lambda: {"서울": "Seoul", "부산": "Busan", "경기": "Gyeonggi", "강남구": "Gangnam-gu", "해운대구": "Haeundae-gu", "분당구": "Bundang-gu", "옛구": "Old-gu", "새구": "New-gu"})
+    missing = {**new,"regions": new["regions"] + [row("서울", "모르는구", 1)]}
+    assert "only one date, not compared: 3" in dn.build_changes(missing, old)["numbers"]
+    with pytest.raises(dn.NoteError, match="영문 지역명"):
+        dn.build_changes({**missing, "regions": missing["regions"] + [row("서울", "모르는구2", 1)]}, {**old, "regions": old["regions"] + [row("서울", "모르는구2", 3)]})
+
+
+def test_share_experiment_alternates_and_compares_threads_stats(env, monkeypatch):
+    social = importlib.import_module("pipeline.social")
+    path = _published("2026-W41-10-rejuran-x", live=True)
+    draft = common.load_json(path / "draft.json")
+    facts = draft["facts"]
+    good = {"style": "surprise", "x": "Booking a laser before your flight? Check timing with your doctor.", "threads": "Booking a laser before your flight? Check timing with your doctor.", "fact_ids": [facts[0]["id"]]}
+    common.save_json(path / "social.json", {"version": 2, "draft_id": draft["id"], "title": "T", "blog_url": "https://x/a/", "created_at": "2026-10-01", "items": {}})
+    monkeypatch.setattr(social, "experiment", lambda: {"start": "2026-11-03", "end": "2026-11-30"})
+    monkeypatch.setattr(social, "now_kst", lambda: datetime(2026, 11, 3, 10, tzinfo=social.KST))
+    monkeypatch.setattr(social, "live_slugs", lambda: {draft["id"]: "a"})
+    monkeypatch.setattr(social.llm, "generate_json", lambda stage, text: (good, None))
+    assert social.compose_shares() == ([path.name], [])
+    item = social.load_social(path)["items"]["share"]
+    assert item["status"] == "ready" and social.sealed(item) and social.share_pending() == []
+    good2 = {**good, "x": "It is guaranteed safe.", "threads": "It is guaranteed safe."}
+    monkeypatch.setattr(social.llm, "generate_json", lambda stage, text: (good2, None))
+    assert social.compose_share(path)["status"] == "blocked"                  # 규칙 검사는 같다
+    monkeypatch.setattr(social.llm, "generate_json", lambda stage, text: (good, None))
+    social.compose_share(path)
+    assert social.experiment_active(date(2026, 11, 30)) and not social.experiment_active(date(2026, 12, 1))
+
+    data = social.load_social(path)
+    data["items"]["share"]["channels"]["threads"]["posted"] = {"url": "https://threads.com/p/1/", "at": "2026-11-04T00:00:00+00:00"}
+    data["items"]["fact"] = {"status": "ready", "channels": {"threads": {"text": "x", "posted": {"url": "https://threads.com/p/2", "at": "2026-11-05T00:00:00+00:00"}}}, "scheduled_on": "2026-11-05"}
+    data["items"]["old"] = {"status": "ready", "channels": {"threads": {"text": "x", "posted": {"url": "https://threads.com/p/3", "at": "2026-10-05T00:00:00+00:00"}}}, "scheduled_on": "2026-10-05"}
+    common.save_json(path / "social.json", data)
+    stats = {"https://threads.com/p/1": {"views": 40, "likes": 2, "shares": 1}, "https://threads.com/p/3": {"views": 999}}
+    result = social.experiment_results(stats)
+    assert result["share"]["posts"] == 1 and result["share"]["views"] == 40 and result["other"]["posts"] == 0 and result["unread"] == 1
+    lines = "\n".join(social.experiment_lines(stats))
+    assert "글당 조회 40.0" in lines and "공유 1.0" in lines and "못 읽은 게시물 1개" in lines
 
 
 def test_trust_check_every_four_weeks(env, monkeypatch):
@@ -2709,11 +3927,21 @@ def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
     answers = {"q1": llm.LLMResult(text="...", model="m", stage="citation_check", grounding_urls=[
                    {"url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/x", "title": "skinboundkorea.com"}]),
                "q2": llm.LLMResult(text="...", model="m", stage="citation_check", grounding_urls=[
-                   {"url": "https://www.aad.org/x", "title": "AAD"}])}
-    monkeypatch.setattr(cc.llm, "generate", lambda stage, q: answers[q])
+                   {"url": "https://www.aad.org/x", "title": "AAD"}]),
+               "q3": llm.LLMResult(text="...", model="m", stage="citation_check", grounding_urls=[])}
+    monkeypatch.setattr(cc, "questions", lambda: ["q1", "q2", "q3"])
+    calls = Counter()
+
+    def generate(stage, text):
+        q = text.rsplit(" ", 1)[-1]
+        calls[q] += 1
+        return answers[q]
+    monkeypatch.setattr(cc.llm, "generate", generate)
     res = cc.check()
-    assert (res["cited"], res["total"]) == (1, 2) and res["results"][1]["sources"] == ["aad.org"]
-    assert "우리 사이트 인용 1/2" in cc.report_lines(res)[0]
+    assert (res["cited"], res["measured"], res["total"]) == (1, 2, 3) and res["results"][1]["sources"] == ["aad.org"]
+    assert calls == {"q1": 1, "q2": 1, "q3": 2}                     # 출처 없을 때만 한 번 더
+    line = cc.report_lines(res)[0]
+    assert "우리 사이트 인용 1/2" in line and "측정 실패 1" in line
 
 
 def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_path):
@@ -2727,6 +3955,7 @@ def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_pat
                                                 "schedule": [{"date": "2026-10-23", "method": "B", "post": "W41-10"}]})
     env.responses["scene_prompts"] = {"scenes": [{"lines": [1], "prompt": "Sunlight on a towel."},
                                                  {"lines": [2], "prompt": "A calendar on a desk."}]}
+    monkeypatch.setattr(render, "voice_lines", lambda d, cache: [(cache / "1.mp3", 2.0), (cache / "2.mp3", 3.0)])  # 음성 길이로 장면 2개
     day = datetime(2026, 10, 23, 10, 5, tzinfo=exp.KST)
     assert exp.daily_message(day.replace(hour=9)) == ""                               # 10시 전
     msg = exp.daily_message(day)
@@ -2734,7 +3963,7 @@ def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_pat
     assert exp.daily_message(day.replace(hour=15)) == ""                              # 하루 한 번
     assert exp.poll_message() == ""                                                   # 영상이 아직 없음
     built = []
-    monkeypatch.setattr(render, "make_video", lambda d, out, fn: built.append(out) or {"seconds": 40.0})
+    monkeypatch.setattr(render, "make_video", lambda d, out, fn, fade=0.0, captions=True: built.append((out, fade)) or {"seconds": 40.0})
     clips = exp.root() / "2026-10-23-B-W41-10" / "clips"
     for n in (1, 2):
         (clips / f"{n}.mp4").write_bytes(b"x")
@@ -2753,20 +3982,35 @@ def test_experiment_orders_flow_files_and_cuts_shots_per_line(monkeypatch, tmp_p
     assert exp.order_clips(files, scenes) == files[::-1]                       # Flow 이름 ↔ 프롬프트 단어로 짝
     numbered = [tmp_path / "2_b.mp4", tmp_path / "10_c.mp4", tmp_path / "1_a.mp4"]
     assert [c.name for c in exp.order_clips(numbered, [])] == ["1_a.mp4", "2_b.mp4", "10_c.mp4"]
-    monkeypatch.setattr(render, "duration", lambda p: 8.3)
-    timeline = [{"start": 0.0}, {"start": 2.0}, {"start": 9.0}]
-    segs, _ = exp.clip_segments(files[::-1], scenes)(None, timeline, 12.0, tmp_path)
-    assert [round(s[1], 2) for s in segs] == [2.0, 2.33, 2.33, 2.33, 3.0]    # 줄마다 컷, 긴 줄은 3.2초 이하로 나눔
-    assert abs(sum(s[1] for s in segs) - 12.0) < 1e-6
-    assert len({s[3] for s in segs[:4]}) == 4 and {s[4] for s in segs} == set(exp.ZOOMS)  # 다른 구간·번갈아 확대
-    assert all(s[3] + s[1] * s[2] <= 8.3 + 1e-6 for s in segs)
+    monkeypatch.setattr(render, "duration", lambda p: 8.0)
+    # 음성 길이로 장면 계획: 7초 넘는 줄은 두 장면으로 (느리게 늘리지 않음)
+    plan = exp.plan_scenes([3.0, 10.0])
+    assert [(p["lines"], p["part"], p["parts"], p["seconds"]) for p in plan] == [([1], 1, 1, 3.0), ([2], 1, 2, 5.0), ([2], 2, 2, 5.0)]
+    timeline = [{"start": 0.0}, {"start": 3.0}]
+    clips = [tmp_path / "a.mp4", tmp_path / "b.mp4", tmp_path / "c.mp4"]
+    segs, _ = exp.clip_segments(clips, plan)(None, timeline, 13.0, tmp_path)
+    assert [(s[0].name, s[1], s[2], s[3]) for s in segs] == [("a.mp4", 3.0, 1.0, exp.HEAD_SEC), ("b.mp4", 5.0, 1.0, exp.HEAD_SEC),
+                                                          ("c.mp4", 5.0, 1.0, exp.HEAD_SEC)]   # 1배속, 각 클립 앞부분부터
+    assert all(s[3] + s[1] + exp.TRANSITION <= 8.0 for s in segs)              # 겹쳐 넘기기까지 8초 안에
+    # 빠진 장면 → 남는 클립 → (없으면) 앞 장면 클립의 남은 부분
+    segs, _ = exp.clip_segments([clips[0], None, None], plan, [tmp_path / "spare.mp4"])(None, timeline, 13.0, tmp_path)
+    assert [(s[0].name, s[3]) for s in segs] == [("a.mp4", exp.HEAD_SEC), ("spare.mp4", exp.HEAD_SEC),
+                                               ("spare.mp4", exp.HEAD_SEC)]   # 예비도 없고 앞 클립 남은 부분(2.7초)도 모자라면 최후로 처음부터 (경고 로그)
+
+
+def test_compose_crossfades_between_cuts(tmp_path):
+    render = importlib.import_module("pipeline.04_render_video")
+    cmd = " ".join(render.compose_cmd([(tmp_path / "a.mp4", 3.0, 1.0, 0.3, 1.0), (tmp_path / "b.mp4", 5.0, 1.0, 0.3, 1.0),
+                                       (tmp_path / "c.mp4", 5.0, 1.0, 0.3, 1.0)], None, 13.0, 0.4))
+    assert "xfade=transition=fade:duration=0.400:offset=3.000" in cmd and "offset=8.000[bg]" in cmd
+    assert "-t 3.400" in cmd and "-t 5.400" in cmd and "-t 5.000" in cmd       # 마지막 컷 말고는 겹칠 만큼 더
 
 
 def test_experiment_sends_scene_prompts_one_by_one(env, monkeypatch):
     exp = importlib.import_module("pipeline.experiment")
     sent = []
     monkeypatch.setattr(importlib.import_module("pipeline.worker"), "hermes_send", lambda text: sent.append(text) or True)
-    assert exp.send_prompts([{"n": 1, "prompt": "A."}, {"n": 2, "prompt": "B."}]) and sent == ["A.", "B."]
+    assert exp.send_prompts([{"n": 1, "prompt": "A."}, {"n": 2, "prompt": "B."}]) and sent == ["#1 / 2\nA.", "#2 / 2\nB."]
 
 
 def test_social_openers_filtered_by_rules_then_picked_by_other_vendor(env):
@@ -2784,3 +4028,792 @@ def test_social_openers_filtered_by_rules_then_picked_by_other_vendor(env):
     assert item["channels"]["threads"]["text"].startswith("Salmon DNA, explained plainly.")
     assert item["status"] == "ready"
     assert social_mod.with_opener("old\nrest", "new") == "new\nrest"
+
+
+def test_explainer_screen_text_only_from_facts(env):
+    ex = importlib.import_module("pipeline.explainer")
+    draft = {"facts": [{"id": "F1", "text": "One trial used 3 sessions 2 weeks apart.", "url": "https://pubmed.ncbi.nlm.nih.gov/1/"}],
+             "shortform": {"lines": [{"voice": "How many sessions?"}, {"voice": "Redness fades."}, {"voice": "Ask a doctor."}]}}
+    beats, problems = ex.check(draft, [
+        {"line": 1, "kind": "timeline", "count": 3, "interval": "2 weeks apart", "label": "One trial", "fact_ids": ["F1"]},
+        {"line": 2, "kind": "big_number", "value": "90", "unit": "%", "label": "fade in a day"},      # 사실에 없는 수치
+        {"line": 3, "kind": "icon_scene", "icon": "rocket", "label": "The best clinic"}])           # 금지 표현·없는 아이콘
+    assert beats[0]["kind"] == "timeline" and not any(p.startswith("1번") for p in problems)
+    assert beats[1] == {"line": 2, "kind": "icon_scene", "icon": "drop", "label": "", "note": ""} and any("90" in p for p in problems)
+    assert beats[2]["label"] == "" and beats[2]["icon"] == "drop"
+    assert ex.sources(draft, beats[0]) == "Source: pubmed.ncbi.nlm.nih.gov"
+    p = ex.props(draft, beats, [{"start": 0.0, "end": 2.2, "voice": "a"}, {"start": 2.5, "end": 4.7, "voice": "b"},
+                                {"start": 5.0, "end": 6.8, "voice": "c"}], 7.0, [])
+    assert p["lines"][1] == {"start": 2.5, "end": 4.7, "voice": "b"} and p["disclosure"] == "AI-generated content"
+    assert [(b["start"], b["end"]) for b in p["beats"]] == [(0.0, 2.5), (2.5, 5.0), (5.0, 7.0)]
+
+
+def test_experiment_fit_clips_fills_missing_scenes_from_previous(monkeypatch, tmp_path):
+    exp = importlib.import_module("pipeline.experiment")
+    monkeypatch.setattr(exp, "config", lambda: {"style": "Soft natural light, calm bed palette."})
+    scenes = [{"n": 1, "lines": [1], "prompt": "Macro of skin texture smoothing. Soft natural light, calm bed palette."},
+              {"n": 2, "lines": [2], "prompt": "Three glass vials placed one by one. Soft natural light, calm bed palette."},
+              {"n": 3, "lines": [3], "prompt": "Suitcase and passport resting on a bed. Soft natural light, calm bed palette."}]
+    files = [tmp_path / "Skin_texture_smoothing_1.mp4", tmp_path / "Suitcase_and_passport_on_bed_2.mp4",
+             tmp_path / "Suitcase_and_passport_on_bed_3.mp4"]
+    clips, fitted, spare = exp.fit_clips(files, scenes)
+    assert [c.name for c in spare] == ["Suitcase_and_passport_on_bed_3.mp4"]   # 같은 장면 여러 버전은 하나만, 나머지는 예비
+    assert [c and c.name for c in clips] == ["Skin_texture_smoothing_1.mp4", None, "Suitcase_and_passport_on_bed_2.mp4"]
+    assert fitted == scenes                                                   # 빠진 장면은 None — 화면은 clip_segments 가 채움
+
+
+def test_mix_leaves_gaps_for_drawn_lines(monkeypatch, tmp_path):
+    exp = importlib.import_module("pipeline.experiment")
+    render = importlib.import_module("pipeline.04_render_video")
+    monkeypatch.setattr(render, "duration", lambda p: 8.0)
+    plan = [p for p in exp.plan_scenes([3.0, 4.0, 2.0]) if p["lines"][0] != 2]   # 2번 줄은 우리 도식(타임라인)
+    timeline = [{"start": 0.0}, {"start": 3.0}, {"start": 7.0}]
+    segs, _ = exp.clip_segments([tmp_path / "a.mp4", tmp_path / "c.mp4"], plan, fill_gaps=True)(None, timeline, 9.0, tmp_path)
+    assert [(s[0] and s[0].name, s[1]) for s in segs] == [("a.mp4", 3.0), (None, 4.0), ("c.mp4", 2.0)]
+    ex = importlib.import_module("pipeline.explainer")
+    monkeypatch.setattr(ex, "VIDEO_DIR", tmp_path)
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    (tmp_path / "c.mp4").write_bytes(b"x")
+    bg = ex.public_clips("e1", segs)
+    assert [b["file"] for b in bg] == ["exp/e1/a.mp4", "", "exp/e1/c.mp4"]
+
+
+def test_shorts_week_plan_check_review_and_apply(env, monkeypatch):
+    sh = importlib.import_module("pipeline.shorts")
+    proc = _published("2026-W41-10-rejuran-x", live=False)
+    trav = _published("2026-W41-09-bukchon-x", live=False)
+    d = common.load_json(trav / "draft.json")
+    d["axis"] = "procedure_travel"
+    common.save_json(trav / "draft.json", d)
+    common.save_json(common.content_dir() / "site" / "schedule.json",
+                     {"2026-W41-09-bukchon-x": {"date": "2026-10-14"}, "2026-W41-10-rejuran-x": {"date": "2026-10-16"}})
+    assert sh.weeks() == [["2026-W41-09-bukchon-x", "2026-W41-10-rejuran-x"]]
+    line = {"voice": "Rejuran bumps usually settle soon after treatment for most people.", "caption": "Usually settles soon"}
+    script = {"question": "How long do bumps last?", "lines": [line] * 6, "fact_ids": ["F1"]}
+    env.responses["shorts_write"] = {"scripts": [script] * 5}
+    env.responses["shorts_review"] = {"ok": True, "issues": [], "ko": ["리쥬란 돌기는 보통 곧 가라앉습니다."] * 6}
+    assert sh.make() == ["1주차: 대본 7개"]
+    plan = sh.load_plan()
+    assert [s["id"] for s in plan["scripts"]] == ["S1-월", "S1-화", "S1-수", "S1-목", "S1-금", "S1-토", "S1-일"]
+    assert [(s["type"], s["posts"][0][:11]) for s in plan["scripts"][4:]] == [
+        ("procedure", "2026-W41-10"), ("procedure", "2026-W41-09"), ("travel", "2026-W41-09")]  # 시술 5 + 관광 글의 시술 질문 1 + 관광 1
+    assert sh.make() == []                                                    # 이미 만든 주는 건너뜀
+    msg = sh.list_message()
+    assert "1. ✅ S1-월" in msg and "리쥬란 돌기는" in msg
+    assert sh.apply("1,2 승인").startswith("✅ S1-월 승인")
+    assert sh.list_message().count("✅ S1-") == 5
+    bad = sh.check({"lines": [{"voice": "The best clinic gives 90% results.", "caption": "x"}], "fact_ids": []},
+                   [{"id": "F1", "text": "3 sessions"}])
+    assert any("90" in p for p in bad) and any("fact_ids" in p for p in bad)
+
+
+def test_shorts_review_message_chunks():
+    sh = importlib.import_module("pipeline.shorts")
+    parts = sh.chunks("\n\n".join(["x" * 1000] * 7), limit=3000)
+    assert len(parts) == 4 and all(len(p) <= 3000 for p in parts)   # 1000자 두 개씩 (구분 줄 포함 3000자 이하)
+
+
+def test_blog_figures_go_after_their_section_and_only_for_unpublished(env, monkeypatch):
+    site = importlib.import_module("pipeline.site")
+    body = '<h2 id="a">What is it?</h2><p>One.</p><p>Two.</p><h2 id="b">How does it work?</h2><p>Three.</p>'
+    out = site.insert_figures(body, [{"after_heading": "How does it work?", "src": "/fig/x-1.png", "alt": "A diagram",
+                                      "caption": "Thought to stimulate collagen", "source": "Source: pmc.ncbi.nlm.nih.gov"},
+                                     {"after_heading": "Missing heading", "src": "/fig/x-2.png"}])
+    assert out.index("art-fig") > out.index("Three.</p>") and "x-2.png" not in out and 'alt="A diagram"' in out
+    fig = importlib.import_module("pipeline.figures")
+    live = _published("2026-W41-10-rejuran-x", live=True)
+    later = _published("2026-W41-11-later-x", live=False)
+    common.save_json(common.content_dir() / "site" / "schedule.json",
+                     {"2026-W41-10-rejuran-x": {"date": "2030-01-06", "at": "2030-01-06T07:00:00+09:00"},
+                      "2026-W41-11-later-x": {"date": "2030-01-08", "at": "2030-01-08T07:00:00+09:00"}})
+    assert [p.name for p in fig.upcoming()] == ["2026-W41-11-later-x"]          # 이미 배포된 글은 건드리지 않는다
+    assert fig.headings("# T\n## A\ntext\n## FAQ\n## Sources\n") == ["A"]
+
+
+def test_single_study_followups_collected_and_closed(env):
+    fu = importlib.import_module("pipeline.followups")
+    assert fu.single_study({"kind": "sessions", "text": "In a Korean randomized controlled trial, the protocol was 3 treatments."})
+    assert not fu.single_study({"kind": "mechanism", "text": "A systematic review found promising outcomes."})
+    assert not fu.single_study({"kind": "travel", "text": "One study of tourists found crowds peak at noon."})
+    path = _published("2026-W41-10-rejuran-x", live=False)
+    d = common.load_json(path / "draft.json")
+    d["facts"] = [{"id": "F9", "kind": "sessions", "text": "In a Korean randomized controlled trial, 3 sessions were used.", "url": "u"}]
+    common.save_json(path / "draft.json", d)
+    fu.scan()
+    key = next(iter(fu.load()["items"]))
+    assert f"[{key}]" in fu.prompt_block()
+    later = _published("2026-W42-01-followup-x", live=False)
+    d2 = common.load_json(later / "draft.json")
+    d2["topic"] = {**d2.get("topic", {}), "followup_of": key}
+    common.save_json(later / "draft.json", d2)
+    fu.scan()
+    assert fu.load()["items"][key]["status"] == "done" and fu.prompt_block() == "(none)"
+
+
+def test_review_message_attaches_blog_figures(env):
+    review = importlib.import_module("pipeline.03_review")
+    fig = importlib.import_module("pipeline.figures")
+    path = _published("2026-W45-01-thermage-x", state="drafts", live=False)
+    d = common.load_json(path / "draft.json")
+    d["content_type"] = "procedure"
+    common.save_json(path / "draft.json", d)
+    assert [p.name for p in fig.in_review()] == ["2026-W45-01-thermage-x"]      # 시술 글 → 검수 전에 그림
+    (path / "figures").mkdir()
+    (path / "figures" / "fig1.png").write_bytes(b"png")
+    common.save_json(path / "figures.json", {"figures": [{"file": "fig1.png"}], "blog_hash": fig.blog_hash(path)})
+    assert fig.in_review() == []
+    msg = review.list_message("drafts", compact=True)
+    assert "🖼 그림 1개 첨부" in msg and "fig1.png" in msg and "MEDIA:" in msg
+    d["blog"]["markdown"] += " changed"                                      # 수정 요청으로 본문이 바뀌면 다시 만든다
+    common.save_json(path / "draft.json", d)
+    assert fig.stale(path)
+
+
+def test_claude_login_expiry_notifies_once_and_pauses_claude_steps(env, monkeypatch):
+    worker = importlib.import_module("pipeline.worker")
+    err = llm.ClaudeAuthExpired("Claude 로그인 만료: OAuth session expired")
+    first = worker.mark_auth_down(err)
+    assert first and "claude setup-token" in first
+    assert worker.mark_auth_down(err) is None                                   # 두 번째부터는 조용히
+    assert worker.claude_auth_down()                                            # 30분 안에는 확인 호출도 안 함
+    st = common.load_json(worker.auth_file())
+    st["checked_at"] = "2000-01-01T00:00:00+00:00"
+    common.save_json(worker.auth_file(), st)
+    assert worker.claude_auth_down() is False and not worker.auth_file().exists()  # 가짜 LLM 이 답하면 복구
+    assert llm.AUTH_WORDS.search("Failed to authenticate: OAuth session expired and could not be refreshed")
+
+
+def test_blog_figures_need_human_approval(env, monkeypatch):
+    site = importlib.import_module("pipeline.site")
+    fig = importlib.import_module("pipeline.figures")
+    path = _published("2026-W41-11-later-x", live=False)
+    common.save_json(common.content_dir() / "site" / "schedule.json",
+                     {"2026-W41-11-later-x": {"date": "2030-01-08", "at": "2030-01-08T07:00:00+09:00"}})
+    (path / "figures").mkdir()
+    (path / "figures" / "fig1.png").write_bytes(b"png")
+    common.save_json(path / "figures.json", {"figures": [{"file": "fig1.png", "after_heading": "A", "caption": "c"}],
+                                             "blog_hash": fig.blog_hash(path)})
+    out = common.content_dir() / "out"
+    post = {"path": path, "slug": "later"}
+    assert site.copy_figures(post, out) == [] and [p.name for p in fig.pending()] == [path.name]  # 승인 전엔 안 나간다
+    asked = fig.ask_message()
+    assert "[블로그 그림 승인]" in asked and "MEDIA:" in asked and "fig1.png" in asked
+    assert fig.ask_message() == ""                                              # 같은 그림은 다시 묻지 않는다
+    assert "승인" in fig.apply("그림 1 승인")[0]
+    assert len(site.copy_figures(post, out)) == 1 and fig.pending() == []
+    (path / "figures" / "fig1.png").write_bytes(b"changed")                     # 승인 뒤 바뀌면 무효
+    assert site.copy_figures(post, out) == [] and len(fig.pending()) == 1
+    assert fig.ask_message()
+    fig.apply("전체 빼기")
+    assert fig.pending() == [] and site.copy_figures(post, out) == []
+    with pytest.raises(fig.FigureError):
+        fig.apply("9 승인")
+
+
+def test_social_seal_blocks_edited_text(env):
+    social = importlib.import_module("pipeline.social")
+    item = {"status": "ready", "fact_ids": ["F1"], "channels": {"threads": {"text": "a", "posted": None},
+                                                               "x": {"text": "b", "reply": None, "posted": None}}}
+    item["seal"] = social.seal_of(item)
+    assert social.sealed(item)
+    item["channels"]["threads"]["text"] = "made up"
+    assert not social.sealed(item)
+    assert social.repeated_opening("Cabin effects aren't noticeable until 3 to 4 hours.\nLow cabin effects aren't noticeable until 3-4 hours.\n· x")
+    assert not social.repeated_opening("Flying home after a laser?\nStudies of cabin air suggest dryness builds slowly.")
+    assert (social.with_opener("Hook\nCabin effects aren't noticeable until 3-4 hours.\n· x", "Cabin effects aren't noticeable until 3 to 4 hours.")
+            == "Cabin effects aren't noticeable until 3 to 4 hours.\n· x")
+
+
+def test_figure_visual_check_drops_bad_figure(env, monkeypatch):
+    fig = importlib.import_module("pipeline.figures")
+    path = _published("2026-W41-11-later-x", live=False)
+    monkeypatch.setattr(fig, "plan", lambda p: [{"kind": "timeline", "after_heading": "A", "alt": "a", "label": "l", "note": "n"},
+                                                {"kind": "timeline", "after_heading": "B", "alt": "b", "label": "l", "note": "n"}])
+    monkeypatch.setattr(fig, "render", lambda beat, out: (out.write_bytes(b"png"), out)[1])
+    monkeypatch.setattr(fig, "visual_check", lambda p, png, f: ["text overlaps"] if f["after_heading"] == "A" else [])
+    assert [f["after_heading"] for f in fig.make(path)] == ["B"]
+    assert not (path / "figures" / "fig1.png").exists() and (path / "figures" / "fig2.png").exists()
+    assert llm.stage_config("figure_check")["provider"] == llm.CLAUDE_CLI
+
+
+@pytest.mark.parametrize("text,args", [
+    ("1,3 승인", ["pipeline.03_review", "apply", "1,3 승인"]),
+    ("1번 승인", ["pipeline.03_review", "apply", "1 승인"]),
+    ("전체 승인", ["pipeline.03_review", "apply", "전체 승인"]),
+    ("W41-07 승인", ["pipeline.03_review", "apply", "W41-07 승인"]),
+    ("재확인 2 승인", ["pipeline.03_review", "apply", "2 승인", "--confirm"]),
+    ("2 수정: 첫 문단\n둘째 줄", ["pipeline.03_review", "apply", "2 수정: 첫 문단\n둘째 줄"]),
+    ("1 승인\n2 폐기", ["pipeline.03_review", "apply", "1 승인\n2 폐기"]),
+    ("승인글 2 폐기", ["pipeline.03_review", "apply", "2 폐기", "--stage", "approved"]),
+    ("그림 1,2 승인", ["pipeline.figures", "apply", "1,2 승인"]),
+    ("숏폼 1,3 승인", ["pipeline.shorts", "apply", "1,3 승인"]),
+    ("1,3,4", ["pipeline.worker", "request-drafts", "--pick", "1,3,4"]),
+    ("오늘 스레드 올려", ["pipeline.social", "post", "오늘", "threads"]),
+    ("오늘 2번째 스레드 올려", ["pipeline.social", "post", "오늘#2", "threads"]),
+    ("1 오늘 스레드 올려", ["pipeline.social", "post", "오늘#1", "threads"]),
+    ("3 스레드 올려", ["pipeline.social", "post", "3", "threads"]),
+    ("https://x.com/Skinboundkorea/status/123?s=35", ["pipeline.social", "done", "오늘", "x", "https://x.com/Skinboundkorea/status/123?s=35"]),
+    ("3 게시 완료 x https://x.com/a/status/9", ["pipeline.social", "done", "3", "x", "https://x.com/a/status/9"]),
+    ("https://www.threads.com/@a/post/Abc", ["pipeline.social", "done", "오늘", "threads", "https://www.threads.com/@a/post/Abc"]),
+])
+def test_telegram_router_fixed_commands(text, args):
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.parse(text)["args"] == args
+
+
+@pytest.mark.parametrize("text", ["좋아요", "다 괜찮아", "왜 오늘 sns 안 올라와?", "1번 글 어때?", "전체 승인해도 될까?",
+                                  "재확인 전체 승인", "스레드 올리는 방법 좀 자세히 알려줘 어떻게 하는 건지 궁금해요 정말로요"])
+def test_telegram_router_unclear_messages_never_run_commands(text):
+    assert importlib.import_module("pipeline.telegram_router").parse(text) is None
+
+
+def test_telegram_chat_proposes_only_and_needs_yes(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    cfg = llm.stage_config("telegram_chat")
+    assert cfg["provider"] == llm.CLAUDE_CLI and cfg["tools"] == []
+    calls = []
+    router.run = lambda args: calls.append(args) or "x"
+    env.responses["telegram_chat"] = {"reply": "2번을 뺍니다", "commands": ["1,3 승인", "rm -rf content", "지어낸 글 올려"]}
+    out = router.handle("2번 빼고 다 승인")
+    assert "실행할까요" in out and "1,3 승인" in out and "rm -rf" not in out
+    assert not [a for a in calls if a[:2] == ["pipeline.03_review", "apply"]]    # 아직 실행 안 함
+    router.handle("응")
+    assert ["pipeline.03_review", "apply", "1,3 승인"] in calls
+    calls.clear()
+    assert router.handle("응") != "x" or not calls or all(a[1] in ("schedule", "list") for a in calls)  # 두 번 실행되지 않는다
+    assert not [a for a in calls if a[:2] == ["pipeline.03_review", "apply"]]
+
+
+def test_telegram_chat_cancel_and_other_message_drop_pending(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    calls = []
+    router.run = lambda args: calls.append(args) or "x"
+    env.responses["telegram_chat"] = {"reply": "", "commands": ["오늘 스레드 올려"]}
+    router.handle("오늘 글 스레드에 부탁해")
+    assert "취소" in router.handle("취소")
+    assert not [a for a in calls if a[:2] == ["pipeline.social", "post"]]
+    router.handle("오늘 글 스레드에 부탁해")
+    router.handle("블로그 일정")
+    assert not router._pending_file().exists()
+    assert not [a for a in calls if a[:2] == ["pipeline.social", "post"]]
+
+
+def test_telegram_chat_read_only_runs_now_and_blocks_fake_posts(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    calls = []
+    router.run = lambda args: calls.append(args) or "일정"
+    env.responses["telegram_chat"] = {"reply": "일정입니다", "commands": ["블로그 일정"]}
+    assert "일정" in router.handle("언제 나가는지 궁금해")
+    env.responses["telegram_chat"] = {"reply": "[오늘의 SNS 글] 지어낸 글", "commands": []}
+    assert "지어낸" not in router.handle("다음 글 줘")
+
+
+def test_telegram_evidence_has_no_secrets_or_env(env, tmp_path):
+    router = importlib.import_module("pipeline.telegram_router")
+    assert router.scrub("x access_token=abc123 y") == "x *** y"
+    assert "2026-W45-02-skin-booster-price-ranges-korea-vs-the-u" in router.scrub("2026-W45-02-skin-booster-price-ranges-korea-vs-the-u")
+    assert "AIzaSyD" not in router.scrub("key AIzaSyD012345678901234567890123456789")
+    assert "flying-after-skin-treatment-korea-timing-guide" in router.scrub("flying-after-skin-treatment-korea-timing-guide")
+    assert "CANARY" not in router.evidence()
+
+
+def test_social_resolve_today_slot(env):
+    social = importlib.import_module("pipeline.social")
+    today = social.now_kst().date().isoformat()
+    common.save_json(social.daily_file(), {today: {"key": "a", "kind": "fact"}, f"{today}#2": {"key": "b", "kind": "angle"}})
+    assert social.resolve("오늘#1") == social.Ref("a", "fact") and social.resolve("오늘#2") == social.Ref("b", "angle")
+    with pytest.raises(social.SocialError):
+        social.resolve("오늘#3")
+
+
+@pytest.mark.parametrize("text,chunks", [
+    ("1 승인하고 오늘 스레드 올려", ["1 승인", "오늘 스레드 올려"]),
+    ("1 승인\n2 폐기\n오늘 스레드 올려", ["1 승인\n2 폐기", "오늘 스레드 올려"]),
+    ("2 수정: 첫 문단 고쳐\n3\n둘째 줄\n오늘 스레드 올려", ["2 수정: 첫 문단 고쳐\n3\n둘째 줄", "오늘 스레드 올려"]),
+    ("그림 1 승인, 블로그 일정", ["그림 1 승인", "블로그 일정"]),
+    ("1 승인\n이거 괜찮아?", None),
+    ("다 괜찮아", None),
+])
+def test_telegram_router_splits_commands_in_order(text, chunks):
+    assert importlib.import_module("pipeline.telegram_router").split_commands(text) == chunks
+
+
+def test_telegram_router_runs_in_order_and_stops_on_failure(env):
+    router = importlib.import_module("pipeline.telegram_router")
+    ran = []
+    router.run = lambda args: ran.append(args[-1]) or ("❓ 안 됨" if "2 폐기" in args else "ok")
+    out = router.handle("1 승인하고 그림 1 승인\n2 폐기\n오늘 스레드 올려")
+    assert ran == ["1 승인", "1 승인", "2 폐기"]
+    assert "실행 안 한 명령" in out and "오늘 스레드 올려" in out
+
+
+def test_reddit_room_routes_commands_and_replies(env, monkeypatch):
+    router = importlib.import_module("pipeline.telegram_router")
+    worker = importlib.import_module("pipeline.worker")
+    rd = _reddit_env(monkeypatch)
+    sent = []
+    monkeypatch.setattr(worker, "hermes_send", REAL_HERMES_SEND)
+    monkeypatch.setattr(worker, "_hermes_send_once", lambda text, target=None: (sent.append((target, text)), True)[1])
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER", raising=False)
+    monkeypatch.delenv("SKIN_TG_ORIGIN", raising=False)
+    assert router.room() == "" and router.wrong_room(router.parse("레딧 기준")) == ""      # 방을 나누지 않으면 예전 그대로
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009")
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009")
+    assert router.room() == "reddit"
+    assert "Reddit 전용" in router.run_one("1 승인") and "Reddit 전용" in router.run_one("3번 보여줘")
+    assert router.run_one("도움말").startswith("[Reddit 방 명령어]") and "검수:" not in router.run_one("도움말")
+    assert router.wrong_room(router.parse("레딧 기준")) == "" and router.wrong_room(router.parse("언급 목록")) == ""
+    router.reply_to("답")
+    assert sent[-1] == ("telegram:-1009", "답")                                          # 답장은 온 방으로
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:555")
+    assert router.room() == "main" and "Reddit 방에서" in router.run_one("레딧 기준")
+    assert "Reddit 방에" in router.handle("https://www.reddit.com/r/x/comments/abc/y/ question")
+    monkeypatch.setenv("SKIN_REDDIT_DELIVER", "telegram:-1009:7")                         # 포럼 주제
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009:7")
+    assert router.room() == "reddit"
+    monkeypatch.setenv("SKIN_TG_ORIGIN", "telegram:-1009:3")
+    assert router.room() == "main"
+
+    _reddit_items(rd, ("testsub", "Can I fly?"))                                       # Reddit 메시지는 Reddit 방으로
+    rd.allow("testsub", False)
+    _reddit_answers(rd, monkeypatch)
+    sent.clear()
+    assert rd.send(rd.draft(1)) == "✅ 보냈습니다" and {t for t, _ in sent} == {"telegram:-1009:7"} and len(sent) == 2
+    monkeypatch.delenv("SKIN_REDDIT_DELIVER")
+    sent.clear()
+    rd.send(rd._item(rd.load(), 1))
+    assert {t for t, _ in sent} == {None}                                               # 없으면 기본 방
+
+
+def test_skin_router_plugin_reads_origin_room():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("skin_router_plugin", Path(__file__).parent.parent / "hermes/plugins/skin-router/__init__.py")
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+
+    class Source:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+    assert plugin._origin(Source(chat_id=-1001234)) == "telegram:-1001234"
+    assert plugin._origin(Source(chat_id="-1001234", thread_id=7)) == "telegram:-1001234:7"
+    assert plugin._origin(Source(chat=Source(id=42))) == "telegram:42"
+    assert plugin._origin(Source()) == "" and plugin._origin(Source(chat_id="abc")) == ""
+    assert plugin._source_keys(Source(platform="telegram", user_id=1)) == "platform,user_id"   # 진단용: 이름만
+
+
+def test_faq_schema_reads_bold_questions_and_table_refs_stay_in_cells():
+    site_mod = importlib.import_module("pipeline.site")
+    md = ("## How long?\nText.\n\n## FAQ\n\n**How many sessions will I need?**\nThree sessions two weeks apart [F1].\n\n"
+          "**Does it hurt?**\nMost people describe mild discomfort.\n\n**Note** not a question.\n\n## Sources\nx")
+    faq = site_mod.extract_faq(md)
+    assert [f["q"] for f in faq] == ["How many sessions will I need?", "Does it hurt?"]
+    assert faq[0]["a"] == "Three sessions two weeks apart."
+    assert site_mod.extract_faq("## FAQ\n\n### Is it safe?\nAsk your doctor.\n")[0]["q"] == "Is it safe?"
+    walk = site_mod.extract_faq("### FAQ\n\n**Can I walk?**\nYes.\n\n### Sources\n**Why?**\nNo.\n")
+    assert [f["q"] for f in walk] == ["Can I walk?"]
+    facts =[{"id": "F1", "url": "https://pubmed.ncbi.nlm.nih.gov/1/", "source_title": "A | B study", "kind": "medical"}]
+    md2, _ = site_mod._numbered_sources("| Option | Downtime |\n|---|---|\n| Toning | 1 day [F1] |\n", facts)
+    out = site_mod.render_markdown(md2)
+    assert out.count("<td>") == 2 and "A &#124; B study" in out
+
+
+def test_waitlist_form_on_neutral_posts_only_with_privacy_note(site_env, sponsored, tmp_path, monkeypatch):
+    """대기 명단 (2026-11-10): 추적기 주소가 있을 때만 양식, 스폰서 글엔 없음, 2027 표시·연결 안 함 문구·개인정보 안내."""
+    site_env.responses["blog"] = blog(FAQ_BLOG)
+    neutral = make_draft(site_env)
+    review_mod.review(common.content_dir("drafts") / neutral, fetch=ok_fetch)
+    _approve(site_env, neutral)
+    dist = tmp_path / "dist"
+    site_mod.build()  # TRACKER_URL 없음 → 받을 곳이 없으니 양식도 페이지도 없다
+    assert 'id="waitlist"' not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert not (dist / "waitlist").exists()
+    assert "waiting list" not in (dist / "privacy" / "index.html").read_text(encoding="utf-8")
+
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    site_mod.build()
+    post = (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    assert '<form method="post" action="https://go.example/w">' in post
+    assert 'name="page" value="/rejuran/"' in post and 'name="agree" value="yes" required' in post
+    assert "Planned for 2027" in post and "we do not arrange consultations or bookings" in post
+    assert post.index('id="waitlist"') < post.index('class="sources"')
+    values = re.findall(r'<option value="([^"]+)"', post)
+    logic = (common.ROOT / "tracker" / "src" / "logic.js").read_text(encoding="utf-8")
+    assert all(f'"{v}"' in logic for v in values) and values  # 양식 값 = 추적기가 받는 값
+    privacy = (dist / "privacy" / "index.html").read_text(encoding="utf-8")
+    assert 'id="waitlist"' in privacy and "We do not give it to clinics" in privacy
+    for rel in ("waitlist/index.html", "waitlist/thanks/index.html"):
+        assert '<meta name="robots" content="noindex">' in (dist / rel).read_text(encoding="utf-8")
+    assert "/waitlist/" not in (dist / "sitemap.xml").read_text(encoding="utf-8")
+    assert 'href="/waitlist/">Booking help (2027)' in (dist / "index.html").read_text(encoding="utf-8")
+
+    cfg = {**common.load_yaml("site.yaml"), "domain": "skinbound.example"}
+    sponsor_post = {"slug": "ad", "date": "2026-11-10T00:00:00+09:00",
+                    "draft": {"id": "x", "content_type": "procedure", "facts": [], "sponsor": sponsors_mod.validate(SPONSOR),
+                              "blog": {"title": "Ad", "markdown": "Body."}}}
+    assert 'id="waitlist"' not in site_mod.render_post(cfg, sponsor_post)
+    monkeypatch.setattr(site_mod, "config", lambda: {**cfg, "waitlist": {"enabled": False}})
+    site_mod.build()
+    assert 'id="waitlist"' not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+
+
+def test_waitlist_report_line_has_counts_only(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    today = date.today()
+    data = {"total": 3, "by_day": [{"day": (today - timedelta(days=30)).isoformat(), "n": 1}, {"day": today.isoformat(), "n": 2}],
+            "by_country": [{"country": "US", "n": 2}, {"country": "", "n": 1}], "by_timing": [], "by_source": [],
+            "rows": [{"email": "a@example.com", "created_at": "t", "timing": "unsure", "country": "US", "source": "instagram", "page": "/x/"}]}
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: data)
+    assert tracker_mod.waitlist_lines(7) == ["📮 대기 명단 3명 (최근 7일 +2) · US 2, ? 1"]
+    out = tracker_mod.waitlist_export(tmp_path / "w.csv")
+    assert out.read_text(encoding="utf-8").splitlines()[1] == "a@example.com,t,unsure,US,instagram,/x/"
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: {"total": 0})
+    assert tracker_mod.waitlist_lines(7) == []  # 아직 없으면 조용히
+
+
+def _threads_api(monkeypatch, tmp_path, fail: bool = False):
+    monkeypatch.setenv("THREADS_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("THREADS_TOKEN_FILE", str(tmp_path / "tok" / "threads.json"))
+    sent = []
+
+    def fake_http(method, url, params=None, headers=None, body=None):
+        if "refresh_access_token" in url:
+            return {"access_token": "tok"}
+        if url.endswith("/me"):
+            return {"id": "42", "username": "skinboundkorea"}
+        if url.endswith("/42/threads"):
+            if fail:
+                raise social_mod.SocialError("POST /v1.0/42/threads → 500: boom")
+            sent.append(params["text"])
+            return {"id": "c1"}
+        if url.endswith("/threads_publish"):
+            return {"id": "p1"}
+        return {"permalink": f"https://www.threads.net/@skinboundkorea/post/p{len(sent)}"}
+    monkeypatch.setattr(social_mod, "_http", fake_http)
+    return sent
+
+
+def test_threads_posts_automatically_without_ai_label_and_x_is_off(env, tmp_path, monkeypatch):
+    """2026-11-10: 칸마다 승인 없이 Threads 게시, 끝줄에 AI-assisted 없음, X 줄은 메시지에 없음."""
+    env.responses["social"] = SOCIAL
+    path = _published()
+    with monkeypatch.context() as m:  # 설정을 끄기 전에 만들어 둔 글 (AI-assisted 끝줄)
+        real = social_mod.settings
+        m.setattr(social_mod, "settings", lambda: {**real(), "ai_label": True})
+        social_mod.compose(path)
+    stored = common.load_json(path / "social.json")["items"]
+    assert "AI-assisted" in stored["link"]["channels"]["threads"]["text"]
+    assert "x.com/intent" not in social_mod.list_message() and "스레드 올려" not in social_mod.list_message()  # 토큰 없음 → 작성 링크만, X 는 없음
+
+    sent = _threads_api(monkeypatch, tmp_path)
+    msg = social_mod.daily_message(MONDAY)
+    assert msg.startswith("[Threads 자동 게시 1/2] 10/12(월) · 새 글 소개 — What is Rejuran?")
+    assert msg.endswith("https://www.threads.net/@skinboundkorea/post/p1") and "x.com" not in msg
+    assert sent[0].endswith("Full guide with sources: https://skinboundkorea.com/what-is-rejuran/") and "AI-assisted" not in sent[0]
+    item = common.load_json(path / "social.json")["items"]["link"]
+    assert item["channels"]["threads"]["posted"]["url"].endswith("/p1") and social_mod.sealed(item)  # 끝줄을 바꾼 뒤 지문도 다시
+    assert social_mod.daily_message(MONDAY.replace(hour=15)) == "" and len(sent) == 1   # 칸마다 한 번
+    evening = social_mod.daily_message(MONDAY.replace(hour=20))
+    assert evening.startswith("[Threads 자동 게시 2/2]") and sent[1].endswith("Source: pubmed.ncbi.nlm.nih.gov · Not medical advice")
+    assert social_mod.post(path, "threads") .startswith("이미 게시됨")                     # 같은 글을 두 번 올리지 않는다
+
+
+def test_threads_auto_post_failure_is_reported_not_retried(env, tmp_path, monkeypatch):
+    env.responses["social"] = SOCIAL
+    path = _published()
+    social_mod.compose(path)
+    assert "AI-assisted" not in json.dumps(common.load_json(path / "social.json"))        # 새로 만든 글엔 처음부터 없음
+    _threads_api(monkeypatch, tmp_path, fail=True)
+    msg = social_mod.daily_message(MONDAY)
+    assert msg.startswith("⚠️ Threads 자동 게시 실패") and "500: boom" in msg and "'오늘 스레드 올려'" in msg
+    assert social_mod.daily_message(MONDAY.replace(hour=10)) == ""                        # 같은 칸을 다시 올리지 않는다
+    assert common.load_json(path / "social.json")["items"]["link"]["channels"]["threads"]["posted"] is None
+    sent = _threads_api(monkeypatch, tmp_path)                                            # 사람이 확인하고 다시
+    monkeypatch.setattr(social_mod, "now_kst", lambda: MONDAY.replace(hour=11))
+    assert "threads 게시 기록" in social_mod.post("오늘", "threads") and len(sent) == 1
+
+
+# ---- 올리브영 제휴 글 (2026-11-10) ----
+
+aff_mod = importlib.import_module("pipeline.affiliates")
+OY = "https://global.oliveyoung.com/product/detail?prdtNo="
+
+
+def _skincare(draft_id="2026-W47-03-ceramide", created="2026-11-12T00:00:00+00:00", state="approved", markdown=None, **extra):
+    facts = [{"id": "F1", "kind": "other", "text": "Ceramides support the barrier.", "url": "https://pubmed.ncbi.nlm.nih.gov/1/", "source_title": "Study"},
+             {"id": "F2", "kind": "other", "text": "A ceramide lotion.", "url": OY + "GA210911943", "source_title": "ILLIYOON Ceramide Ato Lotion 334ml | OLIVE YOUNG Global"},
+             {"id": "F3", "kind": "other", "text": "A sun cream.", "url": OY + "GA210610738&dispCatNo=1", "source_title": "Dr.G Green Mild Up Sun+ 50mL - OLIVE YOUNG Global"},
+             {"id": "F4", "kind": "other", "text": "Not cited.", "url": OY + "GA999999999", "source_title": "Uncited | OLIVE YOUNG Global"}]
+    md = markdown or ("Ceramides help [F1].\n\n| Product | Criterion |\n|---|---|\n| Lotion [F2] | ceramides |\n\nAlso a sunscreen [F3] and the lotion again [F2].\n")
+    draft = {"id": draft_id, "content_type": "skincare", "created_at": created, "facts": facts,
+             "blog": {"title": "Ceramide picks", "slug": draft_id[-8:], "markdown": md, "meta_description": "d"}, **extra}
+    path = common.content_dir(state) / draft_id
+    common.save_json(path / "draft.json", draft)
+    return path, draft
+
+
+def test_affiliate_products_come_only_from_cited_olive_young_pages(env):
+    _path, draft = _skincare()
+    items = aff_mod.products(draft)
+    assert [(i["id"], i["name"]) for i in items] == [("GA210911943", "ILLIYOON Ceramide Ato Lotion 334ml"),
+                                                     ("GA210610738", "Dr.G Green Mild Up Sun+ 50mL")]  # 인용 순서·중복 제거, 인용 안 된 F4 제외
+    assert aff_mod.global_url("GA210911943") == OY + "GA210911943&rwardCode=SKINBOUND82&utm_source=influencers"
+    assert aff_mod.applies(draft)
+    assert not aff_mod.applies({**draft, "created_at": "2026-10-20T00:00:00+00:00"})        # 이미 있던 글은 그대로
+    assert not aff_mod.applies({**draft, "content_type": "procedure"})
+    assert not aff_mod.applies({**draft, "sponsor": {"id": "glow"}})
+    assert aff_mod.us_target("GA210911943") == "https://us.oliveyoung.com/"                 # US 링크 없음 → US 몰 첫 화면
+    assert aff_mod.us_price("GA210911943") is None
+
+
+def test_affiliate_post_has_disclosure_top_and_above_links_and_us_only_price(env, site_env, tmp_path, monkeypatch):
+    _skincare()
+    _skincare("2026-W43-01-old", created="2026-10-20T00:00:00+00:00")                       # since 이전 글: 링크·표시 없음
+    real = common.load_yaml
+    monkeypatch.setattr(aff_mod, "load_yaml", lambda n: {"products": {"GA210911943": {
+        "url": "https://click.linksynergy.com/deeplink?id=x", "price": 18, "as_of": "2026-12-01"}}} if n == "oliveyoung_us.yaml" else real(n))
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+
+    def fake_request(method, path, body=None, query=None):
+        made.append(body)
+        return {"code": f"oy{len(made)}", "url": f"https://go.example/oy{len(made)}"}
+    monkeypatch.setattr(tracker_mod, "_request", fake_request)
+    site_mod.build()
+    dist = tmp_path / "dist"
+    post = (dist / "ceramide" / "index.html").read_text(encoding="utf-8")
+    top, buy, body = post.index("Affiliate disclosure:"), post.index('id="where-to-buy"'), post.index("Ceramides help")
+    assert post.index("<h1>") < top < body < buy                                         # 제목 바로 아래 + 본문 뒤 구매 링크
+    assert buy < post.index(aff_mod.DISCLOSURE_LINKS) < post.index("https://go.example/oy1")   # 링크 바로 위
+    assert "We earn a commission when you buy through them." in post and "may earn" not in post   # 단정형
+    assert 'href="https://go.example/oy1?s=blog" rel="sponsored nofollow noopener"' in post
+    assert '<span data-geo-us hidden> · US price $18.00 at Olive Young US (as of Dec 2026)</span>' in post and "loc=US" in post
+    assert "not to the United States" in post and "5% off" in post
+    assert [b.get("target_us") for b in made] == ["https://click.linksynergy.com/deeplink?id=x", "https://us.oliveyoung.com/"]
+    assert all("rwardCode=SKINBOUND82" in b["target_url"] for b in made)
+    old = (dist / "3-01-old" / "index.html").read_text(encoding="utf-8")
+    assert "where-to-buy" not in old and "Affiliate" not in old
+    md = (dist / "ceramide" / "index.md").read_text(encoding="utf-8")
+    assert "> Affiliate disclosure:" in md and "- [ILLIYOON Ceramide Ato Lotion 334ml](https://go.example/oy1?s=blog)" in md
+    assert "Affiliate links</span>" in (dist / "index.html").read_text(encoding="utf-8")   # 목록 카드에도 표시
+    links = common.load_json(common.content_dir() / "site" / "tracked_links.json")
+    assert links["_oy:2026-W47-03-ceramide:GA210911943"]["kind"] == "affiliate"
+    monkeypatch.setattr(aff_mod, "load_yaml", lambda n: {"affiliates": {"oliveyoung": {"enabled": False}}} if n == "site.yaml" else real(n))
+    site_mod.build()                                                                         # 끄면 링크·표시가 모두 빠진다
+    assert "Affiliate" not in (dist / "ceramide" / "index.html").read_text(encoding="utf-8")
+
+
+def test_affiliate_rules_and_first_posts_go_to_a_person(env, monkeypatch):
+    rules = common.read_prompt("_rules")
+    assert "global.oliveyoung.com/product/detail?prdtNo=" in rules and "Do not write prices" in rules
+    assert "do not use affiliate or shop links" not in rules
+    review = importlib.import_module("pipeline.03_review")
+    monkeypatch.setattr(common, "load_yaml", lambda n, _o=common.load_yaml:
+                        {"review": {"trust_stage": 4}} if n == "channels.yaml" else _o(n))
+    path, _ = _skincare("2026-W47-03-new", state="drafts")
+    common.save_json(path / "review.json", {"grade": "pass", "always_human": [], "findings": []})
+    for i in range(3):
+        _skincare(f"2026-W4{i}-03-done{i}")
+    assert review.auto_candidates() == []                                                   # 제휴 글 3편뿐 → 4편째도 사람
+    _skincare("2026-W46-03-done3")
+    assert [p.name for p in review.auto_candidates()] == ["2026-W47-03-new"]
+
+
+def test_publish_slots_fix_one_type_per_weekday(env, monkeypatch):
+    assert common.load_yaml("site.yaml")["publish_schedule"]["slots"] == {"mon": "info", "wed": "procedure_travel", "fri": "skincare"}
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7,
+                                                              "slots": {0: "info", 2: "procedure_travel", 4: "skincare"}})
+    monkeypatch.setattr(site_mod, "now_kst", lambda: datetime(2026, 11, 14, 11, 0, tzinfo=site_mod.KST))   # 토요일
+    _skincare("2026-W47-03-sk", created="2026-11-13T00:00:00+00:00")
+    _published("2026-W47-01-proc", live=False)
+    path, draft = _skincare("2026-W47-02-trip", created="2026-11-13T01:00:00+00:00")
+    common.save_json(path / "draft.json", {**draft, "content_type": "procedure_travel"})
+    _skincare("2026-W47-04-sk2", created="2026-11-13T02:00:00+00:00")
+    site_mod.collect_posts()
+    sched = common.load_json(site_mod.schedule_file())
+    assert {k: v["date"] for k, v in sched.items()} == {
+        "2026-W47-01-proc": "2026-11-16", "2026-W47-02-trip": "2026-11-18",
+        "2026-W47-03-sk": "2026-11-20", "2026-W47-04-sk2": "2026-11-27"}                   # 화장품 둘째 편은 다음 주 금요일
+    assert site_mod.slot_group({"content_type": "sponsored", "sponsor": {"id": "g"}}) is None
+
+
+def test_affiliate_report_lines_count_clicks_and_flag_dead_products(env, monkeypatch):
+    links = {"_oy:2026-W47-03-a:GA1": {"kind": "affiliate", "code": "oy1", "product": "GA1", "product_name": "Lotion", "draft_id": "2026-W47-03-a", "title": "Ceramide picks"},
+             "_oy:2026-W47-03-a:GA2": {"kind": "affiliate", "code": "oy2", "product": "GA2", "product_name": "Sun", "draft_id": "2026-W47-03-a", "title": "Ceramide picks"},
+             "_oy:2026-W48-03-b:GA2": {"kind": "affiliate", "code": "oy3", "product": "GA2", "product_name": "Sun", "draft_id": "2026-W48-03-b", "title": "SPF guide"},
+             "_registry:x": {"kind": "registry", "code": "r1"}}
+    common.save_json(common.content_dir() / "site" / "tracked_links.json", links)
+    assert set(aff_mod.tracked()) == {k for k in links if k.startswith("_oy")}
+    rows = [{"code": "oy1", "clicks": 3, "country": "SG", "is_bot": 0}, {"code": "oy1", "clicks": 2, "country": "US", "is_bot": 0},
+            {"code": "oy3", "clicks": 1, "country": "CA", "is_bot": 0}, {"code": "oy2", "clicks": 9, "country": "SG", "is_bot": 1},
+            {"code": "r1", "clicks": 5, "country": "SG", "is_bot": 0}]
+    lines = aff_mod.click_lines(rows, aff_mod.tracked())
+    assert lines[0] == "🛍 올리브영 구매 링크: 제휴 글 2편 · 클릭 6 (글로벌몰 4 · 미국→US 몰 2)"   # 봇·다른 링크 제외
+    assert lines[1] == "  상위: Lotion 5, Sun 1"
+    status = {"GA1": {"status": "ok", "name": "Lotion"}, "GA2": {"status": "gone"}}
+    result = aff_mod.check(fetch=lambda pid: status[pid], pause=0)
+    assert [(x["id"], x["status"], x["posts"]) for x in result["items"]] == [("GA1", "ok", ["Ceramide picks"]), ("GA2", "gone", ["Ceramide picks", "SPF guide"])]
+    out = aff_mod.check_lines(common.load_json(aff_mod.check_file()))
+    assert out[0] == "🛍 구매 링크 점검: 제품 2개 — 판매 중 1 · 사라짐 1"
+    assert "사라짐: Sun (GA2) — 글: Ceramide picks, SPF guide" in out[1] and "그대로 둡니다" in out[-1]
+
+
+def test_affiliate_product_status_reads_sale_codes(monkeypatch):
+    import io
+    replies = {}
+
+    class Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(aff_mod.urllib.request, "urlopen", lambda req, timeout=0: Resp(replies[json.loads(req.data)["prdtNo"]]))
+    replies.update({"A": b"", "B": json.dumps({"product": {"prdtNameEn": "Lotion", "sellStatCode": "10", "tempOutOfStockYn": "N",
+                                                             "optionList": [{"sellStatCode": "10", "tempOutOfStockYn": "Y"}, {"sellStatCode": "10", "tempOutOfStockYn": "N"}]}}).encode(),
+                    "C": json.dumps({"product": {"prdtNameEn": "Gel", "sellStatCode": "10", "tempOutOfStockYn": "N",
+                                                 "optionList": [{"sellStatCode": "10", "tempOutOfStockYn": "Y"}]}}).encode(),
+                    "D": json.dumps({"product": {"prdtNameEn": "Old", "sellStatCode": "20"}}).encode()})
+    assert aff_mod.product_status("A") == {"status": "gone"}
+    assert aff_mod.product_status("B") == {"status": "ok", "name": "Lotion"}          # 옵션 하나라도 판매 중
+    assert aff_mod.product_status("C")["status"] == "soldout"                          # 옵션 전부 품절
+    assert aff_mod.product_status("D")["status"] == "soldout"                          # 판매 중지
+
+
+def test_gone_olive_young_product_gets_no_buy_link_and_is_flagged(env, site_env, tmp_path, monkeypatch):
+    _skincare()
+    monkeypatch.setattr(aff_mod, "product_status", lambda pid: {"status": "gone"} if pid == "GA210610738" else {"status": "ok"})
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None: made.append(body) or {"code": "oy1", "url": "https://go.example/oy1"})
+    site_mod.build()
+    post = (tmp_path / "dist" / "ceramide" / "index.html").read_text(encoding="utf-8")
+    assert "ILLIYOON" in post and "Dr.G Green Mild" not in post.split('id="where-to-buy"')[1].split('</section>')[0]   # 사라진 제품은 구매 링크에서 빠짐
+    assert len(made) == 1                                                                   # 추적 링크도 안 만듦
+    links = common.load_json(common.content_dir() / "site" / "tracked_links.json")
+    assert links["_oy:2026-W47-03-ceramide:GA210610738"]["gone"] is True
+    review = importlib.import_module("pipeline.02b_auto_review")
+    _path, draft = _skincare("2026-W47-03-other", state="drafts")
+    found = review.check_affiliate_products(draft)
+    assert [(f.severity, f.quote) for f in found] == [("caution", "Dr.G Green Mild Up Sun+ 50mL")]
+
+
+# ---- 올리브영 제품명은 실제 페이지에서 (2026-11-12: 검색 결과 제목과 실제 제품이 달랐다) ----
+
+OY_PAGE = " | OLIVE YOUNG Global Clear All Sign In / Sign Up " + QUOTE * 30
+OY_HOME = "OLIVE YOUNG Global | Korea's No. 1 Health & Beauty Store Clear All Sign In " + QUOTE * 30
+
+
+def test_olive_young_source_title_comes_from_the_fetched_page(env):
+    assert aff_mod.page_product_name("Bepanthol Derma Face Cream 50mL" + OY_PAGE) == "Bepanthol Derma Face Cream 50mL"
+    assert aff_mod.page_product_name(OY_HOME) is None                                       # 없는 제품 = 몰 첫 화면
+    assert aff_mod.source_title("https://www.aad.org/a", "AAD", OY_HOME) == "AAD"           # 다른 사이트는 그대로
+    pages = {OY + "GA000000001": (200, "Bepanthol Derma Face Cream 50mL" + OY_PAGE), OY + "GA000000002": (200, OY_HOME),
+             "https://www.aad.org/a": (200, QUOTE * 30)}
+    web.set_fetcher(lambda url: pages.get(url, (0, "")))
+    try:
+        sources = draft_mod.fetch_sources([{"url": OY + "GA000000001", "title": "ILLIYOON Ceramide Ato Concentrate Cream 150ml - OLIVE YOUNG Global"},
+                                           {"url": OY + "GA000000002", "title": "Some Cream - OLIVE YOUNG Global"},
+                                           {"url": "https://www.aad.org/a", "title": "AAD"}])
+    finally:
+        web.set_fetcher(None)
+    assert [(s["url"], s["title"]) for s in sources] == [
+        (OY + "GA000000001", "Bepanthol Derma Face Cream 50mL | OLIVE YOUNG Global"),               # 검색 결과 제목 대신 실제 제목
+        ("https://www.aad.org/a", "AAD")]                                                   # 사라진 제품 페이지는 출처에서 빠짐
+    assert aff_mod.same_product("AESTURA Atobarrier 365 Cream 80mL", "AESTURA Atobarrier 365 Cream 80ml")
+    assert aff_mod.same_product("ILLIYOON Ceramide Ato Lotion 334ml", "ILLIYOON Ceramide Ato Lotion 334ml (Set/Single)")
+    assert not aff_mod.same_product("ILLIYOON Ceramide Ato Concentrate Cream 150ml", "Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL")
+
+
+def test_buy_link_and_source_list_use_the_real_product_name(env, site_env, tmp_path, monkeypatch):
+    _skincare()                                                                             # 출처 제목: ILLIYOON …, Dr.G …
+    real = {"GA210911943": "Bepanthol Derma Face Cream 50mL", "GA210610738": "Dr.G Green Mild Up Sun+ 50mL"}
+    monkeypatch.setattr(aff_mod, "product_status", lambda pid: {"status": "ok", "name": real[pid]})
+    monkeypatch.setenv("TRACKER_URL", "https://go.example")
+    monkeypatch.setenv("TRACKER_TOKEN", "x")
+    made = []
+    monkeypatch.setattr(tracker_mod, "_request", lambda m, p, body=None, query=None:
+                        made.append(body) or {"code": f"oy{len(made)}", "url": f"https://go.example/oy{len(made)}"})
+    site_mod.build()
+    post = (tmp_path / "dist" / "ceramide" / "index.html").read_text(encoding="utf-8")
+    assert '>Bepanthol Derma Face Cream 50mL</a>' in post.split('id="where-to-buy"')[1].split("</section>")[0]
+    assert "ILLIYOON" not in post                                                           # 링크 이름·출처 목록 어디에도 틀린 이름 없음
+    assert ">Bepanthol Derma Face Cream 50mL | OLIVE YOUNG Global</a>" in post              # 출처 목록도 실제 제목
+    md = (tmp_path / "dist" / "ceramide" / "index.md").read_text(encoding="utf-8")
+    assert "- [Bepanthol Derma Face Cream 50mL](https://go.example/oy1?s=blog)" in md and "ILLIYOON" not in md
+    links = common.load_json(common.content_dir() / "site" / "tracked_links.json")
+    assert links["_oy:2026-W47-03-ceramide:GA210911943"]["product_name"] == "Bepanthol Derma Face Cream 50mL"
+    assert made[0]["label"] == "oliveyoung: Bepanthol Derma Face Cream 50mL"
+    saved = common.load_draft(common.content_dir("approved") / "2026-W47-03-ceramide")
+    assert saved["facts"][1]["source_title"].startswith("ILLIYOON")                         # 초안 파일은 그대로
+    review = importlib.import_module("pipeline.02b_auto_review")
+    found = review.check_affiliate_products(saved)
+    assert [(f.severity, f.quote) for f in found] == [("caution", "ILLIYOON Ceramide Ato Lotion 334ml")]
+    assert "실제: Bepanthol Derma Face Cream 50mL" in found[0].message
+
+
+# ---- 올리브영 제품 페이지의 전성분 표 (2026-11-14: 화면에서 따로 불러와져 받은 페이지에 없었다 → 표가 전부 "—") ----
+
+def test_olive_young_product_page_gets_its_ingredient_list(monkeypatch):
+    class Resp:
+        def __init__(self, body): self.body = body
+        def read(self, n=-1): return self.body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    rows = [{"codeDtlName": "Content volume or weight", "itemCont": "50ml"},
+            {"codeDtlName": "Ideal for", "itemCont": "For all skin types"},
+            {"codeDtlName": "Customer Service", "itemCont": "Customer Service: +82-80-000-0000"},
+            {"codeDtlName": "Ingredients", "itemCont": "Water, Glycerin,\r\n Panthenol"}]
+    asked = []
+    monkeypatch.setattr(web.urllib.request, "urlopen", lambda req, timeout=None:
+                        asked.append(json.loads(req.data)) or Resp(json.dumps({"description": rows}).encode()))
+    info = web.oliveyoung_product_info("GA220514919")
+    assert asked == [{"prdtNo": "GA220514919"}]
+    assert info == " Product information (Olive Young Global): Content volume or weight: 50ml. Ideal for: For all skin types. Ingredients: Water, Glycerin, Panthenol."
+    assert "+82" not in info                                                                 # 연락처 줄은 넣지 않는다
+
+    monkeypatch.setattr(web, "oliveyoung_product_info", lambda pid: f" Product information (Olive Young Global): Ingredients: Water ({pid}).")
+    monkeypatch.setattr(web, "_fetch", lambda url: (200, "Bepanthol Cream 50mL | OLIVE YOUNG Global Clear All Sign In " + "menu " * 3000))
+    status, text = web.fetch_page("https://global.oliveyoung.com/product/detail?prdtNo=GA220514919&dispCatNo=1")
+    assert text.startswith("Bepanthol Cream 50mL | OLIVE YOUNG Global Product information (Olive Young Global): Ingredients: Water (GA220514919). Clear All")
+    assert aff_mod.page_product_name(text) == "Bepanthol Cream 50mL"                         # 제목 읽기는 그대로
+    status, text = web.fetch_page("https://www.aad.org/a")
+    assert "Product information" not in text                                                 # 다른 사이트는 그대로
+    assert web.oliveyoung_product_id("https://global.oliveyoung.com/display/page?x=1") is None
+
+
+# ---- 검수 오탐 (2026-11-14: 보습제 글이 제품명·공식 명단 링크로 ⛔) ----
+
+def test_product_names_and_official_registry_link_are_not_blocked(env):
+    facts = [{"id": "F1", "url": "https://www.aad.org/a", "source_title": "AAD", "kind": "other"},
+             {"id": "F2", "url": OY + "GA220514919", "kind": "other",
+              "source_title": "Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL | OLIVE YOUNG Global"}]
+    body = ("Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL lists panthenol [F2]. Ok [F1]. "
+            "The Bepanthol Derma Replenishing Daily Moisture Face Cream 50mL list shows no ceramide [F2]. "
+            "Registered institutions: https://www.medicalkorea.or.kr/en/registeredhospitals. "
+            f"Lumina Derma Clinic is nearby.\n\n{DISCLOSURE}")
+    draft = {"facts": facts, "shortform": script(fact_ids=("F1",)), "blog": blog(body)}
+    msgs, _ = review_mod.check_rules(draft)
+    assert [m.quote for m in msgs if "병원명" in m.message] and all("Lumina Derma" in m.quote for m in msgs if "병원명" in m.message)
+    assert not any("출처 목록에 없는 URL" in m.message for m in msgs)
+    draft["blog"] = blog(f"See https://example.com/x for more. Ok [F1].\n\n{DISCLOSURE}")
+    msgs, _ = review_mod.check_rules(draft)
+    assert any("출처 목록에 없는 URL" in m.message for m in msgs)                       # 다른 링크는 여전히 막는다
+
+
+def test_urls_in_a_revision_note_are_always_source_candidates(env, monkeypatch):
+    note = ("Use these products: https://global.oliveyoung.com/product/detail?prdtNo=GA240121573, "
+            "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734. and (https://www.aad.org/a) "
+            "again https://global.oliveyoung.com/product/detail?prdtNo=GA240121573")
+    assert [s["url"] for s in draft_mod.pinned_sources(note)] == [
+        "https://global.oliveyoung.com/product/detail?prdtNo=GA240121573",
+        "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734",
+        "https://www.aad.org/a"]
+    assert draft_mod.pinned_sources(None) == [] and draft_mod.pinned_sources("no links") == []
+    seen = []
+    monkeypatch.setattr(draft_mod, "search_sources", lambda *a, **k: ([{"url": "https://www.fda.gov/x", "title": "FDA"}], []))
+    monkeypatch.setattr(draft_mod, "fetch_sources", lambda c, s=None: seen.extend(c) or (_ for _ in ()).throw(RuntimeError("stop")))
+    with pytest.raises(RuntimeError):
+        draft_mod.compose(TOPICS["topics"][0], note)
+    assert [c["url"] for c in seen][:2] == ["https://global.oliveyoung.com/product/detail?prdtNo=GA240121573",
+                                            "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734"]
+    assert seen[-1]["url"] == "https://www.fda.gov/x"                                          # 검색 결과는 그 뒤에

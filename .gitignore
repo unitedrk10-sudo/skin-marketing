@@ -13,3 +13,8 @@ site/dist/
 
 # wrangler 로컬 캐시 (배포 도구)
 .wrangler/
+
+# Remotion (실험 E)
+video/node_modules/
+video/public/exp/
+video/out/

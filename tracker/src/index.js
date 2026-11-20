@@ -1,15 +1,19 @@
 // 스폰서 병원 링크 유입 추적 — Cloudflare Worker + D1
 //   GET  /<code>[?s=tt|ig|yt|blog]  → 클릭 기록 후 병원 사이트로 302 (UTM 부착)
 //   /api/* (Authorization: Bearer <ADMIN_TOKEN>)
-//     POST /api/links {target_url, sponsor_id?, label?}   링크 생성
+//     POST /api/links {target_url, sponsor_id?, label?, target_us?}   링크 생성 (target_us = 미국 방문자 이동 주소)
 //     GET  /api/links                                     링크 목록
 //     POST /api/links/<code>/deactivate                   링크 끄기
 //     GET  /api/stats?from=YYYY-MM-DD&to=YYYY-MM-DD[&sponsor=<id>][&code=<code>]
 //     GET  /api/export?from=YYYY-MM-DD&to=YYYY-MM-DD   분석용 일·링크·채널·국가별 집계
+//     GET  /api/waitlist[?emails=1]                      대기 명단 집계 (emails=1 이면 명단 포함)
+//     POST /api/waitlist/delete {email}                  삭제 요청 처리
+//   POST /w (블로그의 대기 명단 양식, form) → 저장 후 블로그의 /waitlist/thanks/ 로 303
 // 개인정보: IP 원문 미저장. 날짜별 솔트 해시로 하루 단위 고유 방문자만 센다.
 
 import {
-  buildTarget, classifySource, isBot, isValidDay, isValidTarget, makeCode, slug, visitorHash,
+  WAITLIST_TIMINGS, buildTarget, classifySource, cleanEmail, cleanPage, hostOf, isBot, isValidDay, isValidTarget,
+  makeCode, slug, visitorHash,
 } from "./logic.js";
 
 const json = (data, status = 200) =>
@@ -50,7 +54,9 @@ async function redirect(request, env, ctx, code, url) {
     const task = recordClick(request, env, link, source).catch((e) => console.error("click log failed", e));
     if (ctx?.waitUntil) ctx.waitUntil(task); else await task;
   }
-  const target = buildTarget(link.target_url, {
+  // 미국 방문자는 따로 (2026-11-10 올리브영: 글로벌몰은 미국 배송 안 함 → US 몰)
+  const base = request.cf?.country === "US" && link.target_us ? link.target_us : link.target_url;
+  const target = buildTarget(base, {
     brand: env.BRAND || "skin-info", source, campaign: slug(link.label) || link.code,
   });
   return new Response(null, { status: 302, headers: { location: target, "cache-control": "no-store", "referrer-policy": "no-referrer-when-downgrade" } });
@@ -61,13 +67,15 @@ async function createLink(request, env) {
   try { body = await request.json(); } catch { return json({ error: "JSON body 필요" }, 400); }
   if (!isValidTarget(body.target_url)) return json({ error: "target_url 은 https 주소여야 합니다" }, 400);
   const sponsor = body.sponsor_id ? String(body.sponsor_id) : null;
+  if (body.target_us && !isValidTarget(body.target_us)) return json({ error: "target_us 는 https 주소여야 합니다" }, 400);
+  if (sponsor && body.target_us) return json({ error: "스폰서 링크는 국가별 주소를 받지 않습니다" }, 400);
   if (sponsor && !/^[a-z0-9][a-z0-9-]{1,39}$/.test(sponsor)) return json({ error: "sponsor_id 형식 오류" }, 400);
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = makeCode();
     const exists = await env.DB.prepare("SELECT code FROM links WHERE code = ?").bind(code).first();
     if (exists) continue;
-    await env.DB.prepare("INSERT INTO links (code, target_url, sponsor_id, label, created_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(code, body.target_url, sponsor, String(body.label || "").slice(0, 120), new Date().toISOString()).run();
+    await env.DB.prepare("INSERT INTO links (code, target_url, sponsor_id, label, created_at, target_us) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(code, body.target_url, sponsor, String(body.label || "").slice(0, 120), new Date().toISOString(), body.target_us || null).run();
     return json({ code, url: `${new URL(request.url).origin}/${code}` }, 201);
   }
   return json({ error: "코드 생성 실패" }, 500);
@@ -115,6 +123,50 @@ async function exportRows(env, url) {
   return json({ from, to, rows: results });
 }
 
+// 대기 명단 가입 — 블로그 양식에서만 받는다 (Origin/Referer 가 블로그 도메인). 봇·숨김 칸·동의 없음은 저장하지 않는다.
+const WAITLIST_DAILY_LIMIT = 5; // 같은 방문자(하루 해시)가 하루에 넣을 수 있는 주소 수
+
+async function joinWaitlist(request, env) {
+  const site = env.SITE_HOST || "";
+  const back = (path) => new Response(null, { status: 303, headers: { location: `https://${site}${path}`, "cache-control": "no-store" } });
+  const from = hostOf(request.headers.get("origin") || request.headers.get("referer") || "");
+  if (!site || !(from === site || from.endsWith("." + site))) return new Response("Forbidden", { status: 403 });
+  let form;
+  try { form = await request.formData(); } catch { return back("/waitlist/?e=1"); }
+  const ua = request.headers.get("user-agent") || "";
+  if (form.get("website") || isBot(ua)) return back("/waitlist/thanks/"); // 숨김 칸을 채운 봇: 저장하지 않고 조용히 끝
+  const email = cleanEmail(form.get("email"));
+  if (!email || form.get("agree") !== "yes") return back("/waitlist/?e=1");
+  const timing = WAITLIST_TIMINGS.includes(form.get("timing")) ? form.get("timing") : "unsure";
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const visitor = await visitorHash(request.headers.get("cf-connecting-ip") || "", ua, day, env.VISITOR_SALT || "");
+  const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM waitlist WHERE day = ? AND visitor = ?").bind(day, visitor).first();
+  if ((today?.n || 0) >= WAITLIST_DAILY_LIMIT) return back("/waitlist/thanks/");
+  const source = classifySource({ param: form.get("s"), referrer: "", userAgent: ua, siteHost: site });
+  await env.DB.prepare(
+    `INSERT INTO waitlist (email, created_at, day, timing, country, source, page, visitor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(email) DO UPDATE SET timing = excluded.timing`,
+  ).bind(email, now.toISOString(), day, timing, request.cf?.country || "", source, cleanPage(form.get("page")), visitor).run();
+  return back("/waitlist/thanks/");
+}
+
+async function waitlistStats(env, url) {
+  const q = (sql) => env.DB.prepare(sql);
+  const [total, byDay, byCountry, byTiming, bySource] = await Promise.all([
+    q("SELECT COUNT(*) AS n FROM waitlist").first(),
+    q("SELECT day, COUNT(*) AS n FROM waitlist GROUP BY day ORDER BY day").all(),
+    q("SELECT country, COUNT(*) AS n FROM waitlist GROUP BY country ORDER BY n DESC").all(),
+    q("SELECT timing, COUNT(*) AS n FROM waitlist GROUP BY timing ORDER BY n DESC").all(),
+    q("SELECT source, COUNT(*) AS n FROM waitlist GROUP BY source ORDER BY n DESC").all(),
+  ]);
+  const out = { total: total.n, by_day: byDay.results, by_country: byCountry.results, by_timing: byTiming.results, by_source: bySource.results };
+  if (url.searchParams.get("emails") === "1") {
+    out.rows = (await q("SELECT email, created_at, timing, country, source, page FROM waitlist ORDER BY created_at").all()).results;
+  }
+  return json(out);
+}
+
 async function api(request, env, url) {
   if (!authorized(request, env)) return json({ error: "unauthorized" }, 401);
   const path = url.pathname.replace(/\/+$/, "");
@@ -130,6 +182,15 @@ async function api(request, env, url) {
   }
   if (path === "/api/stats" && request.method === "GET") return stats(env, url);
   if (path === "/api/export" && request.method === "GET") return exportRows(env, url);
+  if (path === "/api/waitlist" && request.method === "GET") return waitlistStats(env, url);
+  if (path === "/api/waitlist/delete" && request.method === "POST") {
+    let body;
+    try { body = await request.json(); } catch { return json({ error: "JSON body 필요" }, 400); }
+    const email = cleanEmail(body.email);
+    if (!email) return json({ error: "email 형식 오류" }, 400);
+    const res = await env.DB.prepare("DELETE FROM waitlist WHERE email = ?").bind(email).run();
+    return json({ deleted: res.meta?.changes ?? res.changes ?? 0 });
+  }
   return json({ error: "not found" }, 404);
 }
 
@@ -137,6 +198,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) return api(request, env, url);
+    if (url.pathname === "/w" && request.method === "POST") return joinWaitlist(request, env);
     const code = url.pathname.slice(1);
     if (/^[a-z0-9]{4,12}$/.test(code) && (request.method === "GET" || request.method === "HEAD")) {
       return redirect(request, env, ctx, code, url);

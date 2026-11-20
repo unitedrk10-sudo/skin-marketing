@@ -11,6 +11,7 @@ Gemini 검색 연동으로 주제 후보를 조사해 content/topics/<주차>.js
 from __future__ import annotations
 
 import argparse
+import importlib
 from collections import Counter
 from datetime import date, timedelta
 
@@ -151,6 +152,17 @@ def telegram_message(week: str, topics: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def followups_block() -> str:
+    """단일 연구 근거 후속 후보 (pipeline/followups.py) — 실패해도 주제 조사는 계속."""
+    try:
+        fu = importlib.import_module("pipeline.followups")
+        fu.scan()
+        return fu.prompt_block()
+    except Exception as e:  # noqa: BLE001
+        log.warning("후속 후보 실패: %s", e)
+        return "(none)"
+
+
 def build(week: str, count: int) -> dict:
     channels = load_yaml("channels.yaml")
     axes = channels["content_axes"]
@@ -166,6 +178,7 @@ def build(week: str, count: int) -> dict:
         channels=str({k: channels[k] for k in ("audience", "shortform", "blog")}),
         recent_titles="\n".join(f"- {t}" for t in recent) or "(none yet)",
         demand=demand.prompt_block(tables),
+        followups=followups_block(),
     )
     data, result = llm.generate_json("topics", text)
     topics = validate(data.get("topics", []) if isinstance(data, dict) else data, axes)

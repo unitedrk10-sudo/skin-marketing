@@ -8,6 +8,30 @@ scenes: 5            # Flow 무료 하루 50크레딧 = Lite(10) 5개
 style: >-
   Cinematic vertical 9:16 video, soft natural daylight, calm muted ivory and warm taupe palette, gentle film grain,
   shallow depth of field, slow steady camera, no people's faces, no text, no logos
+looks:   # 2026-10-22 — 장면 프롬프트 화풍. 실험 항목에 look: <이름> (없으면 위 style)
+  flatmotion:   # 섞기(M) 기본 — 우리 도식(E)과 같은 느낌의 2D 모션그래픽
+    style: >-
+      Flat 2D motion graphics animation, vertical 9:16, warm cream background (#F4EFE6), deep green (#1F3B2D), warm terracotta
+      (#C8875E) and soft skin-tone shapes, clean vector look with smooth eased motion, subtle soft shadows, no gradients overload,
+      no people, no faces, no text, no letters, no numbers, no logos
+    guide: >-
+      Every scene is a simple flat vector animation in the same palette, like an animated infographic without words: a side
+      cross-section of skin as flat horizontal bands (light top layer, deeper middle layer, pale bottom layer), small round
+      particles drifting into a band, wavy fibres drawing themselves, a soft pink blob shrinking and fading, simple flat icons for
+      travel (suitcase, bed, plane, palace roof). Shapes move continuously for the whole clip (draw-on, drift, pulse, morph), with
+      the camera still. Never write any words or numbers; never draw faces, needles or a before/after.
+  explainer3d:
+    style: >-
+      Clean 3D medical explainer animation, vertical 9:16, soft studio lighting, calm ivory background with deep green and warm
+      terracotta accents, smooth slow camera, semi-realistic stylized tissue (not gory, no blood), no people, no faces, no text,
+      no labels, no logos
+    guide: >-
+      Show HOW things work as a 3D explainer animation: a cross-section of skin layers (epidermis, dermis, fat) seen from the side,
+      small particles or molecules moving into a layer, fibers forming, a soft pink inflammation glow slowly calming. Abstract and
+      schematic, never a real patient's face or body, never a needle or injection, never a before/after or a "perfect skin" result.
+      Travel or planning lines may use simple stylized 3D objects (suitcase, calendar block, bed) in the same clay-like 3D style.
+      Keep the SAME 3D style, palette and lighting in every scene so the video looks like one animation.
+
 schedule:   # 2026-10-19 변경: 2주 → 오늘 하루에 몰아서 (Flow 무료 50크레딧 = Lite 5개 = 계정당 하루 B 또는 C 한 번)
   - {date: 2026-10-19, method: B, post: W41-10}   # 리쥬란 — Flow 직접 (지금 계정 50크레딧)
   - {date: 2026-10-19, method: C, post: W43-03}   # 쥬베룩 — Flow 전용 계정 + Aside (그 계정 50크레딧)
@@ -18,3 +42,9 @@ schedule:   # 2026-10-19 변경: 2주 → 오늘 하루에 몰아서 (Flow 무�
   # 2026-10-20 B1 점수 4·1·4·2 — 화면 일관성은 좋고 내용 일치가 약함 → 줄마다 한 장면(10개), 내용 일치 규칙 강화
   #   크레딧: Lite 10개 = 계정 2개 × 50 (지금 계정 5개 직접 + Flow 전용 계정 5개 = C 테스트를 겸함)
   - {date: 2026-10-20, method: B, post: W41-10, scenes: 10}
+  # 2026-10-21 E = 코드로 그리는 설명 애니메이션(Remotion, 크림 배경), BE = B 의 Flow 클립 배경 + 같은 도식. 같은 리쥬란 글로 비교
+  #   (2026-10-21 은 대화 세션에서 직접 실행 — npm 설치 전 워커가 먼저 시작해 실패하지 않게 일정에는 넣지 않음)
+  #   - {date: 2026-10-21, method: E, post: W41-10}
+  #   - {date: 2026-10-21, method: BE, post: W41-10, bg: 2026-10-19-B-W41-10}
+  # 2026-10-22 E2 평가: 브랜드 8 · 전달 7 · 몰입 5 ("정적이다") → Flow 로 3D 원리 애니메이션을 만들고 글자는 우리가 얹는다 (BE, overlay: caption)
+  #   B 쪽은 대화 세션에서 직접 시작 (tag 로 같은 날 같은 글 실험과 구분)

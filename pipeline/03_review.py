@@ -5,7 +5,7 @@ approved→rejected (승인 철회 — 영상 렌더링·블로그 게시 전에
 
     python -m pipeline.03_review list [--stage drafts|rendered|approved]   # 검수 요청 메시지 출력 + 번호표 저장
     python -m pipeline.03_review apply "2 폐기" --stage approved            # 승인 철회 (먼저 list --stage approved)
-    python -m pipeline.03_review apply "1,3,4 승인" [--stage drafts]
+    python -m pipeline.03_review apply "1,3,4 승인" [--stage drafts]   # 번호·글번호(W46-03)로 고르면 ⛔ 도 승인 (스폰서 ⛔ 만 --confirm)
     python -m pipeline.03_review apply "2 수정: 가격 출처 다시"
     python -m pipeline.03_review apply "5 폐기"
     python -m pipeline.03_review apply "전체 승인" [--confirm]           # ⚠️/⛔ 건은 --confirm 있어야 승인
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import importlib
 import re
 from dataclasses import dataclass, field
@@ -317,6 +318,10 @@ def list_message(stage: str, compact: bool = False) -> str:
             line += f" 👤{', '.join(review['always_human'])}"
         elif not review:
             line += " 자동검수 전"
+        figs = __import__("importlib").import_module("pipeline.figures").attachments(path) if stage == "drafts" else []
+        if figs:
+            line += f" 🖼 그림 {len(figs)}개 첨부"
+        attachments += figs  # 블로그에 들어갈 설명 그림 (2026-10-26 — 시술 글 검수 때 같이 본다)
         if stage == "drafts" and not compact:
             lines += ["", line] + _draft_summary(path, draft, review)
             attachments.append(review_doc(path))
@@ -363,6 +368,69 @@ def record_agreement(draft_id: str, auto_grade: str | None, decision: str) -> No
         w.writerow([date.today().isoformat(), draft_id, auto_grade or "", decision, int(agree)])
 
 
+AUTO_FILE = "auto_approved.json"
+HUMAN_RATE = {2: 20, 3: 10, 4: 0}  # 신뢰 단계별 ✅ 글 중 사람이 보는 비율(%) (기획서 6-0). 4 = ✅ 전부 자동 승인 (2026-11-10 운영자 결정)
+
+
+def _human_rate() -> int | None:
+    """지금 단계의 표본 비율. 1단계(전부 사람)면 None."""
+    from pipeline.common import load_yaml
+    return HUMAN_RATE.get(int((load_yaml("channels.yaml").get("review") or {}).get("trust_stage", 1)))
+
+
+def human_sampled(draft_id: str, rate: int) -> bool:
+    """글 id 로 고정 추첨 — 다시 돌려도, 글을 고쳐도 결과가 바뀌지 않는다."""
+    return int(hashlib.sha256(draft_id.encode()).hexdigest(), 16) % 100 < rate
+
+
+def auto_candidates() -> list[Path]:
+    """사람 없이 승인해도 되는 글: ✅, 항상 사람이 볼 항목 없음(가격·새 유형·병원 정보 등), 스폰서 아님,
+    사람이 수정을 요청한 적 없음, 자동 승인을 되돌린 적 없음, 표본에 안 뽑힘."""
+    rate = _human_rate()
+    if rate is None:
+        return []
+    affiliates = importlib.import_module("pipeline.affiliates")
+    approved_aff = sum(1 for state in ("approved", "rendered", "ready_to_publish", "published") for p in draft_dirs(state)
+                       if affiliates.applies(load_draft(p)))
+    out = []
+    for path in draft_dirs("drafts"):
+        draft, review = load_draft(path), load_review(path) or {}
+        if (review.get("grade") == "pass" and not review.get("always_human") and not draft.get("sponsor")
+                and not any(not r.get("auto") for r in draft.get("revisions", []))
+                and not (path / AUTO_FILE).exists() and not _revise_pending(path.name)
+                and not human_sampled(path.name, rate) and not affiliates.needs_human(draft, approved_aff)):
+            out.append(path)
+    return out
+
+
+def auto_approve_message() -> str:
+    """신뢰 단계에 따른 자동 승인 + 알림. 그림은 승인하지 않는다 (그림은 따로 사람 승인, 2026-11-01)."""
+    paths = auto_candidates()
+    if not paths:
+        return ""
+    try:
+        importlib.import_module("pipeline.translate").ensure_stage("drafts")  # 첨부 파일을 한국어로 (실패 시 영어)
+    except Exception as e:  # noqa: BLE001
+        log.warning("자동 승인 첨부 번역 실패: %s", e)
+    lines = [f"[자동 승인 {len(paths)}건 — ✅ 통과, 사람 확인 항목 없음] 게시일 전까지 막을 수 있습니다: `승인글` 로 번호 확인 → `N 되돌리기`"]
+    docs = []
+    for path in paths:
+        draft = load_draft(path)
+        draft_id = path.name
+        moved = move(draft_id, "drafts", "approved")
+        save_json(moved / AUTO_FILE, {"at": now_iso()})
+        record_agreement(draft_id, "pass", "auto")
+        docs.append(review_doc(moved))
+        lines.append(f"- [{code(draft_id)}] {title(draft)}")
+    return "\n".join(lines + [""] + [f"MEDIA:`{d}`" for d in docs])
+
+
+def _note_undone(path: Path, grade: str | None) -> None:
+    """자동 승인한 글을 사람이 되돌리거나 폐기 = ✅ 가 놓친 것 — 다음 신뢰 단계 점검에 들어간다."""
+    if (path / AUTO_FILE).exists():
+        record_agreement(path.name, grade, "auto_undone")
+
+
 def _revise_pending(draft_id: str) -> bool:
     """워커가 아직 처리하지 않은 수정 요청이 있는가."""
     queue = importlib.import_module("pipeline.worker").requests_dir()
@@ -389,7 +457,9 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
     """답장을 처리하고 텔레그램으로 돌려줄 결과 줄들을 반환한다."""
     batch = load_batch(stage)
     codes = {code(d).upper(): str(i) for i, d in enumerate(batch, 1)}
-    reply = re.sub(r"(?i)\bW\d{2}-\d{2}\b", lambda m: codes.get(m.group(0).upper(), m.group(0)), reply)
+    # 글번호로 답해도 된다: W46-03 / w46 03 / W4603 (2026-11-05 — 띄어 쓴 답장이 해석 실패)
+    reply = re.sub(r"(?i)\bW(\d{2})[-\s]?(\d{2})\b",
+                   lambda m: codes.get(f"W{m.group(1)}-{m.group(2)}", m.group(0)), reply)
     commands = parse_reply(reply)
     # 전부 검증한 뒤에 실행한다 (한 줄이 틀려 일부만 처리되는 일이 없도록)
     stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered", "approved"}, "publish_ok": {"rendered"},
@@ -427,17 +497,23 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             if grade == "pending" and not confirm:  # 번호로 골라도 Claude Code 검수 전에는 보류
                 out.append(f"- {draft_id}: ⏳ Claude Code 검수 대기 — 결과 반영 후 다시 승인하거나 `--confirm`")
                 continue
-            if grade == "block" and not confirm:  # 번호로 골라도 차단(⛔)은 한 번 더 확인
-                out.append(f"- {draft_id}: ⛔ 자동검수 차단 — 걸린 내용을 확인했고 그래도 승인하려면 '재확인 승인'(--confirm), "
+            # 번호·글번호로 고른 승인은 ⛔ 여도 사람의 결정으로 승인한다 (2026-11-05 운영자 결정 — 검수 메시지에서 걸린 항목을 보고 고른 것).
+            # 스폰서 글의 ⛔(광고 표시·계약·심의번호)만 한 번 더 확인 — 스폰서 트랙 분리를 약하게 하지 않는다
+            if grade == "block" and not confirm and load_draft(path).get("sponsor"):
+                out.append(f"- {draft_id}: ⛔ 스폰서 글 자동검수 차단 — 걸린 내용을 확인했고 그래도 승인하려면 '재확인 N 승인', "
                            "고치려면 `N 수정: …`")
                 continue
             if not cmd.numbers and grade != "pass" and not confirm:
-                out.append(f"- {draft_id}: {GRADE_ICON[grade]} 자동검수 {grade or '미실시'} — 번호로 따로 승인하거나 `전체 승인` 재확인 필요")
+                out.append(f"- {draft_id}: {GRADE_ICON[grade]} 자동검수 {grade or '미실시'} — `전체 승인` 에서는 빠집니다. 번호로 골라 승인해 주세요")
                 continue
-            move(draft_id, "drafts", "approved")
+            moved = move(draft_id, "drafts", "approved")
             record_agreement(draft_id, grade, "approve")
-            out.append(f"- {draft_id}: 승인 → approved")
+            # 검수 메시지에 첨부해 보여 준 그림은 초안 승인으로 같이 승인 (2026-11-01)
+            n_figs = importlib.import_module("pipeline.figures").approve(moved, "draft_review")
+            out.append(f"- {draft_id}: 승인 → approved" + (f" (첨부한 그림 {n_figs}개 포함)" if n_figs else "")
+                       + (" — ⛔ 걸린 항목 그대로" if grade == "block" else ""))
         elif cmd.action == "reject":
+            _note_undone(path, grade)
             move(draft_id, stage, "rejected")
             if stage == "drafts":
                 record_agreement(draft_id, grade, "reject")
@@ -452,6 +528,7 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
             if draft_id in live:
                 out.append(f"- {draft_id}: 이미 블로그에 게시된 글이라 되돌릴 수 없습니다")
                 continue
+            _note_undone(path, grade)
             move(draft_id, stage, "drafts")  # 게시 일정 자리는 그대로 (다시 승인하면 같은 날)
             if cmd.note:
                 importlib.import_module("pipeline.worker").enqueue("revise", draft_id=draft_id, note=cmd.note)

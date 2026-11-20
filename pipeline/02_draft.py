@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
-from pipeline import attractions, llm, sponsors, web
+from pipeline import affiliates, attractions, llm, sponsors, web
 from pipeline.common import (
     blog_text,
     content_dir,
@@ -139,7 +139,11 @@ def fetch_sources(candidates: list[dict], sponsor: dict | None = None) -> list[d
         if status != 200 or len(text) < MIN_PAGE_CHARS:
             log.info("출처 제외 (%s, 본문 %d자): %s", status or "연결 오류", len(text), s["url"])
             continue
-        sources.append({"id": f"S{len(sources) + 1}", **s, "text": text})
+        title = affiliates.source_title(s["url"], s["title"], text)  # 올리브영 제품 페이지는 실제 페이지 제목으로
+        if title is None:
+            log.info("올리브영에서 사라진 제품 페이지라 출처에서 제외: %s", s["url"])
+            continue
+        sources.append({"id": f"S{len(sources) + 1}", **s, "title": title, "text": text})
         if len(sources) >= MAX_SOURCES:
             break
     return sources
@@ -259,8 +263,9 @@ def verify_facts(raw: list, sources: list[dict], clinic_pages: list[dict] | None
         url = str(f.get("url", "")).strip()
         if src is None and url.startswith("http") and not web.is_clinic_host(url):
             status, page = web.get(url)
-            if status == 200 and len(page) >= MIN_PAGE_CHARS:
-                src = {"id": f"S{len(sources) + 1}", "url": url, "title": f.get("source_title", ""), "text": page}
+            title = affiliates.source_title(url, f.get("source_title", ""), page) if status == 200 else None
+            if status == 200 and len(page) >= MIN_PAGE_CHARS and title is not None:
+                src = {"id": f"S{len(sources) + 1}", "url": url, "title": title, "text": page}
                 sources.append(src)
                 by_url[url] = src
         if src is None:
@@ -292,6 +297,15 @@ def add_disclosures(draft: dict, sponsor: dict) -> None:
         draft["blog"]["markdown"] = draft["blog"]["markdown"].rstrip() + f"\n\n{link}\n"
 
 
+NOTE_URL = re.compile(r"https://[^\s)\]>\"',]+")
+
+
+def pinned_sources(note: str | None) -> list[dict]:
+    """수정 메모에 적은 주소는 검색 결과와 상관없이 출처 후보 맨 앞에 넣는다 (2026-11-14: 같은 제품으로 다시 쓰라고 해도
+    출처를 새로 검색해 예시 제품이 바뀌었다). 병원 사이트 제외·페이지 확인·인용 대조는 다른 출처와 똑같다."""
+    return [{"url": u.rstrip("."), "title": ""} for u in dict.fromkeys(NOTE_URL.findall(note or ""))]
+
+
 def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -> dict:
     rules = sponsors.rules_text(sponsor) if sponsor else None
     if sponsor:  # 스폰서 "병원 중심 코스" 글만 관광 데이터를 받는다 (병원 권역 기준)
@@ -299,7 +313,7 @@ def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -
     else:  # 여행 축: 관광지 속성·코스 규칙·맛집 트렌드
         travel = attractions.context(topic)
     candidates, clinic_candidates = search_sources(topic, note, rules, travel)
-    sources = fetch_sources(candidates, sponsor)
+    sources = fetch_sources(pinned_sources(note) + candidates, sponsor)
     # 스폰서 글에는 광고주 외 다른 병원이 들어가면 안 되므로 병원 공통 정보를 쓰지 않는다
     clinic_pages = [] if sponsor else fetch_clinic_pages(clinic_candidates)
     log.info("출처 %d곳 확보 (병원 공통 정보용 %d곳): %s", len(sources), len(clinic_pages), topic["title"])

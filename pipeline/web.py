@@ -70,7 +70,42 @@ def fetch_page(url: str) -> tuple[int, str]:
         if status == 200 and text.lstrip().startswith("<"):
             text = html_to_text(re.sub(r"(?is)<(ref-list|back)\b.*?</\1>", " ", text))  # 참고문헌 목록은 뺀다
         return status, text
-    return _fetch(url)
+    status, text = _fetch(url)
+    if status == 200 and text and (pid := oliveyoung_product_id(url)) and (info := oliveyoung_product_info(pid)):
+        # 제목 바로 뒤에 — 페이지 뒤쪽은 메뉴·리뷰라 작성·검수에 넘기는 앞부분(12,000자)에서 잘린다
+        head, sep, rest = text.partition(OLIVE_YOUNG_TITLE_END)
+        text = f"{head}{sep}{info}{rest}" if sep else text + info
+    return status, text
+
+
+# 올리브영 글로벌 제품 페이지는 전성분·사용 대상 표가 화면에서 따로 불러와져 HTML 에 없다 (2026-11-14: 보습제 글 표가
+# 전부 "—" 였다). 같은 페이지가 쓰는 공개 데이터에서 그 표를 받아 본문 끝에 붙인다 — 화장품법상 판매 페이지에 싣는 표시 정보.
+OLIVE_YOUNG_INFO = "https://global.oliveyoung.com/product/description-info"
+OLIVE_YOUNG_PRODUCT = re.compile(r"^https://global\.oliveyoung\.com/product/detail\?(?:.*&)?prdtNo=([A-Z]{2}\d{6,})", re.I)
+OLIVE_YOUNG_TITLE_END = "| OLIVE YOUNG Global"
+OLIVE_YOUNG_FIELDS = ("Content volume or weight", "Ideal for", "Ingredients")  # 연락처·제조사 줄은 넣지 않는다
+
+
+def oliveyoung_product_id(url: str) -> str | None:
+    m = OLIVE_YOUNG_PRODUCT.match((url or "").strip())
+    return m.group(1).upper() if m else None
+
+
+def oliveyoung_product_info(product_id: str) -> str:
+    """" Product information: Ideal for: … Ingredients: …" — 못 받으면 빈 문자열 (출처는 화면 글자만으로 그대로)."""
+    import json
+    req = urllib.request.Request(OLIVE_YOUNG_INFO, data=json.dumps({"prdtNo": product_id}).encode(),
+                                 headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            data = json.loads(resp.read(500_000) or b"{}")
+    except (urllib.error.URLError, OSError, ValueError):
+        return ""
+    rows = {str(r.get("codeDtlName", "")): str(r.get("itemCont") or "") for r in (data.get("description") or [])
+            if isinstance(r, dict)}
+    parts = [name + ": " + re.sub(r"\s+", " ", html.unescape(rows[name])).strip() for name in OLIVE_YOUNG_FIELDS
+             if rows.get(name, "").strip()]
+    return (" Product information (Olive Young Global): " + " ".join(f"{x.rstrip('.')}." for x in parts)) if parts else ""
 
 
 def _fetch(url: str) -> tuple[int, str]:

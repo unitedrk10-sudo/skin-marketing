@@ -49,7 +49,7 @@ def content_dir(state: str | None = None) -> Path:
     return base / state
 
 
-def load_env_file(path: Path | None = None) -> None:
+def load_env_file(path: Path | None = None, override: bool = False) -> None:
     """저장소 .env 의 값이 있는 항목을 아직 없는 환경변수로만 채운다 (Hermes 스크립트와 같은 규칙).
     터미널에서 직접 실행하는 설정 명령용 — 값은 출력하지 않는다."""
     path = path or ROOT / ".env"
@@ -57,7 +57,7 @@ def load_env_file(path: Path | None = None) -> None:
         return
     for line in path.read_text(encoding="utf-8").splitlines():
         key, sep, value = line.strip().partition("=")
-        if sep and key and not key.startswith("#") and value.strip() and key.strip() not in os.environ:
+        if sep and key and not key.startswith("#") and value.strip() and (override or key.strip() not in os.environ):
             os.environ[key.strip()] = value.strip()
 
 
@@ -111,14 +111,18 @@ def read_prompt(name: str) -> str:
 
 
 def render(template: str, **values) -> str:
-    """{{key}} 치환. 값이 없는 키가 남으면 오류 (프롬프트 누락 방지)."""
-    out = template
-    for key, value in values.items():
-        out = out.replace("{{" + key + "}}", value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
-    missing = re.findall(r"\{\{(\w+)\}\}", out)
+    """{{key}} 치환. 템플릿에 값이 없는 키가 있으면 오류 (프롬프트 누락 방지).
+    한 번에 치환해 넣은 값(출처 페이지 본문 등) 안의 {{...}} 는 건드리지도 검사하지도 않는다 —
+    2026-11-05 올리브영 페이지의 {{dlvyCntryName}} 이 누락으로 잡혀 초안 요청이 실패."""
+    missing = sorted({key for key in re.findall(r"\{\{(\w+)\}\}", template) if key not in values})
     if missing:
         raise KeyError(f"프롬프트 변수 누락: {missing}")
-    return out
+
+    def fill(m: re.Match) -> str:
+        value = values[m.group(1)]
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+    return re.sub(r"\{\{(\w+)\}\}", fill, template)
 
 
 def prompt(name: str, rules: str | None = None, **values) -> str:

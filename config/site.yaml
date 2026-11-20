@@ -13,12 +13,26 @@ contact_email: hello@skinboundkorea.com  # 2026-10-10 Cloudflare Email Routing (
 cloudflare_project: skin-site     # Cloudflare Pages 프로젝트명 (wrangler pages deploy)
 posts_on_home: 30
 indexnow_key: "9c92fdd682b5fa530af168170339bdde"   # IndexNow (공개 값 — 사이트에 /<key>.txt 로 게시). 배포 때 새 글·수정 글 주소를 Bing 등에 바로 알린다
+operator:                       # 운영 주체 공개 — About "Who runs" 단락·구조화 데이터 (2026-11-17 운영자 결정)
+  description: an independent publisher based in Seoul, South Korea   # 지금은 여기까지만 밝힌다
+  since: 2026-10                # 첫 글 게시 (2026-10-06)
+  city: Seoul
+  country: KR
+  legal_name: ""                # ↓ 법인 설립 뒤 채우면 About 에 그대로 나온다
+  representative: ""
+  business_no: ""
+  address: ""
+  facilitator_no: ""            # 외국인환자 유치사업자 등록번호 — 등록 전에는 반드시 비워 둔다 (등록된 것처럼 읽히는 문구 금지)
 social_profiles:                # 공식 SNS 계정 — 구조화 데이터 sameAs (검색·AI 가 같은 브랜드로 묶게)
   - https://www.threads.com/@skinboundkorea
   - https://x.com/Skinboundkorea
 publish_schedule:               # 블로그 게시 요일 (2026-10-10 결정: 월·수·금, 하루 1편). 승인된 글은 다음 빈 요일에 배정
   days: [mon, wed, fri]         # 배정은 content/site/schedule.json 에 고정 — 확인: python -m pipeline.site schedule
   hour: 7                       # 한국 시간. 매시 배포 크론이 이 시각 이후 첫 실행에 올린다 → SNS 오늘의 글(9시) 전에 게시
+  slots:                        # 2026-11-10 운영자 결정: 시술·여행·화장품 주 1편씩 고정 (channels.yaml topic_quota 이름)
+    mon: info                   # 시술 정보
+    wed: procedure_travel       # 시술 × 여행
+    fri: skincare               # 화장품 (올리브영 제휴)
 clinic_directory:               # 여행 글 코스 주변 피부과 목록 (pipeline/clinics.py) — 기준을 바꾸면 모든 글에 똑같이 적용
   radius_m: 700                 # 관광지 중심 반경 — 이 안의 피부과 진료 의료기관 전부
   max_per_stop: 40              # 관광지당 표시 수 (넘으면 가까운 순으로 자르고 'N곳 중 가까운 M곳' 표시)
@@ -27,6 +41,19 @@ route_ads:                      # 중립 여행 글의 코스 광고 카드 (spo
   enabled: true
   hide_in_countries: [KR]       # 해외 대상 광고: 이 나라 방문자에게는 숨김 (의료법 §56②12 국내광고 시비 차단)
 palette: charcoal               # 색 체계: green(짙은 녹색·세이지) | charcoal(차콜·토프). 포인트 버건디는 공통 — 바꾸면 아이콘·카드도 같이
-partners_page: false          # 병원(광고주) 대상 한국어 안내 /partners/ — 변호사 확인(기획서 12-1-1) 후 true. 검색 제외·꼬리말 링크만
+trends_page: false             # 한국 시술 검색 관심도 /trends/ + 글 안 문장 (pipeline/naver_trends.py) — 네이버 API 이용 조건 확인·첫 결과 확인 뒤 켠다
+data_page: true               # 영어 공개 데이터 /data/ (pipeline/dataset.py) — 2026-11-02 운영자 결정: 공공누리 제1유형 기준으로 공개
+waitlist:                     # 대기 명단 (2026-11-10 운영자 결정) — 2027년 예약 도움 서비스 출시 알림용 이메일만 받는다
+  enabled: true               # 추적기(TRACKER_URL)가 설정돼 있을 때만 양식이 나온다. 스폰서 글에는 넣지 않는다
+  launch_year: 2027           # 유치업 등록 법인 설립 예정 연도 — 양식·안내 문구에 표시. 등록 전에는 상담·예약 연결을 하지 않는다
+affiliates:                     # 제휴 링크 (2026-11-10, pipeline/affiliates.py, 기획 docs/olive-young-affiliate-plan.md)
+  oliveyoung:
+    enabled: true
+    reward_code: SKINBOUND82    # 올리브영 글로벌 리워드 코드 (공개 링크에 들어가는 값이라 비밀 아님)
+    since: 2026-11-10           # 이 날 이후 만든 화장품 글에만 붙인다 — 이미 게시된 글은 요청 없이 고치지 않는다
+    human_first: 4              # 제휴 글 첫 4편은 자동 승인하지 않고 사람이 본다 (표시 위치·문구, 구매 링크 확인)
+    us_fallback: https://us.oliveyoung.com/   # 미국 방문자: US 몰에 같은 제품 링크(config/oliveyoung_us.yaml)가 없으면 여기로 (수수료 없음)
+    discount: Buying through our link also gives you 5% off at Olive Young Global (as of Nov 2026).
+partners_page: true           # 병원(광고주) 대상 한국어 안내 /partners/ — 2026-11-10 운영자 결정으로 공개 (변호사·신문고 확인 없이 진행). 검색 제외·꼬리말 링크만
 analytics_site_tag: "2768617998d947b0925482151b70c5c1"         # Web Analytics 사이트 태그(site tag) — 주제 추천이 글별 조회수를 읽을 때 사용 (.env CF_API_TOKEN, CF_ACCOUNT_ID)
 analytics_token: "83139615d6714be495fb5d4bbf4d4b8a"             # Cloudflare Web Analytics 토큰 (대시보드 → Web Analytics → 사이트 추가) — 방문·AI 유입 집계

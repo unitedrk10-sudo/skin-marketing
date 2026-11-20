@@ -44,7 +44,6 @@ JOBS: list[tuple[str, str | None, list[dict]]] = [
         _py("pipeline.01_topics", "--next-week", "--from-seed", "6"),  # 초기 주제 목록 소진 후 자동으로 Gemini 조사
     ]),
     ("skin-worker", "every 10m", [_py("pipeline.worker", "run")]),
-    ("skin-traffic-report", "0 10 * * 1", [_py("pipeline.tracker", "report", "--days", "7")]),
     # 블로그: 승인된 글이 바뀌었을 때만 Cloudflare Pages 배포 (없으면 조용)
     ("skin-site", "every 1h", [_py("pipeline.site", "deploy")]),
     ("skin-weekly-report", "0 20 * * 0", [_py("pipeline.07_report")]),
@@ -52,6 +51,10 @@ JOBS: list[tuple[str, str | None, list[dict]]] = [
     ("skin-clinics", "0 7 * * 1", [_py("pipeline.clinics", "refresh")]),
     # 월간 유입 분석 (영업용 데이터셋·리포트, 추적기 미설정·클릭 없으면 조용)
     ("skin-analytics", "0 11 1 * *", [_py("pipeline.analytics", "report")]),  # 매월 1일 11:00 (지난달)
+    # 영어 공개 데이터 분기 갱신 (심평원 전국 조회 → /data/, 다음 배포 때 반영)
+    ("skin-dataset", "0 7 1 1,4,7,10 *", [_py("pipeline.dataset", "refresh")]),
+    # 한국 시술 검색 관심도 — 매월 3일 08:00 지난달 기준 (네이버 키 없으면 조용, 다음 배포 때 /trends/ 반영)
+    ("skin-naver-trends", "0 8 3 * *", [_py("pipeline.naver_trends", "refresh")]),
     # 점검용 (크론 아님): 크론과 같은 환경에서 키·모델·claude 확인
     ("skin-check", None, [
         {**_py("pipeline.llm", "check"), "on_fail": ""},
@@ -146,6 +149,26 @@ def install_skill(skills_dir: Path, repo: Path, python: str) -> Path:
     return path
 
 
+def install_router(hermes_home: Path, repo: Path, python: str, claude: str) -> Path:
+    """텔레그램 답장을 코드 + Claude 로 처리하는 플러그인 (2026-11-01). 게이트웨이를 다시 시작해야 적용된다."""
+    target = hermes_home / "plugins" / "skin-router"
+    target.mkdir(parents=True, exist_ok=True)
+    source = repo / "hermes/plugins/skin-router"
+    (target / "plugin.yaml").write_text((source / "plugin.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    code = (source / "__init__.py").read_text(encoding="utf-8")
+    for key, value in (("REPO", str(repo)), ("PYTHON", python), ("HERMES", shutil.which("hermes") or ""), ("CLAUDE", claude)):
+        code = code.replace("{{" + key + "}}", value)
+    (target / "__init__.py").write_text(code, encoding="utf-8")
+    config = hermes_home / "config.yaml"
+    text = config.read_text(encoding="utf-8") if config.exists() else ""
+    if "skin-router" not in text:
+        if text.startswith("plugins:") or "\nplugins:" in text:
+            print("⚠️  config.yaml 의 plugins.enabled 에 skin-router 를 직접 추가하세요")
+        else:
+            config.write_text(text.rstrip("\n") + "\nplugins:\n  enabled:\n    - skin-router\n", encoding="utf-8")
+    return target
+
+
 def register_jobs(deliver: str, only: set[str] | None = None) -> None:
     hermes = shutil.which("hermes")
     if not hermes:
@@ -211,6 +234,7 @@ def main() -> int:
         print(f"스크립트: {path}")
     # 3. 스킬
     print(f"스킬: {install_skill(args.hermes_home / 'skills', REPO, args.python)}")
+    print(f"텔레그램 처리: {install_router(args.hermes_home, REPO, args.python, claude)}")
     # 4. 크론 등록
     register_jobs(args.deliver, only)
 

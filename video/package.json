@@ -1,0 +1,19 @@
+{
+  "name": "skinbound-explainer",
+  "private": true,
+  "description": "Shortform experiment E: code-drawn explainer visuals (Remotion). Props come from pipeline/explainer.py.",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Explainer"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.532",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.532"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.8",
+    "typescript": "5.8.3"
+  }
+}

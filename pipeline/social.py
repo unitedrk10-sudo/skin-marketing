@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import difflib
 import hashlib
 import hmac
 import json
@@ -62,7 +63,7 @@ log = get_logger("social")
 
 CHANNELS = ("x", "threads")
 KINDS = ("link", "fact", "angle", "ask")  # 글마다 만드는 종류 (보내는 순서도 이 순서). ask = 독자 질문 (2026-10-19)
-LABEL = {"link": "새 글 소개", "fact": "사실 하나", "angle": "여행 팁·흔한 오해", "ask": "독자에게 질문", "roundup": "한 주 정리"}
+LABEL = {"link": "새 글 소개", "fact": "사실 하나", "angle": "여행 팁·흔한 오해", "ask": "독자에게 질문", "roundup": "한 주 정리", "share": "공유 실험"}
 ASK_FOOTER = "\n\n(AI-assisted · not medical advice)"
 PUBLIC_STATES = ("approved", "rendered", "ready_to_publish", "published")
 URL_WEIGHT = 23  # X 는 링크(도메인만 쓴 것 포함)를 길이와 관계없이 23자로 센다
@@ -79,15 +80,50 @@ X_LINK_FOOTER = "\n\nSources in the reply ↓ (AI-assisted)"
 ROUNDUP_X_FOOTER = "\n\nLinks in the reply ↓ (AI-assisted)"
 
 
+# "AI-assisted" 가 들어간 끝줄 → 뺀 끝줄 (channels.yaml text_social.ai_label: false, 2026-11-10). 코드가 붙인 끝줄만 바꾼다
+PLAIN_FOOTERS = (
+    (ASK_FOOTER, "\n\n(Not medical advice)"),
+    (X_LINK_FOOTER, "\n\nSources in the reply ↓"),
+    (ROUNDUP_X_FOOTER, "\n\nLinks in the reply ↓"),
+    ("\n\nAI-assisted guide with sources: ", "\n\nFull guide with sources: "),
+    (" · AI-assisted, not medical advice", " · Not medical advice"),
+    ("\nAI-assisted, human-reviewed.", ""),  # 자동 승인(신뢰 단계 2) 뒤로는 "human-reviewed" 도 모든 글에 맞는 말이 아니다
+)
+
+
 class SocialError(RuntimeError):
     pass
 
 
 def settings() -> dict:
     cfg = load_yaml("channels.yaml").get("text_social") or {}
-    return {"x": {"mode": "intent", "max_chars": 280, **(cfg.get("x") or {})},
-            "threads": {"mode": "api", "max_chars": 500, **(cfg.get("threads") or {})},
-            "daily": {"hour": 9, "wait_until": 12, **(cfg.get("daily") or {})}}
+    return {"x": {"enabled": True, "mode": "intent", "max_chars": 280, **(cfg.get("x") or {})},
+            "threads": {"auto_post": False, "mode": "api", "max_chars": 500, **(cfg.get("threads") or {})},
+            "daily": {"hour": 9, "wait_until": 12, **(cfg.get("daily") or {})},
+            "ai_label": bool(cfg.get("ai_label", True))}
+
+
+def plain(text: str | None) -> str | None:
+    """끝줄의 "AI-assisted" 를 뺀 글 (ai_label 이 꺼져 있을 때만)."""
+    if not text or settings()["ai_label"]:
+        return text
+    for labelled, bare in PLAIN_FOOTERS:
+        text = text.replace(labelled, bare)
+    return text
+
+
+def unlabel(item: dict) -> bool:
+    """설정을 끄기 전에 만들어 둔 글의 끝줄을 맞춘다. 검사를 통과해 지문이 맞는, 아직 안 올린 글만 — 바뀌면 지문을 다시 찍는다."""
+    if settings()["ai_label"] or not sealed(item) or any(c.get("posted") for c in item["channels"].values()):
+        return False
+    changed = False
+    for c in item["channels"].values():
+        for field in ("text", "reply"):
+            if c.get(field) and (new := plain(c[field])) != c[field]:
+                c[field], changed = new, True
+    if changed:
+        item["seal"] = seal_of(item)
+    return changed
 
 
 def now_kst() -> datetime:
@@ -167,10 +203,26 @@ def allowed(draft: dict) -> bool:
 def build_channels(kind: str, bodies: dict[str, str], url: str, domains: list[str]) -> dict:
     """본문 → 실제로 올라갈 글 (끝줄은 코드가 붙인다). X 의 link·정리 글은 링크를 답글로."""
     if kind == "link":
-        return {"x": {"text": bodies["x"] + X_LINK_FOOTER, "reply": reply_text(url), "posted": None},
-                "threads": {"text": bodies["threads"] + footer(url), "posted": None}}
-    end = ASK_FOOTER if kind == "ask" else source_footer(domains)  # 질문 글은 사실을 말하지 않아 출처 줄이 없다
+        return {"x": {"text": bodies["x"] + plain(X_LINK_FOOTER), "reply": reply_text(url), "posted": None},
+                "threads": {"text": bodies["threads"] + plain(footer(url)), "posted": None}}
+    end = plain(ASK_FOOTER if kind == "ask" else source_footer(domains))  # 질문 글은 사실을 말하지 않아 출처 줄이 없다
     return {ch: {"text": bodies[ch] + end, "posted": None} for ch in CHANNELS}
+
+
+def seal_of(item: dict) -> str:
+    """검사를 통과해 저장된 글의 지문. 다른 경로로 본문을 바꾸면 게시·발송이 멈춘다 (2026-10-30 봇이 파일을 고쳐 게시한 사고)."""
+    parts = {ch: [c.get("text"), c.get("reply")] for ch, c in sorted(item["channels"].items())}
+    return hashlib.sha256(json.dumps([parts, item.get("fact_ids") or []], ensure_ascii=False).encode()).hexdigest()[:20]
+
+
+def sealed(item: dict) -> bool:
+    return item.get("seal") == seal_of(item)
+
+
+def repeated_opening(text: str) -> bool:
+    """첫 두 줄이 거의 같은 문장 (첫 줄 후보가 본문 둘째 줄과 겹친 경우, 2026-10-30 Flying)."""
+    lines = [x.strip().lower() for x in text.split("\n") if x.strip()]
+    return len(lines) > 1 and difflib.SequenceMatcher(None, lines[0], lines[1]).ratio() > 0.7
 
 
 def check_item(draft: dict, kind: str, bodies: dict[str, str], channels: dict | None = None,
@@ -190,6 +242,8 @@ def check_item(draft: dict, kind: str, bodies: dict[str, str], channels: dict | 
             problems.append(f"[{kind}·{ch}] 빈 글")
             continue
         problems += [f"[{ch}] {msg}" for msg in text_problems(text, known_numbers)]
+        if repeated_opening(text):
+            problems.append(f"[{ch}] 첫 두 줄이 거의 같음")
         limit = cfg[ch]["max_chars"]
         if (n := size(ch, channels[ch]["text"])) > limit:
             problems.append(f"[{ch}] 너무 김 ({n}/{limit}자)")
@@ -253,7 +307,12 @@ def pick_openers(draft: dict, generated: dict[str, dict]) -> dict[str, dict]:
 def with_opener(body: str, opener: str) -> str:
     """본문 첫 줄을 고른 첫 줄로 바꾼다."""
     rest = body.split("\n", 1)
-    return opener + ("\n" + rest[1] if len(rest) > 1 else "")
+    text = opener + ("\n" + rest[1] if len(rest) > 1 else "")
+    if repeated_opening(text):  # 고른 첫 줄이 둘째 줄과 같은 내용이면 둘째 줄을 뺀다
+        lines = text.split("\n")
+        del lines[1]
+        text = "\n".join(lines)
+    return text
 
 
 def check(draft: dict, texts: dict[str, str]) -> list[str]:
@@ -340,6 +399,7 @@ def compose(path: Path) -> dict:
                 results[kind]["opener"] = pick
     for kind, item in results.items():
         item["status"] = "blocked" if item["problems"] else "ready"
+        item["seal"] = seal_of(item)
         data["items"][kind] = item
     save_json(social_file(path), data)
     return data
@@ -365,9 +425,116 @@ def compose_pending(limit: int = 5) -> tuple[list[str], list[str]]:
         try:
             compose(path)
             done.append(path.name)
+        except llm.ClaudeAuthExpired:
+            raise  # 로그인 만료는 워커가 한 번만 알리고 기다린다 (글마다 실패로 쌓지 않음)
         except llm.LLMError as e:
             failed.append(f"{path.name}: {e}")
     return done, failed
+
+
+# ---------------- 공유 실험 (2026-11-02, 4주) ----------------
+# "친구에게 보낼 만한가" 기준의 글(share)과 기존 글을 번갈아 보내고 글별 Threads 반응을 비교한다. 사실 목록·규칙 검사는 같다.
+
+def experiment() -> dict:
+    return settings().get("experiment") or {}
+
+
+def experiment_active(day: date) -> bool:
+    cfg = experiment()
+    return bool(cfg) and str(cfg["start"]) <= day.isoformat() <= str(cfg["end"])
+
+
+def share_pending() -> list[Path]:
+    """실험 기간에 게시된 글 중 share 글이 아직 없는 것 (최근 글부터)."""
+    if not experiment_active(now_kst().date()):
+        return []
+    live = live_slugs()
+    paths = [p for s in PUBLIC_STATES for p in draft_dirs(s) if p.name in live and allowed(load_draft(p))
+             and (data := load_social(p)) is not None and "share" not in data["items"]]
+    return sorted(paths, key=lambda p: p.name, reverse=True)
+
+
+def compose_share(path: Path) -> dict:
+    draft = load_draft(path)
+    data = load_social(path)
+    limits = {ch: settings()[ch]["max_chars"] - 60 for ch in CHANNELS}
+    problems: list[str] = []
+    for _ in range(2):
+        fix = "\n\nYour previous version failed these checks. Fix them:\n" + "\n".join(f"- {p}" for p in problems) if problems else ""
+        made, _r = llm.generate_json("social", prompt("social_share", title=draft["blog"].get("title", ""), facts=facts_text(social_facts(draft)),
+                                                      share_x=str(limits["x"]), share_threads=str(limits["threads"])) + fix)
+        bodies = {ch: str(made.get(ch) or "").strip() for ch in CHANNELS}
+        ids = [str(i) for i in made.get("fact_ids") or []]
+        channels = build_channels("share", bodies, data.get("blog_url", ""), fact_domains(draft, ids) or ["source"])
+        problems = check_item(draft, "share", bodies, channels, ids)
+        if not problems:
+            break
+    item = {"status": "blocked" if problems else "ready", "fact_ids": ids, "channels": channels, "scheduled_on": None,
+            "problems": problems, "style": str(made.get("style") or "")}
+    item["seal"] = seal_of(item)
+    data["items"]["share"] = item
+    save_json(social_file(path), data)
+    return item
+
+
+def compose_shares(limit: int = 2) -> tuple[list[str], list[str]]:
+    done, failed = [], []
+    for path in share_pending()[:limit]:
+        try:
+            compose_share(path)
+            done.append(path.name)
+        except llm.ClaudeAuthExpired:
+            raise
+        except llm.LLMError as e:
+            failed.append(f"{path.name}: {e}")
+    return done, failed
+
+
+def threads_post_stats() -> dict[str, dict]:
+    """게시물 주소 → 글별 반응 (최근 100개)."""
+    token = threads_token()
+    me = _http("GET", f"{THREADS_API}/me", {"fields": "id", "access_token": token})
+    posts = _http("GET", f"{THREADS_API}/{me['id']}/threads", {"fields": "id,permalink", "limit": 100, "access_token": token}).get("data", [])
+    out = {}
+    for p in posts:
+        data = _http("GET", f"{THREADS_API}/{p['id']}/insights", {"metric": "views,likes,replies,reposts,quotes,shares", "access_token": token})
+        out[p.get("permalink", "").rstrip("/")] = {m["name"]: int(m["values"][0]["value"]) for m in data.get("data", []) if m.get("values")}
+    return out
+
+
+def experiment_results(stats: dict[str, dict] | None = None) -> dict:
+    cfg = experiment()
+    start = str(cfg["start"])
+    stats = threads_post_stats() if stats is None else stats
+    groups = {"share": [], "other": []}
+    unread = 0
+    for ref, _, item in entries(include_done=True):
+        posted = item["channels"].get("threads", {}).get("posted")
+        if not posted or posted.get("at", "")[:10] < start or ref.kind == "roundup":
+            continue
+        got = stats.get(posted["url"].rstrip("/"))
+        if got is None:
+            unread += 1
+        else:
+            groups["share" if ref.kind == "share" else "other"].append(got)
+    return {"unread": unread, **{k: {"posts": len(v), **{m: sum(x.get(m, 0) for x in v) for m in ("views", "likes", "replies", "reposts", "quotes", "shares")}}
+                                 for k, v in groups.items()}}
+
+
+def experiment_lines(stats: dict[str, dict] | None = None) -> list[str]:
+    """주간 리포트용. 글마다 평균으로 비교한다."""
+    if not experiment() or now_kst().date().isoformat() < str(experiment()["start"]):
+        return []
+    r = experiment_results(stats)
+
+    def avg(g: dict) -> str:
+        n = g["posts"] or 1
+        spread = g["reposts"] + g["quotes"] + g["shares"]
+        return f"{g['posts']}개 · 글당 조회 {g['views'] / n:.1f} · 좋아요 {g['likes'] / n:.1f} · 답글 {g['replies'] / n:.1f} · 공유 {spread / n:.1f}"
+    lines = [f"🧪 SNS 공유 실험 (Threads, ~{experiment()['end']}, 표본이 작아 방향만 참고)", f"   실험 글: {avg(r['share'])}", f"   기존 글: {avg(r['other'])}"]
+    if r["unread"]:
+        lines.append(f"   반응을 못 읽은 게시물 {r['unread']}개")
+    return lines
 
 
 # ---------------- 한 주 정리 (일요일) ----------------
@@ -402,14 +569,15 @@ def roundup(day: date) -> str | None:
     home = home_url()
     for n in range(len(titles), 0, -1):  # 길면 제목을 줄인다
         body = "This week on Skinbound:\n" + "\n".join(f"→ {t}" for t in titles[:n])
-        channels = {"x": {"text": body + ROUNDUP_X_FOOTER, "reply": f"All guides with sources: {home}", "posted": None},
-                    "threads": {"text": body + f"\n\nEvery guide cites its sources: {home}\nAI-assisted, human-reviewed.",
+        channels = {"x": {"text": body + plain(ROUNDUP_X_FOOTER), "reply": f"All guides with sources: {home}", "posted": None},
+                    "threads": {"text": body + plain(f"\n\nEvery guide cites its sources: {home}\nAI-assisted, human-reviewed."),
                                 "posted": None}}
         if all(size(ch, channels[ch]["text"]) <= cfg[ch]["max_chars"] for ch in CHANNELS):
             break
+    item = {"status": "ready", "problems": [], "fact_ids": [], "channels": channels, "scheduled_on": None}
+    item["seal"] = seal_of(item)
     save_json(f, {"version": 2, "draft_id": key, "title": f"한 주 정리 ({key[8:]})", "created_at": now_iso(),
-                  "blog_url": home, "items": {"roundup": {"status": "ready", "problems": [], "fact_ids": [],
-                                                          "channels": channels, "scheduled_on": None}}})
+                  "blog_url": home, "items": {"roundup": item}})
     return key
 
 
@@ -474,7 +642,7 @@ def _channel_lines(ref_word: str, item: dict) -> list[str]:
     lines = []
     for ch in ("threads", "x"):
         c = item["channels"].get(ch)
-        if not c:
+        if not c or (ch == "x" and not cfg["x"]["enabled"] and not c.get("posted")):  # X 중단 (2026-11-10)
             continue
         if c.get("posted"):
             lines.append(f"{ch} ✅ {c['posted']['url']}")
@@ -528,10 +696,28 @@ def _waiting_for_blog(now: datetime) -> bool:
     return False
 
 
-def pick_today(now: datetime) -> Ref | None:
-    """오늘 보낼 글 하나. 이미 골랐거나 시각 전이면 None."""
+BACKLOG = 4  # 일요일 저녁에 안 보낸 글이 이만큼(글 1편 몫) 남아 있으면 아직 밀린 상태 — 평소 주에는 토요일까지 다 나간다
+
+
+def daily_hours() -> list[int]:
+    d = settings()["daily"]
+    return list(d.get("hours") or [d["hour"]])
+
+
+def due_slot(now: datetime) -> str | None:
+    """보낼 차례인 칸 (첫 칸 = 날짜, 둘째 칸부터 = 날짜#2 …). 2026-10-29: 글 1편당 4종 + 일요일 정리로 주 13개가 생겨 하루 2개."""
     state = load_json(daily_file()) if daily_file().exists() else {}
-    if now.date().isoformat() in state or now.hour < settings()["daily"]["hour"]:
+    today = now.date().isoformat()
+    for n, hour in enumerate(daily_hours(), 1):
+        key = today if n == 1 else f"{today}#{n}"
+        if now.hour >= hour and key not in state:
+            return key
+    return None
+
+
+def pick_today(now: datetime) -> Ref | None:
+    """지금 보낼 글 하나. 이번 칸을 이미 보냈거나 시각 전이면 None."""
+    if not (slot := due_slot(now)):
         return None
     if now.weekday() == 6 and (key := roundup(now.date())):
         item = _load(Ref(key, "roundup"))["items"]["roundup"]
@@ -540,9 +726,15 @@ def pick_today(now: datetime) -> Ref | None:
     if _waiting_for_blog(now):
         return None
     candidates = [(ref, item) for ref, _, item in entries()
-                  if ref.kind in KINDS and item["status"] == "ready" and not item.get("scheduled_on")
+                  if (ref.kind in KINDS or ref.kind == "share") and item["status"] == "ready" and sealed(item) and not item.get("scheduled_on")
                   and not any(c.get("posted") for c in item["channels"].values())]
-    for kinds in (("link",), ("fact", "angle", "ask")):
+    if now.weekday() == 6 and "#" in slot and len(candidates) < BACKLOG:
+        return None  # 일요일은 1개만 — 밀린 글이 남아 있는 동안만 두 번째 칸도 쓴다 (2026-10-29)
+    order = [("link",), ("fact", "angle", "ask")]
+    if experiment_active(now.date()):  # 새 글 소개 다음은 실험 글·기존 글을 칸마다 번갈아 (날짜+시각 고정, 다시 돌려도 같다)
+        turn = (now.date().toordinal() + daily_hours().index(next(h for h in reversed(daily_hours()) if h <= now.hour))) % 2
+        order = [("link",), ("share",), ("fact", "angle", "ask")] if turn == 0 else [("link",), ("fact", "angle", "ask"), ("share",)]
+    for kinds in order:
         for ref, _ in candidates:
             if ref.kind in kinds:
                 return ref
@@ -550,29 +742,53 @@ def pick_today(now: datetime) -> Ref | None:
 
 
 def daily_message(now: datetime | None = None) -> str:
-    """오전 9시(한국 시간) 이후 첫 호출에 오늘의 글 1개 (하루 한 번). 보낼 게 없으면 빈 문자열."""
+    """하루 칸(channels.yaml daily.hours, 한국 시간)마다 그 시각 이후 첫 호출에 글 1개. 보낼 게 없으면 빈 문자열."""
     now = now or now_kst()
     ref = pick_today(now)
     if not ref:
         return ""
+    slot = due_slot(now)
     data = _load(ref)
     item = data["items"][ref.kind]
-    today = now.date().isoformat()
-    item["scheduled_on"] = today
+    unlabel(item)
+    item["scheduled_on"] = now.date().isoformat()
     _save(ref, data)
     state = load_json(daily_file()) if daily_file().exists() else {}
-    state[today] = {"key": ref.key, "kind": ref.kind}
+    state[slot] = {"key": ref.key, "kind": ref.kind}
     save_json(daily_file(), state)
-    head = f"[오늘의 SNS 글] {now:%m/%d}({DAY_NAMES[now.weekday()]}) · {LABEL[ref.kind]} — {data['title']}"
+    n, total = int(slot.partition("#")[2] or 1), len(daily_hours())
+    what = f"{now:%m/%d}({DAY_NAMES[now.weekday()]}) · {LABEL[ref.kind]} — {data['title']}"
+    if auto_threads():  # 승인 없이 바로 게시 (2026-11-10). 칸은 이미 쓴 것으로 적었으니 실패해도 다음 실행이 다시 올리지 않는다
+        try:
+            url = threads_post(item["channels"]["threads"]["text"])
+            record(ref, "threads", url)
+            return f"[Threads 자동 게시{f' {n}/{total}' if total > 1 else ''}] {what}\n{url}"
+        except SocialError as e:
+            again = "오늘 스레드 올려" if n == 1 else f"오늘 {n}번째 스레드 올려"
+            return (f"⚠️ Threads 자동 게시 실패 — {what}\n{e}\n다시 시도하거나 다른 방법으로 올리지 않았습니다. "
+                    f"Threads 에 글이 안 올라간 것을 확인한 뒤 '{again}'")
+    head = f"[오늘의 SNS 글{f' {n}/{total}' if total > 1 else ''}] {what}"
     return "\n".join([head, *_channel_lines("오늘", item)])
+
+
+def auto_threads() -> bool:
+    cfg = settings()["threads"]
+    return bool(cfg.get("auto_post")) and cfg["mode"] == "api" and threads_configured()
 
 
 def resolve(ref: str) -> Ref:
     """번호(list 순서) · 오늘 · draft_id[:종류]."""
     ref = ref.strip()
+    if m := re.fullmatch(r"(?:오늘|today)#(\d)", ref):  # 오늘 그 칸 (오늘#2 = 저녁 글)
+        state = load_json(daily_file()) if daily_file().exists() else {}
+        today = now_kst().date().isoformat()
+        slot = state.get(today if m.group(1) == "1" else f"{today}#{m.group(1)}")
+        if not slot:
+            raise SocialError(f"오늘 {m.group(1)}번째로 보낸 SNS 글이 없습니다")
+        return Ref(slot["key"], slot["kind"])
     if ref in TODAY:
         state = load_json(daily_file()) if daily_file().exists() else {}
-        days = sorted(d for d in state if d <= now_kst().date().isoformat())
+        days = sorted(d for d in state if d[:10] <= now_kst().date().isoformat())  # 2026-10-29#2 = 그날 두 번째 칸
         if not days:
             raise SocialError("보낸 오늘의 SNS 글이 없습니다")
         latest = state[days[-1]]  # 자정을 넘겨 답해도 가장 최근에 보낸 글
@@ -620,7 +836,8 @@ def record(target: Ref | Path | str, channel: str, url: str, kind: str = "link")
 THREADS_GRAPH = "https://graph.threads.com"  # Meta 문서 기준 새 주소 (예전 graph.threads.net)
 THREADS_API = f"{THREADS_GRAPH}/v1.0"
 REFRESH_AFTER_DAYS = 50
-THREADS_SCOPES = "threads_basic,threads_content_publish,threads_manage_insights"  # insights = 주간 리포트 반응 수 (2026-10-16)
+THREADS_SCOPES = ("threads_basic,threads_content_publish,threads_manage_insights,"  # insights = 주간 리포트 반응 수 (2026-10-16)
+                  "threads_read_replies,threads_keyword_search,threads_profile_discovery")  # 다른 계정 공개 글·답글 읽기 — 사례 조사용 (2026-10-21)
 # 처음 연결(threads-auth)에서 로그인 뒤 돌아올 주소 — 서버가 없으니 localhost 로 보내고 주소창의 code 를 복사한다.
 # 앱 대시보드 Threads 사용 사례 설정의 "리디렉션 콜백 URL" 에 똑같이 넣어야 한다.
 DEFAULT_REDIRECT = "https://localhost/"
@@ -849,6 +1066,10 @@ def post(target: Ref | Path | str, channel: str, kind: str = "link") -> str:
     c = item["channels"][channel]
     if c["posted"]:
         return f"이미 게시됨: {c['posted']['url']}"
+    if unlabel(item):
+        _save(ref, data)
+    if not sealed(item):
+        raise SocialError("저장된 글이 검사 뒤에 바뀌었습니다 — 게시하지 않습니다. 파일을 고치지 말고 그대로 알려 주세요")
     url = (threads_post if channel == "threads" else x_post)(c["text"])
     out = record(ref, channel, url)
     if channel == "x" and c.get("reply"):  # API 로 올렸으면 링크 답글도 API 로

@@ -44,6 +44,10 @@ class LLMError(RuntimeError):
     pass
 
 
+class ClaudeAuthExpired(LLMError):
+    """claude CLI 로그인 만료 (2026-10-26 — OAuth 세션 만료로 하루 운영이 멈춤). 워커가 한 번만 알리고 Claude 단계를 쉬다가 복구되면 다시 한다."""
+
+
 class RateLimited(LLMError):
     """사용량 한도 — 같은 요청을 나중에 다시 하면 된다 (워커는 요청을 버리지 않는다)."""
 
@@ -72,6 +76,8 @@ def stage_config(stage: str) -> dict:
     if stage not in stages:
         raise LLMError(f"config/models.yaml 에 stage '{stage}' 없음")
     cfg = dict(stages[stage])
+    if cfg.get("provider") == CLAUDE_CLI and not cfg.get("model"):  # Claude Code 기본 모델에 맡기지 않는다 (2026-11-18)
+        cfg["model"] = load_yaml("models.yaml").get("claude_cli_model") or ""
     if cfg.get("provider") not in (*KEY_ENV, EXTERNAL, CLAUDE_CLI):
         raise LLMError(f"stage '{stage}': 지원하지 않는 provider {cfg.get('provider')!r}")
     return cfg
@@ -194,6 +200,14 @@ LIMIT_WORDS = re.compile(r"usage limit|session limit|weekly limit|rate limit|lim
                          r"hit your .{0,20}limit|overloaded|too many requests", re.I)
 
 
+# 구독으로 쓸 수 없는 모델 (2026-11-18: 기본 모델이 바뀌어 "Fable 5.2 requires usage credits. Switch to another model")
+MODEL_WORDS = re.compile(r"requires usage credits|switch to another model|model .{0,40}not available", re.I)
+
+
+AUTH_WORDS = re.compile(r"failed to authenticate|oauth .{0,20}expired|not logged in|please run /login|invalid (api key|token)|"
+                        r"authentication (failed|error)|unauthorized", re.I)
+
+
 def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult:
     """프롬프트는 stdin 으로. 도구는 cfg.tools (기본: 없음). 저장소 밖 빈 폴더에서 실행해 CLAUDE.md·MCP 를 읽지 않는다."""
     cmd = [os.environ.get("CLAUDE_BIN", "claude"), "-p", "--output-format", "json", "--strict-mcp-config",
@@ -222,8 +236,13 @@ def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRe
     text = str(out.get("result") or "")
     if out.get("is_error") or proc.returncode != 0:
         detail = text or (proc.stderr or "").strip()[-500:] or f"exit {proc.returncode}"
+        if MODEL_WORDS.search(detail):
+            raise LLMError(f"Claude 모델을 쓸 수 없음 (--model {cfg.get('model') or '기본값'}) — config/models.yaml "
+                           f"claude_cli_model 을 바꾸고 python -m pipeline.llm check: {detail[:200]}")
         if LIMIT_WORDS.search(detail):
             raise RateLimited(f"Claude 사용량 한도: {detail[:200]}")
+        if AUTH_WORDS.search(detail):
+            raise ClaudeAuthExpired(f"Claude 로그인 만료: {detail[:200]}")
         raise LLMError(f"claude -p 실패 (stage={stage}): {detail[:300]}")
     # Claude Code 는 보조 작업에 다른 모델(Haiku)도 쓴다 — 출력을 가장 많이 만든 모델이 실제 작성 모델
     usage = out.get("modelUsage") or {}
@@ -290,7 +309,8 @@ def _check() -> int:
         print(f"Claude Code 외부 검수: {', '.join(external)} (02c_external_review export/import)")
     cli = [s for s, c in stages.items() if c.get("provider") == CLAUDE_CLI]
     if cli:
-        print(f"Claude Code CLI (claude -p): {', '.join(cli)}")
+        default = load_yaml("models.yaml").get("claude_cli_model") or "Claude Code 기본값"
+        print(f"Claude Code CLI (claude -p, 모델 {default}): {', '.join(cli)}")
     if not ok:
         return 1
     for stage in (s for s in stages if s not in external):

@@ -33,6 +33,7 @@ from pipeline.common import (
     find_draft,
     get_logger,
     load_draft,
+    load_yaml,
     now_iso,
     prompt,
     read_prompt,
@@ -71,8 +72,18 @@ RULE_PATTERNS: list[tuple[str, str, re.Pattern]] = [
     ("booking", "예약·메신저 연락처",
      re.compile(r"(?:pf|open)\.kakao\.com|(?:wa|line)\.me/|kakao(?:talk)?\s*(?:id|channel)\b|whatsapp\s*[:+]\s*\d"
                 r"|https?://\S*(?:/book|/reserv|booking)", re.I)),
-    ("credential", "자격·감수 표기 (허위 위험)",
-     re.compile(r"board[- ]certified|medically reviewed|reviewed by (?:a )?(?:dr|doctor|dermatologist)|전문의 감수", re.I)),
+    # 우리가 자격을 내세우는 표현만 (2026-11-05 운영자 결정) — "설문 대상 235명의 board-certified dermatologists",
+    # "board-certified 의사에게 상담하라" 같은 제3자 설명·권고는 허용
+    ("credential", "우리 자격·감수 표기 (허위 위험)",
+     re.compile(r"medically[- ]reviewed"
+                r"|\b(?:this|our)\s+(?:article|post|guide|page|content|information)\s+(?:was|is|has\s+been)\s+(?:\w+\s+)?"
+                r"(?:reviewed|written|checked|verified|approved)\s+by\b"
+                r"|\b(?:reviewed|written|checked|verified|approved)\s+by\s+(?:our\b|(?:a\s+)?board[- ]certified)"
+                r"|\b(?:our|we(?:'re|\s+are))\s+(?:own\s+|in-house\s+)?(?:(?:board[- ]certified|licensed)\s+)?"
+                r"(?:doctors?|dermatologists?|physicians?|surgeons?|nurses?|medical\s+(?:team|staff|experts?|advisors?|board))\b"
+                r"|\bas\s+(?:an?\s+)?(?:(?:board[- ]certified|licensed)\s+)?(?:doctors?|dermatologists?|physicians?|nurses?"
+                r"|medical\s+professionals?)\s*,\s*(?:we|I)\b"
+                r"|(?:전문의|의사|의료진)\s?감수|감수\s?[:：]|(?:저희|우리)\s?(?:의사|전문의|의료진|원장)", re.I)),
     ("testimonial", "1인칭 체험담",
      re.compile(r"\bI\s+(?:got|tried|had|did|received|booked|went)\b|\bmy\s+(?:skin|treatment|experience|results?|face)\b"
                 r"|\bwhen I\b|제가\s?받아", re.I)),
@@ -108,20 +119,61 @@ NEGATABLE = re.compile(r"guarantee|risk[- ]?free|painless|permanent|cure|miracle
 PRICE = re.compile(r"[$₩฿]|\b(?:USD|KRW|SGD|THB|CAD|won|dollars?)\b|\bprice|\bcost", re.I)
 
 
-def load_banned(path: Path | None = None) -> list[tuple[str, re.Pattern]]:
+def _rank_targets() -> re.Pattern:
+    """순위·최상급 표현이 금지되는 대상 = 시술·병원·의료인 (2026-11-05 운영자 결정).
+    일반 명사 + procedures.yaml 시술 키워드 (화장품·여행 분류는 제외)."""
+    words = ["clinics?", "hospitals?", "dermatologists?", "doctors?", "physicians?", "surgeons?", "practitioners?", "injectors?",
+             "derms?", "medspas?", "med spas?", "treatments?", "procedures?", "lasers?", "injections?", "injectables?", "fillers?",
+             "boosters?", "peels?", "facials?", "therap(?:y|ies)", "lifting", "lifts?"]
+    for key, proc in (load_yaml("procedures.yaml").get("procedures") or {}).items():
+        if key not in ("skincare", "travel"):
+            words += [re.escape(k) for k in proc.get("keywords") or []]
+    return re.compile(r"\b(?:" + "|".join(words) + r")\b|병원|의원|피부과|클리닉|시술|레이저|주사|필러|보톡스|의사|원장|의료진", re.I)
+
+
+class RankPattern:
+    """순위·최상급 표현: 같은 문장 안 가까이(앞뒤 RANK_WINDOW 자)에 시술·병원이 있을 때만 걸린다.
+    "best korean sunscreen", "the best time to visit" 는 허용, "the best clinic", "Seoul's #1 Rejuran" 은 차단.
+    search/finditer 만 쓰므로 02b·social·reddit·sponsors 가 그대로 쓴다."""
+    WINDOW = 60
+
+    def __init__(self, pattern: re.Pattern, targets: re.Pattern):
+        self.pattern, self.targets = pattern, targets
+
+    def _near(self, text: str, m: re.Match) -> bool:
+        before = re.split(r"[.!?\n]", text[max(0, m.start() - self.WINDOW):m.start()])[-1]
+        after = re.split(r"[.!?\n]", text[m.end():m.end() + self.WINDOW])[0]
+        return bool(self.targets.search(before) or self.targets.search(after))
+
+    def finditer(self, text: str):
+        return (m for m in self.pattern.finditer(text) if self._near(text, m))
+
+    def search(self, text: str):
+        return next(self.finditer(text), None)
+
+
+def load_banned(path: Path | None = None) -> list[tuple[str, re.Pattern | RankPattern]]:
+    """"rank:" 로 시작하는 항목은 시술·병원 순위일 때만 금지 (RankPattern). 그 뒤는 일반 항목처럼 "re:" 또는 문구."""
     out = []
+    targets = None
     for raw in (path or CONFIG_DIR / "banned_terms.txt").read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        rank = line.startswith("rank:")
+        line = line.removeprefix("rank:")
         if line.startswith("re:"):
-            out.append((line[3:], re.compile(line[3:], re.I)))
+            term, pat = line[3:], re.compile(line[3:], re.I)
         else:
             esc = re.escape(line)
             # 단어 문자로 시작/끝나는 항목만 경계 적용 (한글·기호 포함 항목은 부분 일치)
             left = r"\b" if re.match(r"[A-Za-z0-9]", line) else ""
             right = r"\b" if re.search(r"[A-Za-z0-9]$", line) and not line.endswith("%") else ""
-            out.append((line, re.compile(left + esc + right, re.I)))
+            term, pat = line, re.compile(left + esc + right, re.I)
+        if rank:
+            targets = targets or _rank_targets()
+            pat = RankPattern(pat, targets)
+        out.append((term, pat))
     return out
 
 
@@ -172,6 +224,18 @@ def _snippet(text: str, m: re.Match, pad: int = 30) -> str:
     return text[max(0, m.start() - pad) : m.end() + pad].replace("\n", " ").strip()
 
 
+# 규칙(_rules.md)이 직접 안내하라고 한 공식 명단 — 사실 목록에 없어도 본문 링크 허용 (2026-11-14: 이 링크로 ⛔ 가 났다)
+OFFICIAL_LINKS = {"https://www.medicalkorea.or.kr/en/registeredhospitals"}
+PRODUCT_TITLE_END = re.compile(r"\s*[|-]\s*OLIVE YOUNG Global\s*$", re.I)
+
+
+def product_names(draft: dict) -> list[str]:
+    """출처로 인용한 올리브영 글로벌 제품 페이지의 제품명."""
+    from pipeline import affiliates
+    return [PRODUCT_TITLE_END.sub("", f.get("source_title", "")) for f in draft.get("facts", [])
+            if affiliates.is_product_url(f.get("url", "")) and f.get("source_title")]
+
+
 def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None) -> tuple[list[Finding], set[str]]:
     """반환: (발견 목록, 항상 사람 검수 사유)"""
     banned = banned if banned is not None else load_banned()
@@ -181,6 +245,7 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
     fact_urls = {f.get("url", "") for f in draft.get("facts", [])}
     sponsor = draft.get("sponsor")
     sponsor_names = [sponsor["name_en"], sponsor["name_ko"]] if sponsor else []
+    products = product_names(draft)
 
     for where, text in texts.items():
         for term, pat in banned:
@@ -195,6 +260,9 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
                     continue
                 if kind == "clinic_name" and any(n in _snippet(text, m, 60) for n in sponsor_names):
                     continue  # 스폰서 글의 광고주 병원명은 허용
+                if kind == "clinic_name" and any(" ".join(m.group(0).split()[-2:]) in n for n in products):
+                    continue  # 출처로 인용한 올리브영 제품명 ("Bepanthol Derma …") 은 병원명이 아니다 (2026-11-14).
+                    # 걸린 말의 끝 두 단어로 본다 — 앞에 "The" 같은 말이 같이 잡힌다 ("The Bepanthol Derma", 2026-11-15)
                 if kind == "testimonial" and _in_question(text, m):
                     continue  # FAQ 의 독자 질문 ("How should I protect my skin?") 은 체험담이 아니다
                 findings.append(Finding("rules", "block", f"[{where}] {label}", _snippet(text, m)))
@@ -204,7 +272,7 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
             url = m.group(0).rstrip(".,")
             if sponsor and urlparse(url).netloc.lower().removeprefix("www.") == sponsors.official_host(sponsor):
                 continue  # 광고주 공식 사이트 링크만 허용
-            if url not in fact_urls:
+            if url not in fact_urls and url not in OFFICIAL_LINKS:
                 findings.append(Finding("rules", "block", f"[{where}] 출처 목록에 없는 URL", m.group(0)))
         if PRICE.search(text):
             human.add("가격 포함")
@@ -223,6 +291,7 @@ def check_rules(draft: dict, banned: list[tuple[str, re.Pattern]] | None = None)
                     continue  # "cosmetics can't claim to treat..." 같은 설명은 허용
                 findings.append(Finding("rules", "block", f"[{where}] 화장품을 의약품처럼 표현 (화장품법 §13): '{m.group(0)}'",
                                         _snippet(text, m)))
+        findings += check_affiliate_products(draft)
 
     if draft.get("content_type") == "procedure_travel" and ITINERARY.search(texts["blog"]) \
             and not OBSERVATION_DAY.search(texts["blog"]):
@@ -271,6 +340,26 @@ def check_sponsor(draft: dict, texts: dict[str, str], human: set[str]) -> list[F
         findings.append(Finding("rules", "block", "[blog] 스폰서 광고 표시 없음 (표시광고법 — 대가 관계 명시)"))
     human.add(f"스폰서 광고({sponsor['name_ko']}) — 병원 확인 필요")
     return findings
+
+
+def check_affiliate_products(draft: dict) -> list[Finding]:
+    """제휴 화장품 글이 인용한 올리브영 글로벌 제품이 지금 팔리는지 (2026-11-11 — 출처 페이지가 사라진 제품인 경우가 있었다).
+    사라진 제품은 구매 링크에서 빠지므로 본문에서도 빼거나 다른 제품으로 — 품절은 참고만."""
+    from pipeline import affiliates
+    if not affiliates.applies(draft):
+        return []
+    out = []
+    for item in affiliates.products(draft):
+        state = affiliates.product_status(item["id"])
+        if state["status"] == "gone":
+            out.append(Finding("rules", "caution", f"[blog] 올리브영 글로벌에서 사라진 제품 ({item['fact_id']}) — 구매 링크 없이 나갑니다. "
+                                                     "본문에서 빼거나 다른 제품으로", item["name"]))
+        elif state.get("name") and not affiliates.same_product(item["name"], state["name"]):
+            out.append(Finding("rules", "caution", f"[blog] 출처 제목과 실제 올리브영 제품이 다릅니다 ({item['fact_id']}) — 실제: {state['name']}. "
+                                                     "구매 링크는 실제 제품명으로 나갑니다. 본문이 말하는 제품이 맞는지 확인", item["name"]))
+        elif state["status"] == "soldout":
+            out.append(Finding("rules", "info", f"[blog] 올리브영 글로벌 품절 제품 ({item['fact_id']}) — 링크는 나갑니다", item["name"]))
+    return out
 
 
 def check_no_sponsor_names(texts: dict[str, str]) -> list[Finding]:

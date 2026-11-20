@@ -1,0 +1,29 @@
+# 한국 시술 검색 관심도 (2026-11-17) — pipeline/naver_trends.py 가 읽는다.
+# 네이버 데이터랩 검색어 트렌드(NAVER API HUB)로 지난달까지의 월별 검색 관심도를 받아 순위를 낸다.
+#   - 한 번에 주제어 5개까지만 비교할 수 있어, 기준 주제어(anchor)를 매 요청에 넣고 그 값으로 눈금을 맞춘다.
+#   - search: 네이버에 보내는 한국어 검색어 (주제어 하나에 20개까지). 페이지에 그대로 공개한다.
+#     뜻이 여러 개인 낱말(예: "온다")은 넣지 않는다 — `python -m pipeline.naver_trends check` 로 값이 이상한 항목을 본다.
+#   - match: 우리 글과 잇는 영어 낱말 (글 제목·slug·주제 키워드에서 단어 단위로 찾는다).
+#   - procedure: config/procedures.yaml 키 — 그 시술 목록 페이지(/treatments/…)가 있으면 거기로 잇는다.
+# 항목을 넣고 빼면 순위의 분모("N개 중")가 바뀐다 — 바꾼 달은 지난달 순위와 비교가 어긋날 수 있다.
+anchor: botox
+months: 13          # 지난달 포함 13개월 (12개월 추세 + 1년 전 같은 달)
+items:
+  botox:        {name: "Botulinum toxin (Botox)", search: [보톡스], match: [botox, botulinum], procedure: botox}
+  filler:       {name: "Dermal fillers", search: [필러, 필러시술], match: [filler], procedure: filler}
+  rejuran:      {name: "Rejuran", search: [리쥬란, 리쥬란힐러], match: [rejuran], procedure: rejuran}
+  juvelook:     {name: "Juvelook", search: [쥬베룩, 쥬베룩볼륨], match: [juvelook], procedure: juvelook}
+  re2o:         {name: "Re2O (Lituo)", search: [리투오], match: [re2o, lituo], procedure: re2o}
+  skin_booster: {name: "Skin boosters (general term)", search: [스킨부스터], match: [skin booster, skinbooster], procedure: skin_booster}
+  exosome:      {name: "Exosomes", search: [엑소좀], match: [exosome], procedure: pdrn_exosome}
+  ulthera:      {name: "Ultherapy", search: [울쎄라, 울쎄라피프라임], match: [ulthera, ultherapy], procedure: ulthera}
+  shurink:      {name: "Shurink", search: [슈링크, 슈링크유니버스], match: [shurink], procedure: shurink}
+  thermage:     {name: "Thermage", search: [써마지, 써마지FLX], match: [thermage], procedure: thermage_rf}
+  onda:         {name: "Onda", search: [온다리프팅, 온다레이저], match: [onda], procedure: thermage_rf}
+  inmode:       {name: "InMode", search: [인모드, 인모드리프팅], match: [inmode], procedure: ""}
+  oligio:       {name: "Oligio", search: [올리지오], match: [oligio], procedure: ""}
+  potenza:      {name: "Potenza", search: [포텐자], match: [potenza], procedure: rf_microneedling}
+  titanium:     {name: "Titanium lifting", search: [티타늄리프팅], match: [titanium], procedure: titanium}
+  laser_toning: {name: "Laser toning", search: [레이저토닝, 피코토닝], match: [laser toning, pico toning], procedure: laser_toning}
+  excel_v:      {name: "Excel V", search: [엑셀브이, 엑셀V], match: [excel v], procedure: vascular}
+  aqua_peel:    {name: "Aqua peel", search: [아쿠아필], match: [aqua peel, aquapeel], procedure: facial}

@@ -26,12 +26,12 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO
 
 from pipeline import llm
-from pipeline.common import content_dir, get_logger, load_json, now_iso, run_cli, save_json
+from pipeline.common import content_dir, get_logger, load_json, load_yaml, now_iso, run_cli, save_json
 
 log = get_logger("worker")
 
@@ -106,15 +106,54 @@ def _process(req: dict) -> None:
         raise ValueError(f"알 수 없는 요청: {req['kind']}")
 
 
-def hermes_send(text: str) -> bool:
-    """Hermes 로 텔레그램(홈 채널)에 메시지 하나를 보낸다 — 길면 Hermes 가 나눠 보낸다."""
+def reddit_target() -> str:
+    """Reddit 전용 텔레그램 방 (2026-11-02). `.env` 의 SKIN_REDDIT_DELIVER=telegram:<chat_id>[:<thread_id>]. 없으면 기본 방."""
+    return os.environ.get("SKIN_REDDIT_DELIVER", "").strip()
+
+
+def hermes_send(text: str, target: str | None = None) -> bool:
+    """Hermes 로 텔레그램에 보낸다. 긴 메시지는 줄 단위로 미리 나눠(약 3000자) 조각마다 한 번씩 보낸다.
+    2026-10-29: Hermes 가 긴 글을 스스로 나눠 보내다 뒤 조각에서 시간 초과가 나면 앞 조각은 이미 갔는데 실패로 돌아와,
+    통째로 다시 보내면서 같은 초안 메시지가 두 번 갔다 → 보낸 조각은 다시 보내지 않고, 실패한 조각만 한 번 더."""
+    if "MEDIA:" in text or len(text) <= SEND_PIECE:
+        return _send_retry(text, target)
+    parts, cur = [], ""
+    for line in text.splitlines():
+        if cur and len(cur) + len(line) > SEND_PIECE:
+            parts.append(cur)
+            cur = ""
+        cur += line + "\n"
+    parts.append(cur)
+    for n, part in enumerate(parts):
+        if not _send_retry(part, target):
+            if n == 0:
+                return False  # 아무것도 안 갔다 — 워커가 다른 방식으로 보낸다
+            log.warning("텔레그램 조각 %d/%d 전송 실패 — 앞 조각은 이미 보냄, 나머지는 건너뜀", n + 1, len(parts))
+            return True  # 일부는 이미 갔다 — 실패로 돌려주면 워커가 통째로 다시 보내 중복된다
+    return True
+
+
+SEND_PIECE = 3000
+SEND_TRIES = 4  # 이 PC 의 텔레그램 연결이 자주 끊겨 같은 글도 시간 초과가 났다 났다 한다 (2026-10-29 확인 — 내용 문제 아님)
+
+
+def _send_retry(text: str, target: str | None = None) -> bool:
+    for attempt in range(SEND_TRIES):
+        if _hermes_send_once(text, target):
+            return True
+        if attempt + 1 < SEND_TRIES and "PYTEST_CURRENT_TEST" not in os.environ:
+            time.sleep(10)
+    return False
+
+
+def _hermes_send_once(text: str, target: str | None = None) -> bool:
     hermes = os.environ.get("HERMES_BIN") or shutil.which("hermes")
     if not hermes:
         return False
     with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as f:
         f.write(text)
     try:
-        proc = subprocess.run([hermes, "send", "-t", os.environ.get("SKIN_DELIVER", "telegram"), "-f", f.name, "-q"],
+        proc = subprocess.run([hermes, "send", "-t", target or os.environ.get("SKIN_DELIVER", "telegram"), "-f", f.name, "-q"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
         log.warning("hermes send 실패: %s", e)
@@ -164,6 +203,49 @@ def set_hold(error: str, now: datetime | None = None) -> datetime:
     return until
 
 
+def auth_file() -> Path:
+    return content_dir() / "worker" / "claude_auth.json"
+
+
+AUTH_RETRY_MIN = 30  # 로그인 만료 중에는 30분마다 한 번만 짧게 확인
+
+
+def claude_auth_down() -> bool:
+    """Claude 로그인 만료 상태인가. 30분마다 짧은 호출로 확인해 복구되면 풀고 True/False 를 돌려준다."""
+    f = auth_file()
+    if not f.exists():
+        return False
+    st = load_json(f)
+    last = datetime.fromisoformat(st.get("checked_at") or st["since"])
+    if datetime.now(timezone.utc) - last < timedelta(minutes=AUTH_RETRY_MIN):
+        return True
+    try:
+        llm.generate("social", "Reply with the single word OK.")
+    except llm.ClaudeAuthExpired:
+        st["checked_at"] = datetime.now(timezone.utc).isoformat()
+        save_json(f, st)
+        return True
+    except llm.LLMError:
+        pass  # 다른 오류(한도 등)는 로그인 문제가 아니다
+    f.unlink(missing_ok=True)
+    st["recovered"] = True
+    save_json(f.with_name("claude_auth_recovered.json"), st)
+    return False
+
+
+def mark_auth_down(err: Exception) -> str | None:
+    """처음 만료됐을 때만 알림 문구를 돌려준다 (이후 실행은 조용히)."""
+    f = auth_file()
+    if f.exists():
+        return None
+    f.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    save_json(f, {"since": now, "checked_at": now, "error": str(err)[:200]})
+    return ("🔑 Claude 로그인이 만료돼 글쓰기(초안·SNS 글·숏폼 대본)를 멈췄습니다. 블로그 게시·오늘의 SNS 글 보내기는 계속됩니다.\n"
+            "PC 에서 다시 로그인하면 30분 안에 자동으로 이어서 합니다 (방법: 터미널에서 `claude setup-token` → 받은 토큰을 Hermes .env 의 "
+            "CLAUDE_CODE_OAUTH_TOKEN 에, 또는 `claude` 실행 후 /login).")
+
+
 def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     """반환: (텔레그램으로 보낼 메시지 — 없으면 "", 실패 목록)"""
     review_mod = importlib.import_module("pipeline.02b_auto_review")
@@ -177,11 +259,28 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
     hold_file().unlink(missing_ok=True)
     notices: list[str] = []
 
-    for path in sorted(requests_dir().glob("*.json")):
+    auth_down = claude_auth_down()
+    recovered = auth_file().with_name("claude_auth_recovered.json")
+    if recovered.exists():
+        recovered.unlink()
+        notices.append("✅ Claude 로그인 복구 — 멈췄던 글쓰기를 이어서 합니다.")
+    pending = [] if auth_down else sorted(requests_dir().glob("*.json"))
+    if pending:  # 초안 작성은 수십 분 걸린다 — 오늘의 SNS 글은 기다리게 하지 않고 먼저 보낸다 (2026-10-29)
+        try:
+            if (early := importlib.import_module("pipeline.social").daily_message()) and not (sender or hermes_send)(early):
+                notices.append(early)  # 따로 못 보냈으면 이번 실행 메시지에 붙인다
+        except Exception as e:  # noqa: BLE001
+            log.warning("오늘의 SNS 글 먼저 보내기 실패: %s", e)
+    for path in pending:
         req = load_json(path)
         try:
             _process(req)
             path.unlink()
+        except llm.ClaudeAuthExpired as e:  # 로그인 만료 — 요청은 그대로 두고 복구 후 다시
+            if msg := mark_auth_down(e):
+                notices.append(msg)
+            auth_down = True
+            break
         except llm.RateLimited as e:  # 사용량 한도·시간 초과 — 요청을 그대로 두고 초기화 시각 이후 다시
             until = set_hold(str(e))
             log.warning("요청 보류: %s — %s", path.name, e)
@@ -195,10 +294,15 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             path.replace(failed / path.name)
         changed = True
 
-    for path in [] if claude_hold() else review_mod.unreviewed_drafts():
+    for path in [] if claude_hold() or auth_down else review_mod.unreviewed_drafts():
         try:
             review_mod.review_with_regeneration(path)
             changed = True
+        except llm.ClaudeAuthExpired as e:
+            if msg := mark_auth_down(e):
+                notices.append(msg)
+            auth_down = True
+            break
         except llm.RateLimited as e:  # 차단 → 재생성하다 한도 (02b 가 검수 기록을 지워 다음에 다시 한다)
             until = set_hold(str(e))
             log.warning("재생성 보류: %s — %s", path.name, e)
@@ -216,6 +320,19 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
             failures.append(f"Claude Code 검수 실패 (다음 실행 때 재요청): {e}")
             log.exception("Claude Code 검수 실패")
             changed = True  # ⏳ 상태라도 알려준다
+
+    try:  # 시술 글 검수 메시지에 블로그 그림을 같이 보낸다 (2026-10-26) — 검수 전에 먼저 만든다
+        if not auth_down and importlib.import_module("pipeline.figures").ensure_drafts():
+            changed = True
+    except Exception as e:  # noqa: BLE001 — 그림 실패가 검수를 막지 않게
+        log.warning("검수용 그림 실패: %s", e)
+
+    try:  # 신뢰 단계: ✅ 글 자동 승인 (사람 표본에 안 뽑힌 것만, 2026-11-02)
+        if auto_msg := human_mod.auto_approve_message():
+            notices.append(auto_msg)
+    except Exception as e:  # noqa: BLE001
+        failures.append(f"자동 승인 실패: {e}")
+        log.exception("자동 승인 실패")
 
     message = ""
     if changed:
@@ -248,19 +365,46 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
 
     social_mod = importlib.import_module("pipeline.social")
     try:
-        if social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 글 3종 (한 번에 3건, 보내기는 오늘의 글로)
-            made, social_failures = social_mod.compose_pending(limit=3)
+        if not auth_down and social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 글 3종 (한 번에 3건, 보내기는 오늘의 글로)
+            try:
+                made, social_failures = social_mod.compose_pending(limit=3)
+            except llm.ClaudeAuthExpired as e:
+                if msg := mark_auth_down(e):
+                    message = (message + "\n\n" if message else "") + msg
+                auth_down, made, social_failures = True, [], []
             failures += [f"SNS 글 생성 실패 {f}" for f in social_failures]
             blocked = [f"⛔ SNS 글 검사 실패: {d['title']} [{social_mod.LABEL[k]}] — {'; '.join(i['problems'][:2])}"
                        for name in made for d in [social_mod.load_social(social_mod._file(name).parent)]
                        for k, i in d["items"].items() if i["status"] == "blocked"]
             if blocked:
                 message = (message + "\n\n" if message else "") + "\n".join(blocked)
+        if not auth_down:  # 공유 실험 글 (한 번에 2건, 보내기는 오늘의 글로)
+            try:
+                _made, share_failures = social_mod.compose_shares(limit=2)
+                failures += [f"SNS 실험 글 생성 실패 {f}" for f in share_failures]
+            except llm.ClaudeAuthExpired as e:
+                if msg := mark_auth_down(e):
+                    message = (message + "\n\n" if message else "") + msg
+                auth_down = True
         daily = social_mod.daily_message()  # 오전 9시(한국 시간) 이후 하루 한 번 — 오늘 올릴 글 1개
         reminder = importlib.import_module("pipeline.site").publish_reminder()  # 게시일(월·수·금)에 올라갈 글이 없으면
         exp = importlib.import_module("pipeline.experiment")  # 숏폼 화면 소스 실험: 그날 안내·영상이 들어오면 편집
         experiments = "\n\n".join(m for m in (exp.daily_message(), exp.poll_message()) if m)
-        for part in (reminder, daily, experiments):
+        ahead = "" if auth_down else "\n".join(importlib.import_module("pipeline.figures").ensure_upcoming()  # 게시 예정 글: 블로그 그림 먼저
+                          + (importlib.import_module("pipeline.shorts").make_ready()  # 다 찬 주: 숏폼 대본
+                             if (load_yaml("channels.yaml").get("shorts_scripts") or {}).get("enabled", True) else []))
+        if ahead:  # 2026-10-22 사람 요청: 텔레그램 보고는 잠시 멈춤 — 만들기만 하고 로그에 남긴다
+            log.info("미리 만들기: %s", ahead.replace("\n", " | "))
+        figure_ask = importlib.import_module("pipeline.figures").ask_message()  # 게시 전 그림 승인 요청 (2026-11-01)
+        try:
+            reddit_candidates = "" if auth_down else importlib.import_module("pipeline.reddit").weekly_message()  # 주 1회 후보 (전체 정지 중에는 안 찾음)
+        except Exception as e:  # noqa: BLE001
+            reddit_candidates = ""
+            log.warning("Reddit 후보 찾기 실패: %s", e)
+        if reddit_candidates and reddit_target():  # Reddit 전용 방이 있으면 그쪽으로 따로 (못 보내면 기본 방 메시지에 붙인다)
+            if hermes_send(reddit_candidates, target=reddit_target()):
+                reddit_candidates = ""
+        for part in (reminder, daily, figure_ask, experiments, reddit_candidates):
             if part:
                 message = (message + "\n\n" if message else "") + part
     except Exception as e:  # noqa: BLE001 — SNS 글 실패가 워커 전체를 멈추지 않게

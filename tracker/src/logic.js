@@ -93,3 +93,17 @@ export function isValidTarget(url) {
 export function isValidDay(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value || "") && !Number.isNaN(Date.parse(value));
 }
+
+// 대기 명단 — 입력 검사 (테스트 대상)
+export const WAITLIST_TIMINGS = ["unsure", "2027h1", "2027h2", "later"];
+
+export function cleanEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/.test(email)) return "";
+  return email;
+}
+
+export function cleanPage(value) {
+  const page = String(value || "");
+  return /^\/[a-z0-9\-\/]{0,120}$/.test(page) ? page : "";
+}

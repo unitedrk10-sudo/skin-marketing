@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 import markdown
 
-from pipeline import clinics, og, site_images, sponsors, tracker
+from pipeline import affiliates, clinics, naver_trends, og, site_images, site_links, sponsors, tracker
 from pipeline.common import (PRACTICE_KIND, ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json,
                              load_review, load_yaml, run_cli, save_json, slugify)
 
@@ -44,7 +44,7 @@ REGISTRY_KEY = "_registry"
 CLINIC_LIST_AXES = {"procedure_travel", "travel_guide"}  # 코스 주변 피부과 목록을 붙이는 글 (중립 여행 글만)
 CLINIC_KEY = "_clinic"  # 주변 병원 목록의 병원별 사이트 링크 (tracked_links.json 키: _clinic:<draft_id>:<병원 id>)
 FACT_REF = re.compile(r"\s?\[(F\d+)\]")
-FAQ_HEADING = re.compile(r"^##\s+.*\b(FAQ|Frequently Asked Questions)\b", re.I | re.M)
+FAQ_HEADING = re.compile(r"^(##|###)\s+.*\b(FAQ|Frequently Asked Questions)\b", re.I | re.M)
 SAFE_HREF = re.compile(r"^(https?://|/|#|mailto:)", re.I)
 
 
@@ -99,15 +99,30 @@ def collect_posts(include_scheduled: bool = False) -> list[dict]:
 # ---------------- 게시 일정 (월·수·금 등) ----------------
 
 KST = timezone(timedelta(hours=9))  # 한국은 서머타임이 없다
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 def publish_schedule() -> dict | None:
-    """site.yaml publish_schedule: {days: [mon, wed, fri], hour: 7} — 하루 1편, 한국 시간. 없으면 승인 즉시 게시."""
+    """site.yaml publish_schedule: {days: [mon, wed, fri], hour: 7, slots: {mon: info, …}} — 하루 1편, 한국 시간. 없으면 승인 즉시 게시.
+    slots (2026-11-10): 요일마다 글 유형(channels.yaml topic_quota 이름)을 고정한다 — 시술·여행·화장품 주 1편씩."""
     cfg = load_yaml("site.yaml").get("publish_schedule")
     if not cfg or not cfg.get("days"):
         return None
-    return {"days": [WEEKDAYS.index(d.lower()[:3]) for d in cfg["days"]], "hour": int(cfg.get("hour", 7))}
+    days = [WEEKDAYS.index(d.lower()[:3]) for d in cfg["days"]]
+    slots = {WEEKDAYS.index(d.lower()[:3]): str(g) for d, g in (cfg.get("slots") or {}).items()}
+    return {"days": days, "hour": int(cfg.get("hour", 7)), "slots": {d: g for d, g in slots.items() if d in days}}
+
+
+def slot_group(draft: dict) -> str | None:
+    """글 유형 → topic_quota 이름 (스폰서·목록에 없는 유형은 None = 아무 요일)."""
+    if draft.get("sponsor"):
+        return None
+    for name, g in (load_yaml("channels.yaml").get("topic_quota") or {}).items():
+        if draft.get("content_type") in (g.get("axes") or []):
+            return name
+    return None
 
 
 def schedule_file() -> Path:
@@ -144,7 +159,10 @@ def apply_schedule(posts: list[dict], include_scheduled: bool = False) -> list[d
             sched[did] = {"date": day.isoformat(), "at": p["date"]}
         else:
             day = now.date()
-            while day.weekday() not in rule["days"] or day.isoformat() in taken:
+            group = slot_group(p["draft"])
+            slots = rule.get("slots") or {}
+            allowed = [d for d, g in slots.items() if g == group] or rule["days"]  # 정해진 요일이 없는 유형은 아무 게시 요일
+            while day.weekday() not in allowed or day.isoformat() in taken:
                 day += timedelta(days=1)
             at = datetime(day.year, day.month, day.day, rule["hour"], tzinfo=KST)
             sched[did] = {"date": day.isoformat(), "at": at.isoformat()}
@@ -328,7 +346,8 @@ def _numbered_sources(md: str, facts: list[dict]) -> tuple[str, list[dict]]:
 
     # 원시 HTML 차단 (LLM 출력·출처 텍스트로 스크립트가 들어오지 않게) — 인용(>)은 유지
     safe = autolink(md.replace("<", "&lt;"))
-    return FACT_REF.sub(repl, safe), sources
+    # 표 칸 안의 [F#] 도 있으니 출처 제목·주소의 | 가 표를 깨지 않게 (2026-11-07 비교표)
+    return FACT_REF.sub(lambda m: repl(m).replace("|", "&#124;"), safe), sources
 
 
 BARE_URL = re.compile(r"(?<![(\[<\"'=])\bhttps?://[^\s)\]<>\"']+")
@@ -379,12 +398,17 @@ def extract_faq(md: str) -> list[dict]:
     if not m:
         return []
     section = md[m.end():]
-    nxt = re.search(r"^##\s", section, re.M)
+    level = len(m.group(1))  # ### FAQ 이면 다음 ##·### 소제목에서 끝
+    nxt = re.search(r"^##\s" if level == 2 else r"^#{2,3}\s", section, re.M)
     section = section[: nxt.start()] if nxt else section
     faq = []
-    for q in re.finditer(r"^###\s+(.+?)\s*$\n(.*?)(?=^###\s|\Z)", section, re.M | re.S):
+    # 질문은 ### 소제목 또는 굵은 글씨 한 줄(**질문?**, 2026-11-07 — 글 14편 중 10편이 이 형식이라 FAQPage 가 빠져 있었다)
+    pattern = r"^###\s+(.+?)\s*$\n(.*?)(?=^###\s|\Z)"
+    if not re.search(r"^###\s", section, re.M):
+        pattern = r"^\*\*(.+?\?)\*\*[ \t]*\n?(.*?)(?=^\*\*.+?\?\*\*|\Z)"
+    for q in re.finditer(pattern, section, re.M | re.S):
         answer = re.sub(r"\s+", " ", FACT_REF.sub("", q.group(2))).strip()
-        answer = re.sub(r"[*_`>]", "", answer)
+        answer = re.sub(r"\s+([.,;:!?])", r"\1", re.sub(r"[*_`>]", "", answer))  # [F#] 뺀 자리의 " ." 정리
         if answer:
             faq.append({"q": q.group(1).strip().rstrip("?") + "?", "a": answer})
     return faq
@@ -426,6 +450,16 @@ html[data-palette=charcoal]{--bg:#F8F6F1;--ink:#1A1A1A;--muted:#6E6A64;--line:#E
 .hero h1{font-family:var(--serif);font-weight:400;font-size:78px;line-height:1;letter-spacing:-.015em;margin:22px 0 26px}
 .hero h1 em{color:var(--sage)}
 .hero .sub{font-size:19px;line-height:1.6;color:#565c59;max-width:30em;margin:0 0 34px}
+.aff-top{font-size:14px;color:var(--muted);border-left:3px solid var(--line);padding:2px 0 2px 12px;margin:14px 0 0}
+.buy{border:1px solid var(--line);background:var(--surface);border-radius:3px;padding:22px 26px;margin:40px 0}.buy h2{margin-top:0}
+.buy .aff-note{font-size:14px;margin:0 0 12px}.buy ul{margin:0 0 12px;padding-left:20px}.buy li{margin:6px 0}
+.wl{border:1px solid var(--line);background:var(--surface);border-radius:3px;padding:28px 30px;margin:44px 0}
+.wl .wl-h{display:block;font-family:var(--serif);font-size:30px;line-height:1.15;margin:8px 0 10px}.wl p{margin:0 0 14px;font-size:16px;line-height:1.6}
+.wl form{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0 10px}
+.wl input[type=email],.wl select{font:inherit;font-size:15px;padding:13px 14px;border:1px solid var(--line);border-radius:3px;background:var(--bg);color:var(--ink);min-width:0;height:50px;box-sizing:border-box}
+.wl input[type=email]{flex:1 1 220px}.wl select{flex:1 1 180px}.wl .ck{flex:1 1 100%;font-size:14px;color:var(--muted)}.wl .ck a{color:var(--sage);text-decoration:underline}
+.wl button{border:0;cursor:pointer;font-family:inherit}.wl .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.wl .err{color:var(--accent);font-weight:500}
 .btn{display:inline-block;background:var(--accent);color:#fff;padding:15px 28px;border-radius:999px;font-size:15px;font-weight:500}
 .tlink{margin-left:22px;font-size:15px;border-bottom:1px solid currentColor;padding-bottom:2px}
 .hero-img{margin:0;position:relative;min-height:420px}.hero-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:35% 50%;border-radius:3px}
@@ -476,6 +510,11 @@ filter:saturate(.85)}
 .glance{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:26px 30px;margin-bottom:40px}
 .glance dl{margin:0;display:grid;grid-template-columns:150px 1fr;gap:14px 24px;font-size:15.5px}
 .glance dt{color:var(--muted);font-size:13px;letter-spacing:.04em;padding-top:2px}.glance dd{margin:0}
+.trend{border-left:3px solid var(--sage);background:var(--sage-soft);padding:16px 20px;margin:0 0 36px;font-size:15px}
+.trend .label{margin-bottom:8px}.trend ul{margin:0 0 8px;padding-left:18px}.trend li{margin:2px 0}
+.trend .note{margin:0;font-size:13px;color:var(--muted)}.trend .note a{color:var(--sage);text-decoration:underline}
+.page.trends{max-width:1040px}.tscroll{overflow-x:auto}.trends td.num{text-align:right;white-space:nowrap}
+.trends td.tg{font-size:14px;min-width:220px}.spark{color:var(--sage);display:block}
 .prose{font-size:17.5px;line-height:1.78}.prose p{margin:0 0 1.15em}
 .prose h2{font-family:var(--serif);font-weight:400;font-size:38px;line-height:1.1;margin:1.6em 0 .5em;letter-spacing:-.01em;scroll-margin-top:24px}
 .prose h3{font-size:19px;margin:1.4em 0 .4em}.prose ul,.prose ol{padding-left:1.2em}.prose li{margin:.35em 0}
@@ -488,6 +527,16 @@ margin-left:3px;text-decoration:none;white-space:nowrap}
 .adcard{margin:1.2em 0;padding:.7em 1em;border:1px dashed var(--line);border-radius:4px;font-size:15px;background:var(--surface)}
 .sources{border-top:1px solid var(--line);margin-top:48px;padding-top:8px;font-size:15px}
 .sources h2{font-size:30px}.sources li{margin:.5em 0;word-break:break-word}.sources a{color:var(--ink)}
+/* 이어서 읽기 (2026-11-10, pipeline/site_links.py) — 사이트 안 글 링크만 */
+.related{border-top:1px solid var(--line);margin-top:48px;padding-top:8px}.related h2{font-size:30px}
+.related h3{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:1.4em 0 .4em}
+.related ul{list-style:none;padding:0;margin:0}.related li{margin:0}
+.prose .related li a{display:block;padding:12px 0;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;font-size:17px;line-height:1.4}
+.prose .related li a:hover{color:var(--accent)}.related .cat{display:block;margin-bottom:3px}
+.prose .related .chip{text-decoration:none;color:var(--ink);font-size:14px;padding:8px 16px}
+.tlist{list-style:none;margin:40px 0 0;padding:0;border-top:1px solid var(--line);max-width:760px}
+.tlist li a{border-bottom:1px solid var(--line);padding:20px 0;display:flex;justify-content:space-between;gap:20px;font-size:19px}
+.tlist li a span{color:var(--muted);font-size:14px}.tlist li a:hover{color:var(--sage)}
 .stype{display:inline-block;font-size:11px;font-weight:600;border-radius:3px;padding:1px 7px;margin-left:6px;background:var(--sage-soft);color:var(--sage)}
 .page{max-width:720px;margin:56px auto 0;padding:0 24px;font-size:17px;line-height:1.75}
 .page h1{font-family:var(--serif);font-weight:400;font-size:56px;line-height:1.05;margin:0 0 20px}
@@ -501,7 +550,7 @@ html:lang(ko) .page h1{font-size:44px;line-height:1.25}html:lang(ko) .page h2{fo
 .hero h1{font-size:48px}.hero-img{order:-1}.proof{grid-template-columns:1fr}.proof div{padding:20px 0!important;border-left:0!important}
 .proof div+div{border-top:1px solid var(--line)}.sec{margin-top:56px}.sec-hd h2{font-size:34px}
 .feat,.grid,.band-in,.ft-in{grid-template-columns:1fr;gap:28px}.feat h3{font-size:34px}.band-in{padding-top:56px;padding-bottom:56px}
-.band h2{font-size:36px}.art-hd h1{font-size:42px}.art-grid{grid-template-columns:1fr;gap:20px;padding-top:32px}.side{position:static}
+.art-fig{margin:28px 0}.art-fig img{width:100%;height:auto;border-radius:18px;display:block}.art-fig figcaption{font-size:14px;color:#5b6b62;margin-top:8px}.band h2{font-size:36px}.art-hd h1{font-size:42px}.art-grid{grid-template-columns:1fr;gap:20px;padding-top:32px}.side{position:static}
 .glance{padding:20px}.glance dl{grid-template-columns:1fr;gap:4px}.glance dt{margin-top:10px}.art-img img{aspect-ratio:4/3}.page h1{font-size:40px}}
 """
 
@@ -509,6 +558,7 @@ html:lang(ko) .page h1{font-size:44px;line-height:1.25}html:lang(ko) .page h2{fo
 def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", jsonld: list[dict] | None = None,
          noindex: bool = False, image: str | None = None, lang: str | None = None) -> str:
     base = base_url(cfg)
+    data_link = '<a href="/data/">Open data</a>' if cfg.get("data_page") else ""
     esc = html.escape
     image = image or ("/og/default.png" if cfg.get("_og_images") else None)
     head = [
@@ -516,7 +566,7 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
         f"<title>{esc(title)}</title>", f'<meta name="description" content="{esc(description or cfg["description"])}">',
         f'<meta property="og:title" content="{esc(title)}">', f'<meta property="og:site_name" content="{esc(cfg["name"])}">',
         f'<meta property="og:description" content="{esc(description or cfg["description"])}">',
-        f'<meta property="og:type" content="{"article" if path.count("/") == 2 and path not in ("/about/", "/privacy/") else "website"}">',
+        f'<meta property="og:type" content="{"article" if path.count("/") == 2 and path not in ("/about/", "/privacy/", "/treatments/", "/partners/", "/data/", "/trends/") else "website"}">',
         '<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">'
         '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">'
         '<meta name="theme-color" content="#FBF9F6">',
@@ -541,25 +591,98 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     contact = f'<a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>' if cfg.get("contact_email") else ""
     name = esc(cfg["name"])
     partners = '<a href="/partners/">For clinics (한국어)</a>' if cfg.get("partners_page") else ""
+    wl = waitlist_cfg(cfg)
+    waitlist_link = f'<a href="/waitlist/">Booking help ({wl["year"]})</a>' if wl else ""
     wordmark = f'<span class="wm"><b>{name}</b><small>KOREA</small></span>'  # 워드마크: Skinbound + 자간 넓힌 KOREA
+    # 시술별 목록 (2026-11-10, site_links) — 목록 페이지가 있을 때만 머리말·꼬리말에
+    nav_treat = '<a href="/treatments/">Treatments</a>' if cfg.get("_treatments") else ""
+    foot_treat = "".join(f'<a href="/treatments/{site_links.treatment_slug(k)}/">{esc(n)}</a>'
+                         for k, n in (cfg.get("_treatments") or [])[:4])
+    foot_treat += '<a href="/treatments/">All treatments</a>' if cfg.get("_treatments") else ""
+    # 한국 시술 검색 관심도 (2026-11-17, naver_trends) — 페이지가 있을 때만
+    nav_trend = f'<a href="/{naver_trends.PATH}/">Trends</a>' if cfg.get("_trends") else ""
+    foot_trend = f'<a href="/{naver_trends.PATH}/">Korea treatment trends</a>' if cfg.get("_trends") else ""
     return f"""<!doctype html>
 <html lang="{lang or cfg.get('language', 'en')}" data-palette="{esc(cfg.get('palette') or 'green')}"><head>{''.join(head)}</head>
 <body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/" aria-label="{name} Korea"><img src="/icon-192.png" alt="" width="49" height="49">{wordmark}</a>
-<nav><a href="/#guides">Guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
+<nav><a href="/#guides">Guides</a>{nav_treat}{nav_trend}<a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
 </div></header>
 <main>{body}</main>
 <footer class="ft"><div class="wrap ft-in"><div><span class="brand"><img src="/icon-inverse-192.png" alt="" width="49" height="49">{wordmark}</span>
 <p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
-<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a><a href="/rss.xml">RSS</a></div>
+<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a>{foot_treat}{foot_trend}<a href="/rss.xml">RSS</a>{data_link}{waitlist_link}</div>
 <div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}{partners}</div></div></footer>
 </body></html>"""
 
 def organization(cfg: dict) -> dict:
     """브랜드 정보 — 공식 SNS 계정(sameAs)을 붙여 검색·AI 가 같은 브랜드로 묶게 한다."""
     base = base_url(cfg)
+    op = cfg.get("operator") or {}
+    place = {k: v for k, v in (("addressLocality", op.get("city")), ("addressCountry", op.get("country"))) if v}
     return {"@type": "Organization", "name": cfg["name"], **({"url": base + "/"} if base else {}),
+            **({"legalName": op["legal_name"]} if op.get("legal_name") else {}),
+            **({"foundingDate": str(op["since"])} if op.get("since") else {}),
+            **({"address": {"@type": "PostalAddress", **place}} if place else {}),
             **({"sameAs": list(cfg["social_profiles"])} if cfg.get("social_profiles") else {})}
+
+
+def operator_html(cfg: dict) -> str:
+    """About 의 "Who runs" 단락 (site.yaml operator, 2026-11-17 운영자 결정). 지금은 "서울의 독립 매체"까지만 밝히고,
+    법인 설립 뒤 legal_name·representative·business_no·address 를 채우면 그대로 나온다. 선: 유치사업자 등록번호
+    (facilitator_no)가 없으면 등록 전이라 상담·예약 연결을 하지 않는다고 쓴다 — 등록된 것처럼 읽히는 문구를 내지 않는다."""
+    op = cfg.get("operator") or {}
+    if not op.get("description") and not op.get("legal_name"):
+        return ""
+    esc, name = html.escape, html.escape(cfg["name"])
+    since = ""
+    if op.get("since"):
+        y, _, m = str(op["since"]).partition("-")
+        since = f" It has been publishing since {MONTHS[int(m) - 1] + ' ' if m else ''}{esc(y)}."
+    if op.get("legal_name"):
+        ids = [f"business registration no. {esc(str(op['business_no']))}" if op.get("business_no") else "",
+               f"representative: {esc(op['representative'])}" if op.get("representative") else ""]
+        ids = "; ".join(x for x in ids if x)
+        who = (f"{name} is operated by <strong>{esc(op['legal_name'])}</strong>" + (f" ({ids})" if ids else "")
+               + (f", {esc(op['address'])}" if op.get("address") else "") + ".")
+    else:
+        who = f"{name} is run by {esc(op['description'])}."
+    if op.get("facilitator_no"):
+        status = (f"The operator is a registered foreign-patient facilitator in Korea (registration no. "
+                  f"{esc(str(op['facilitator_no']))}).")
+    else:
+        status = ("We are not a clinic or a medical professional, and we are not a registered foreign-patient facilitator, "
+                  "so we do not arrange consultations, bookings or referrals.")
+        if (cfg.get("waitlist") or {}).get("enabled"):
+            status += (f" A company for a booking-help service is planned for {int(cfg['waitlist'].get('launch_year') or 2027)}; "
+                       "once it is registered, its legal name, registration numbers and representative will be listed here.")
+    links = [f'<a href="mailto:{esc(cfg["contact_email"])}">{esc(cfg["contact_email"])}</a>'] if cfg.get("contact_email") else []
+    for url in cfg.get("social_profiles") or []:
+        label = {"threads.com": "Threads", "threads.net": "Threads", "x.com": "X", "instagram.com": "Instagram"}.get(
+            (urlparse(url).hostname or "").removeprefix("www."))
+        if label and url.startswith("https://"):
+            links.append(f'<a href="{esc(url)}" rel="me">{label}</a>')
+    reach = f"<p>Contact and official accounts: {' · '.join(links)}</p>" if links else ""
+    return f"<h2>Who runs {name}</h2><p>{who}{since} {status}</p>{reach}"
+
+
+def updates_html(posts: list[dict]) -> str:
+    """About 의 정정·수정 기록 — 처음 게시 뒤 본문·사실이 바뀐 글 (track_modified 가 남긴 수정 시각)."""
+    changed = sorted((p for p in posts if (p.get("modified") or p["date"]) > p["date"]), key=lambda p: p["modified"], reverse=True)
+    rows = "".join(f'<li>{html.escape(p["modified"][:10])} — <a href="/{html.escape(p["slug"])}/">'
+                   f'{html.escape(p["draft"]["blog"].get("title") or p["slug"])}</a></li>' for p in changed[:30])
+    return rows and f"<p>Posts changed after they were first published:</p><ul>{rows}</ul>"
+
+
+def funding_html(posts: list[dict], now: datetime | None = None) -> str:
+    """About 의 수익 현황 한 줄 — 숫자는 게시된 글에서 코드가 센다 (스폰서 글·코스 광고 카드·제휴 링크가 붙은 글)."""
+    at = (now or datetime.now(timezone.utc)).astimezone(KST)
+    sponsored = sum(1 for p in posts if p["draft"].get("sponsor"))
+    ads = sum(1 for p in posts if route_ad_sponsor(p))
+    aff = sum(1 for p in posts if not p["draft"].get("sponsor") and affiliates.applies(p["draft"]) and affiliates.products(p["draft"]))
+    return (f"<p>As of {MONTHS[at.month - 1]} {at.year}, this site has {len(posts)} published guides: {sponsored} sponsored or partner "
+            f"posts, {ads} guides carrying a clinic ad card and {aff} skincare guides with affiliate links. "
+            "We have no other income from clinics.</p>")
 
 
 def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> list[dict]:
@@ -591,10 +714,65 @@ def post_jsonld(cfg: dict, post: dict, sources: list[dict], faq: list[dict]) -> 
     return out
 
 
+WAITLIST_TIMINGS = [("unsure", "Not sure when yet"), ("2027h1", "Visiting Jan–Jun 2027"), ("2027h2", "Visiting Jul–Dec 2027"),
+                    ("later", "2028 or later")]  # 값은 tracker/src/logic.js WAITLIST_TIMINGS 와 같아야 한다
+
+
+def waitlist_cfg(cfg: dict) -> dict | None:
+    """대기 명단 설정 — site.yaml waitlist.enabled 이고 추적기 주소(TRACKER_URL)가 있을 때만. 없으면 양식을 만들지 않는다
+    (받을 곳 없는 양식을 내지 않게)."""
+    wl = cfg.get("waitlist") or {}
+    endpoint = (os.environ.get("TRACKER_URL") or "").rstrip("/")
+    if not wl.get("enabled") or not endpoint.startswith("https://"):
+        return None
+    return {"endpoint": endpoint + "/w", "year": int(wl.get("launch_year") or 2027)}
+
+
+def waitlist_html(cfg: dict, path: str) -> str:
+    """대기 명단 양식 (2026-11-10). 이메일·방문 예정 시기만 받고 추적기(/w)에 저장한다 — 국가는 Cloudflare 가 붙인다.
+    문구의 선: 서비스는 "계획"이고 유치업 등록 법인이 운영한다고만 쓴다. 등록 전에는 상담·예약 연결을 하지 않는다고 밝힌다
+    (기획서 12-3 시스템의 선). 병원·시술 이름, 할인·혜택 문구를 넣지 않는다."""
+    wl = waitlist_cfg(cfg)
+    if not wl:
+        return ""
+    esc = html.escape
+    options = "".join(f'<option value="{v}">{esc(label)}</option>' for v, label in WAITLIST_TIMINGS)
+    contact = esc(cfg.get("contact_email") or "")
+    return f"""<aside class="wl" id="waitlist"><p class="kicker">Planned for {wl['year']}</p>
+<strong class="wl-h">Want help booking your treatment trip?</strong>
+<p>From {wl['year']} we plan to offer a booking-help service for international visitors, run by a company registered in
+Korea as a foreign-patient facilitator. Leave your email and we will write to you once when it opens.
+Until then we do not arrange consultations or bookings.</p>
+<form method="post" action="{esc(wl['endpoint'])}">
+<input type="email" name="email" required maxlength="254" placeholder="you@example.com" autocomplete="email" aria-label="Email address">
+<select name="timing" aria-label="When are you thinking of visiting Korea?">{options}</select>
+<input class="hp" type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+<input type="hidden" name="page" value="{esc(path)}">
+<label class="ck"><input type="checkbox" name="agree" value="yes" required> Email me when this service opens.
+See <a href="/privacy/#waitlist">how we handle your email</a>.</label>
+<button class="btn" type="submit">Notify me</button></form>
+<p class="meta">One email when the service opens. No newsletter, and we do not pass your email to clinics.
+{f"To be removed, write to {contact}." if contact else ""}</p></aside>"""
+
+
+def render_waitlist(cfg: dict, thanks: bool = False) -> str:
+    wl = waitlist_cfg(cfg)
+    if thanks:
+        body = (f'<h1>You are on the list</h1><p>Thank you. We will send one email when the booking-help service opens '
+                f'(planned for {wl["year"]}). Until then, the guides stay free to read.</p>'
+                '<p><a class="btn" href="/#guides">Back to the guides</a></p>')
+        return page(cfg, f"You are on the list — {cfg['name']}", f'<div class="page">{body}</div>', path="/waitlist/thanks/", noindex=True)
+    body = (f'<h1>Booking help, planned for {wl["year"]}</h1>'
+            '<p class="err" id="wl-err" hidden>Please check the email address and tick the box, then try again.</p>'
+            + waitlist_html(cfg, "/waitlist/")
+            + '<script>if(/[?&]e=1/.test(location.search))document.getElementById("wl-err").hidden=false</script>')
+    return page(cfg, f"Booking help ({wl['year']}) — {cfg['name']}", f'<div class="page wl-page">{body}</div>', path="/waitlist/", noindex=True)
+
+
 def registry_box(registry_url: str | None) -> str:
     href = html.escape(registry_url or REGISTRY_URL)
     return (f'<aside class="box"><strong>Looking for a clinic?</strong> Check whether a clinic is registered for '
-            f'international patients on the government-run <a href="{href}" rel="noopener" target="_blank">Medical Korea '
+            f'international patients on the government-run <a href="{href}" rel="nofollow noopener" target="_blank">Medical Korea '
             f'registry</a>. We don\'t recommend or rank individual clinics.</aside>')
 
 
@@ -742,16 +920,86 @@ def read_minutes(md: str) -> int:
     return max(1, round(len(re.sub(r"\[F\d+\]", "", md).split()) / 230))
 
 
+def copy_figures(post: dict, out: Path) -> list[dict]:
+    figs = []  # 사람이 승인한 그림만 나간다 (2026-11-01)
+    for n, fig in enumerate(importlib.import_module("pipeline.figures").approved(post["path"]), 1):
+        src = post["path"] / "figures" / fig["file"]
+        if src.exists():
+            dest = out / "fig" / f"{post['slug']}-{n}.png"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            figs.append({**fig, "src": f"/fig/{dest.name}"})
+    return figs
+
+
+def insert_figures(body_html: str, figures: list[dict]) -> str:
+    """그림을 해당 섹션(h2) 첫 문단 뒤에 넣는다. 섹션을 못 찾으면 넣지 않는다."""
+    esc = html.escape
+    for fig in figures:
+        m = None
+        for h in re.finditer(r"<h2[^>]*>(.*?)</h2>", body_html, re.S):
+            if re.sub(r"<[^>]+>", "", h.group(1)).strip() == fig.get("after_heading", "").strip():
+                m = h
+                break
+        if not m:
+            continue
+        end = body_html.find("</p>", m.end())
+        at = end + 4 if end >= 0 else m.end()
+        cap = esc(fig.get("caption", "")) + (f' <span class="meta">· {esc(fig["source"])}</span>' if fig.get("source") else "")
+        block = (f'<figure class="art-fig"><img src="{esc(fig["src"])}" alt="{esc(fig.get("alt", ""))}" width="1200" height="900" '
+                 f'loading="lazy"><figcaption>{cap}</figcaption></figure>')
+        body_html = body_html[:at] + block + body_html[at:]
+    return body_html
+
+
+def affiliate_badge(draft: dict) -> str:
+    """제휴 링크가 있는 글은 목록 카드에도 표시 — 누르기 전에 알 수 있게."""
+    return ' <span class="badge">Affiliate links</span>' if affiliates.applies(draft) and affiliates.products(draft) else ""
+
+
+def buy_html(draft: dict, aff_urls: dict[str, str] | None = None) -> str:
+    """화장품 글 끝의 구매 링크 (2026-11-10). 링크 바로 위에 제휴 표시, 미국 가격은 미국 방문자에게만."""
+    cfg = affiliates.settings()
+    items = affiliates.buyable(affiliates.products(draft), aff_urls) if affiliates.applies(draft) else []
+    if not cfg or not items:
+        return ""
+    esc = html.escape
+    rows = []
+    for item in items:
+        href = (aff_urls or {}).get(item["id"]) or affiliates.global_url(item["id"], cfg)
+        price = affiliates.us_price(item["id"])
+        rows.append(f'<li><a href="{esc(href)}" rel="sponsored nofollow noopener" target="_blank">{esc(item["name"])}</a>'
+                    + (f'<span data-geo-us hidden> · {esc(price)}</span>' if price else "") + "</li>")
+    discount = f" {esc(cfg['discount'])}" if cfg.get("discount") else ""
+    routed = bool(aff_urls)
+    return (f'<section class="buy" id="where-to-buy"><h2>Where to buy online</h2>'
+            f'<p class="aff-note"><b>{esc(affiliates.DISCLOSURE_LINKS)}</b>{discount}</p><ul>{"".join(rows)}</ul>'
+            '<p class="meta">Olive Young Global ships to many countries but not to the United States. '
+            + ("Visitors in the US are sent to Olive Young US instead, which carries a different range, so a product may not be there. "
+               if routed else "")
+            + "Stock, formulas and prices change.</p></section>")
+
+
+def geo_us_script() -> str:
+    """미국 방문자에게만 [data-geo-us] (미국 가격) 표시 — Cloudflare /cdn-cgi/trace. 확인 실패 시 숨김 유지."""
+    return ('<script>(function(){var a=document.querySelectorAll("[data-geo-us]");if(!a.length)return;'
+            'fetch("/cdn-cgi/trace").then(function(r){return r.text()}).then(function(t){if(/loc=US\b/.test(t))'
+            'a.forEach(function(e){e.hidden=false})}).catch(function(){})})();</script>')
+
+
 def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_url: str | None = None,
-                ad_url: str | None = None, clinic_urls: dict[str, str] | None = None) -> str:
-    draft = post["draft"]
+                ad_url: str | None = None, clinic_urls: dict[str, str] | None = None, posts: list[dict] | None = None,
+                pages: dict[str, list[dict]] | None = None, aff_urls: dict[str, str] | None = None) -> str:
+    """posts: 사이트에 게시되는 글 전체 — 주면 글 끝에 관련 글(site_links.related_html), pages: 시술별 목록 페이지."""
+    draft = affiliates.retitled(post["draft"], post.get("aff_names"))
     blog = draft["blog"]
     sponsor = draft.get("sponsor")
     md, sources = _numbered_sources(strip_leading_h1(blog["markdown"]), draft.get("facts", []))
-    body_html = _rewrite_links(render_markdown(md), sponsor, tracked_url)
+    body_html = insert_figures(_rewrite_links(render_markdown(md), sponsor, tracked_url), post.get("figures") or [])
     esc = html.escape
     badge = f'<span class="badge">{sponsors.label(sponsor)} · Ad by {esc(sponsor["name_en"])}</span>' if sponsor else ""
     ad_sponsor = route_ad_sponsor(post)
+    buy = "" if sponsor else buy_html(draft, aff_urls)
     src_items = "".join(
         f'<li id="src-{i}"><a href="{esc(s["url"])}" rel="noopener" target="_blank">{esc(s["title"])}</a> '
         f'<span class="meta">{esc(hostname(s["url"]))}</span>'
@@ -773,6 +1021,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
     body = f"""<div class="wrap crumbs"><a href="/#guides">Guides</a> &nbsp;/&nbsp; {esc(category_label(draft))}</div>
 <header class="wrap art-hd"><p class="kicker">{esc(category_label(draft))}</p>
 <h1>{esc(blog.get('title', ''))}</h1>
+{f'<p class="aff-top"><b>Affiliate disclosure:</b> {esc(affiliates.DISCLOSURE_TOP)} <a href="#where-to-buy">Where to buy</a></p>' if buy else ""}
 {f'<p class="sub">{esc(blog["meta_description"])}</p>' if blog.get("meta_description") else ""}
 <div class="ameta">{badge}<span>Published {esc(post['date'][:10])}</span>{updated}<span>{read_minutes(blog.get("markdown", ""))} min read</span></div></header>
 {photo}
@@ -780,11 +1029,15 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
 <div class="doc"><b>Not medical advice.</b> Every medical statement links to its source. Results and side effects vary —
 please consult a licensed doctor before any treatment.</div></aside>
 <article class="prose">{glance_html(draft, sources)}
+{naver_trends.post_html(post, post.get("trend"))}
 {body_html}
+{buy}
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
 {clinic_directory_html(post, clinic_urls) if not sponsor and draft.get("content_type") in CLINIC_LIST_AXES else ""}
 {route_ad_html(cfg, ad_sponsor, ad_url)}
-<section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article></div>{geo_ad_script(cfg) if ad_sponsor else ""}"""
+{site_links.related_html(post, posts, pages) if posts else ""}
+{"" if sponsor else waitlist_html(cfg, f"/{post['slug']}/")}
+<section class="sources"><h2>Sources</h2><ol>{src_items}</ol></section></article></div>{geo_ad_script(cfg) if ad_sponsor else ""}{geo_us_script() if "data-geo-us" in buy else ""}"""
     faq = extract_faq(strip_leading_h1(blog["markdown"]))
     return page(cfg, f"{blog.get('title', '')} | {cfg['name']}", body, path=f"/{post['slug']}/",
                 description=blog.get("meta_description", ""), jsonld=post_jsonld(cfg, post, sources, faq),
@@ -821,25 +1074,10 @@ def photo_html(p: dict, size: str = "card") -> str:
 def card_html(p: dict) -> str:
     esc = html.escape
     draft = p["draft"]
-    ad = f' <span class="badge">{sponsors.label(draft["sponsor"])} · Ad</span>' if draft.get("sponsor") else ""
+    ad = f' <span class="badge">{sponsors.label(draft["sponsor"])} · Ad</span>' if draft.get("sponsor") else affiliate_badge(draft)
     return (f'<li><a class="card" href="/{p["slug"]}/">{photo_html(p)}<span class="cat">{esc(category_label(draft))}</span>{ad}'
             f'<h3>{esc(draft["blog"].get("title", ""))}</h3><p>{esc(draft["blog"].get("meta_description", ""))}</p>'
             f'<span class="meta">{esc(p["date"][:10])}</span></a></li>')
-
-
-def treatment_counts(posts: list[dict]) -> list[tuple[str, int]]:
-    """첫 화면 '시술별' 칩 — procedures.yaml 의 관심도 높은 시술 6개와 글 수 (제목·키워드 단어 일치)."""
-    procs = load_yaml("procedures.yaml").get("procedures", {})
-    out = []
-    for key, pr in sorted(procs.items(), key=lambda kv: -kv[1].get("demand", 0)):
-        if key in ("travel", "skincare"):
-            continue
-        words = [str(k).lower() for k in pr.get("keywords", [])]
-        n = sum(1 for p in posts if any(re.search(rf"\b{re.escape(w)}\b", " ".join(
-            [p["draft"]["blog"].get("title", ""), " ".join((p["draft"].get("topic") or {}).get("keywords") or [])]).lower())
-            for w in words))
-        out.append((re.split(r" \(| /", pr.get("name", key))[0], n))
-    return sorted(out, key=lambda x: -x[1])[:6]  # 글이 있는 시술 먼저, 그다음 관심도 순 (정렬은 안정적)
 
 
 def render_index(cfg: dict, posts: list[dict]) -> str:
@@ -850,15 +1088,17 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
     if lead:
         d = lead["draft"]
         feat = (f'<a class="feat" href="/{lead["slug"]}/">{photo_html(lead, "hero")}<div><span class="cat">{esc(category_label(d))}</span>'
-                + (f' <span class="badge">{sponsors.label(d["sponsor"])} · Ad</span>' if d.get("sponsor") else "")
+                + (f' <span class="badge">{sponsors.label(d["sponsor"])} · Ad</span>' if d.get("sponsor") else affiliate_badge(d))
                 + f'<h3>{esc(d["blog"].get("title", ""))}</h3><p>{esc(d["blog"].get("meta_description", ""))}</p>'
                 f'<span class="meta">{esc(lead["date"][:10])} · {read_minutes(d["blog"].get("markdown", ""))} min read</span></div></a>')
     grid = f'<ul class="grid">{"".join(card_html(p) for p in rest)}</ul>' if rest else ""
-    # 시술 칩: 글이 있는 시술만, 3개 이상 모였을 때부터 (빈 칸·"soon" 은 독자에게 쓸모가 없다)
-    with_guides = [n for n, c in treatment_counts(posts) if c]
-    chips = "".join(f'<a class="chip" href="/#guides">{esc(n)}</a>' for n in with_guides)
-    treatments = (f'<section class="sec" id="treatments"><div class="sec-hd"><h2>Start with a treatment</h2></div>'
-                  f'<div class="chips">{chips}</div></section>') if len(with_guides) >= 3 else ""
+    # 시술 칩: 시술별 목록 페이지(글 2편 이상, site_links)가 있는 시술만, 3개 이상 모였을 때부터 — 칩마다 그 시술 목록으로
+    pages = site_links.treatment_pages(posts)
+    chips = "".join(f'<a class="chip" href="/treatments/{site_links.treatment_slug(k)}/">{esc(site_links.short_name(k))}'
+                    f'<small>{len(v)}</small></a>' for k, v in list(pages.items())[:8])
+    treatments = (f'<section class="sec" id="treatments"><div class="sec-hd"><h2>Start with a treatment</h2>'
+                  f'<a class="meta" href="/treatments/">All treatments →</a></div>'
+                  f'<div class="chips">{chips}</div></section>') if len(pages) >= 3 else ""
     trips = [p for p in posts if category_key(p["draft"]) in ("procedure_travel", "travel_guide")][:3]
     band = ""
     if trips:
@@ -880,17 +1120,22 @@ def render_index(cfg: dict, posts: list[dict]) -> str:
 {feat or "<p>First guides are coming soon.</p>"}{grid}</section></div>{band}"""
     return page(cfg, f"{cfg['name']} — {cfg['tagline']}", body, path="/", jsonld=[site_ld], image=None)
 
-def render_about(cfg: dict) -> str:
+def render_about(cfg: dict, posts: list[dict] | None = None) -> str:
     name = html.escape(cfg["name"])
+    posts = posts or []
+    contact = html.escape(cfg.get("contact_email") or "the contact address on this site")
     body = f"""<h1>About {name}</h1>
 <p>{html.escape(cfg['description'])}</p>
+{operator_html(cfg)}
 <h2>How our guides are made</h2>
 <ol><li>Topics come from what international visitors search for and ask about.</li>
 <li>An AI model gathers facts, and <strong>every fact must cite a source</strong> — peer-reviewed research, government and
 professional-society pages first. Clinic websites are never used as sources for medical claims.</li>
 <li>The draft is checked automatically against Korean medical-advertising rules, every source page is fetched and compared
 with the claim, and a second AI model from a different company reviews it.</li>
-<li>A person on our team reads and approves every post before it is published.</li></ol>
+<li>Posts that pass every automated check are published automatically; anything flagged, every sponsored post and
+anything involving prices or clinic information is read and approved by a person on our team first. We correct posts
+when readers or our checks find a problem.</li></ol>
 <p>Our guides are general information, not medical advice, and are not written or reviewed by a doctor. Results and
 side effects vary from person to person — always consult a licensed doctor.</p>
 <h2>What we never do</h2>
@@ -901,11 +1146,27 @@ government public data and sorted by distance only. Clinics cannot pay to be add
 advertisers are marked.</li>
 <li>Some route guides show one small card labeled <em>Ad</em> for a clinic in the same area. It is a flat-fee advertisement,
 not a recommendation, and it does not change the guide's text or the clinic list.</li></ul>
+<h2>Affiliate links (skincare)</h2>
+<p>Some skincare guides end with links to buy the products online. These are affiliate links: we earn a commission when
+you buy through them. Every such post says so at the top and again right above the links. Products are picked by the
+criteria stated in the post, such as ingredients and sun-protection ratings, not by commission. We do not take
+affiliate commissions or any other payment from clinics for our independent guides.</p>
 <h2>Sponsored posts</h2>
 <p>Some posts are advertisements paid for by a licensed clinic at a flat fee, or produced free of charge during a short
 partner pilot. They are always labeled <em>Sponsored</em> or <em>Partner</em> and as an advertisement at the top, the clinic is the advertiser and approves the final text, links to the clinic are marked as
-sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, the text of our independent guides.</p>"""
-    return page(cfg, f"About — {cfg['name']}", f'<div class="page">{body}</div>', path="/about/")
+sponsored, and the same accuracy and advertising rules apply. Clinics cannot pay to appear in, or influence, the text of our independent guides.</p>
+<h2>How the site is funded</h2>
+<p>The guides are free to read. Income comes only from the three things described above: affiliate commissions on
+skincare products, labeled sponsored posts and labeled clinic ad cards. Clinic advertising is flat-fee only — never per
+click, booking or patient.</p>
+{funding_html(posts)}
+<h2>Corrections and updates</h2>
+<p>Found something wrong or out of date? Write to {contact} with the page and the sentence. We check it against the
+source, fix confirmed errors and show an updated date on the post.</p>
+{updates_html(posts) or "<p>No post has been changed after publication so far.</p>"}"""
+    return page(cfg, f"About — {cfg['name']}", f'<div class="page">{body}</div>', path="/about/",
+                jsonld=[{"@context": "https://schema.org", "@type": "AboutPage", "url": f"{base_url(cfg)}/about/",
+                         "about": organization(cfg)}])
 
 
 def render_partners(cfg: dict) -> str:
@@ -940,6 +1201,13 @@ def render_partners(cfg: dict) -> str:
 
 def render_privacy(cfg: dict) -> str:
     contact = html.escape(cfg.get("contact_email") or "the contact address on this site")
+    wl = waitlist_cfg(cfg)
+    waitlist_note = (f"""<li id="waitlist"><strong>Booking-help waiting list (optional):</strong> if you leave your email in the
+waiting-list form, we store the email address, the visit timing you choose, your country code (from our host), the page you
+signed up on and the date. We use it for one purpose: to email you when the booking-help service planned for {wl["year"]} opens.
+The service will be run by a company we are setting up in Korea; the list will be handed to that company for this purpose only.
+We do not give it to clinics. It is stored with our host (Cloudflare) and kept until you ask us to delete it or until
+12 months after the service opens, whichever comes first. To be removed, write to {contact}.</li>""" if wl else "")
     body = f"""<h1>Privacy</h1>
 <p>This site does not use advertising cookies or ask you to log in.</p>
 <ul><li><strong>Hosting logs:</strong> our host (Cloudflare) processes standard request data such as IP address and browser
@@ -951,9 +1219,12 @@ go through our link counter. It records
 the date, which post and channel the click came from, the country, and whether it looks automated. We do not store your IP
 address; a one-way code that changes every day is used only to count unique visits per day. The clinic's page receives
 standard campaign tags (utm_source, utm_medium, utm_campaign) so the clinic can see the visit came from us.</li>
+<li><strong>Shopping links:</strong> product links in skincare guides go through the same link counter and then to
+Olive Young (Olive Young US for visitors in the US). Olive Young sets its own cookies to credit the purchase to us; its own
+privacy policy applies there.</li>
 <li><strong>Ad display:</strong> to show clinic ads only to visitors outside Korea, the page asks our host (Cloudflare)
 for your country code. Nothing is stored.</li>
-<li>We do not sell personal information.</li></ul>
+{waitlist_note}<li>We do not sell personal information.</li></ul>
 <p>Questions: {contact}.</p>"""
     return page(cfg, f"Privacy — {cfg['name']}", f'<div class="page">{body}</div>', path="/privacy/")
 
@@ -968,14 +1239,26 @@ def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
         tag = " (sponsored)" if p["draft"].get("sponsor") else ""
         lines.append(f"- [{blog.get('title', '')}]({base}/{p['slug']}/){tag}: {blog.get('meta_description', '')} "
                      f"([markdown]({base}/{p['slug']}/index.md))")
+    if pages := site_links.treatment_pages(posts):
+        lines += ["", "## Guides by treatment"] + [f"- [{site_links.treatment_name(k)}]({base}/treatments/{site_links.treatment_slug(k)}/): "
+                                                  f"{len(v)} guides" for k, v in pages.items()]
+    if cfg.get("data_page"):
+        lines += ["", "## Data", f"- [Dermatology institutions in Korea by region]({base}/data/): counts by province and district from Korean public health insurance data "
+                              f"([CSV]({base}/data/{DATA_CSV}))"]
+        lines += [f"- [{n['title']}]({base}/data/notes/{n['id']}/): {n['description']}" for n in importlib.import_module("pipeline.data_notes").published()]
+    if trend_editions := naver_trends.site_editions(cfg):
+        lines += ["", "## Korea treatment search trends",
+                  f"- [Monthly ranking, {naver_trends.month_label(trend_editions[0]['month'])}]({base}/{naver_trends.PATH}/): "
+                  f"{len(trend_editions[0]['items'])} skin treatments by search interest on NAVER in Korea (relative index, not procedure counts)"]
     lines += ["", "## About", f"- [Editorial policy]({base}/about/)",
               f"- [All guides as one Markdown file]({base}/llms-full.txt)"]
     return "\n".join(lines) + "\n"
 
 
-def render_post_md(cfg: dict, post: dict) -> str:
+def render_post_md(cfg: dict, post: dict, aff_urls: dict[str, str] | None = None) -> str:
     """AI 가 읽기 쉬운 글 원문 (2026-10-19, `/<slug>/index.md`·llms-full.txt) — [F#] 는 출처 링크로, 병원 공통 정보는 링크 없이."""
-    draft, blog = post["draft"], post["draft"]["blog"]
+    draft = affiliates.retitled(post["draft"], post.get("aff_names"))
+    blog = draft["blog"]
     facts = {f["id"]: f for f in draft.get("facts", [])}
     sources: list[str] = []
 
@@ -998,7 +1281,16 @@ def render_post_md(cfg: dict, post: dict) -> str:
              + (f" · Updated {post['modified'][:10]}" if post.get("modified", "")[:10] > post["date"][:10] else ""), ""]
     if blog.get("meta_description"):
         head += [f"_{blog['meta_description']}_", ""]
+    if (items := affiliates.products(draft) if affiliates.applies(draft) and not s else []) and affiliates.settings():
+        head += [f"> Affiliate disclosure: {affiliates.DISCLOSURE_TOP}", ""]
     tail = ["", "## Sources"] + [f"{i}. {u}" for i, u in enumerate(sources, 1)] if sources else []
+    if items := affiliates.buyable(items, aff_urls):
+        buy = ["", "## Where to buy online", "", f"_{affiliates.DISCLOSURE_LINKS}_", ""]
+        buy += [f"- [{i['name']}]({(aff_urls or {}).get(i['id']) or affiliates.global_url(i['id'])})" for i in items]
+        buy += ["", "Olive Young Global does not ship to the United States; US readers are sent to Olive Young US."]
+        tail = buy + tail
+    if trend_md := naver_trends.post_md(post, post.get("trend"), base_url(cfg)):
+        tail = ["", trend_md.rstrip()] + tail
     return "\n".join(head) + "\n" + body.strip() + "\n" + "\n".join(tail) + "\n"
 
 
@@ -1006,13 +1298,96 @@ def render_llms_full(cfg: dict, posts: list[dict]) -> str:
     parts = [f"# {cfg['name']} — all guides", "", f"> {cfg['description']}", "",
              "Information only — not medical advice. Every medical statement links to its source.", ""]
     for p in posts:
-        parts += ["---", "", render_post_md(cfg, p)]
+        parts += ["---", "", render_post_md(cfg, p, p.get("aff_urls"))]
     return "\n".join(parts)
+
+
+DATA_LICENSE = "https://creativecommons.org/licenses/by/4.0/"
+DATA_CSV = "korea-dermatology-institutions.csv"
+HIRA_SOURCE = "https://www.data.go.kr/data/15001698/openapi.do"
+DATA_TOP = 25
+
+
+def data_ready(cfg: dict) -> dict | None:
+    """공개 데이터 페이지에 쓸 데이터. data_page 를 켜기 전(심평원 이용 조건 확인 전)에는 만들지 않는다."""
+    if not cfg.get("data_page"):
+        return None
+    data = importlib.import_module("pipeline.dataset").load()
+    if not data:
+        log.warning("data_page 가 켜져 있지만 데이터가 없습니다 — python -m pipeline.dataset refresh")
+    return data
+
+
+def render_data(cfg: dict, data: dict) -> str:
+    """지역 단위 합산 숫자만. 병원명·주소·순위 추천은 넣지 않는다."""
+    esc = html.escape
+    rows = importlib.import_module("pipeline.dataset").english_rows(data)
+    totals, as_of = data["totals"], data["as_of"]
+    base = base_url(cfg)
+    title = "Dermatology Institutions in Korea by Region"
+    summary = (f"As of {as_of}, Korea's public health insurance data lists {totals['total']:,} medical institutions offering a "
+               f"dermatology department, of which {totals['named_dermatology']:,} have \"dermatology\" (피부과) in their name.")
+    region_rows = "".join(f"<tr><td>{esc(r['province'])}</td><td>{esc(r['district'])}</td><td>{r['institutions_with_dermatology']:,}</td>"
+                          f"<td>{r['named_dermatology']:,}</td></tr>" for r in rows[:DATA_TOP])
+    place_rows = "".join(f"<tr><td>{esc(str(a['name']))}</td><td>{a['institutions']:,}</td><td>{a['radius_m']} m</td><td>{esc(a['as_of'])}</td></tr>"
+                         for a in data["attractions"])
+    places = (f"<h2>Near popular places in Seoul and beyond</h2><p>Institutions with a dermatology department within the radius of each place.</p>"
+              f"<table><thead><tr><th>Place</th><th>Institutions</th><th>Radius</th><th>As of</th></tr></thead><tbody>{place_rows}</tbody></table>") if place_rows else ""
+    notes = importlib.import_module("pipeline.data_notes").published()
+    notes_block = ("<h2>Data notes</h2><ul>" + "".join(f'<li><a href="/data/notes/{esc(n["id"])}/">{esc(n["title"])}</a></li>' for n in notes) + "</ul>") if notes else ""
+    body = f"""<div class="page"><h1>{esc(title)}</h1><p>{esc(summary)}</p>
+<p><a href="/data/{DATA_CSV}">Download all {len(rows)} regions as CSV</a></p>
+{notes_block}
+<h2>Regions with the most institutions</h2>
+<table><thead><tr><th>Province</th><th>District</th><th>With dermatology department</th><th>"Dermatology" in name</th></tr></thead><tbody>{region_rows}</tbody></table>
+{places}
+<h2>How to read these numbers</h2>
+<ul><li><strong>These are not counts of dermatologists or specialist clinics.</strong> The main number counts every institution that lists a dermatology department, including many general clinics.</li>
+<li>The "in name" column is a name match only. We did not count board-certified specialists.</li>
+<li>A higher number does not mean better care. We do not rank, recommend or evaluate institutions, and this file contains no institution names.</li></ul>
+<h2>Source and license</h2>
+<p>Source: <a href="{HIRA_SOURCE}" rel="noopener">Health Insurance Review &amp; Assessment Service (HIRA), hospital information service</a>, Korea Open Government License Type 1. Retrieved {esc(as_of)}, aggregated by {esc(cfg['name'])}. Attraction radius counts are refreshed separately and carry their own dates.</p>
+<p>Our aggregated tables are available under <a href="{DATA_LICENSE}" rel="noopener">CC BY 4.0</a>. Please credit {esc(cfg['name'])} and HIRA.</p></div>"""
+    jsonld = [{"@context": "https://schema.org", "@type": "Dataset", "name": title, "description": summary, "url": f"{base}/data/",
+               "license": DATA_LICENSE, "dateModified": as_of, "isBasedOn": HIRA_SOURCE, "spatialCoverage": "South Korea",
+               "creator": {"@type": "Organization", "name": cfg["name"], "url": f"{base}/"},
+               "distribution": [{"@type": "DataDownload", "encodingFormat": "text/csv", "contentUrl": f"{base}/data/{DATA_CSV}"}]}]
+    return page(cfg, f"{title} — {cfg['name']}", body, path="/data/", description=summary, jsonld=jsonld)
+
+
+def render_note(cfg: dict, note: dict) -> str:
+    """승인된 데이터 글. 표·출처·라이선스는 코드가 붙인다. 원시 HTML 은 지운다."""
+    esc = html.escape
+    base = base_url(cfg)
+    table = note["table"]
+    head = "".join(f"<th>{esc(c)}</th>" for c in table[0])
+    rows = "".join("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in r) + "</tr>" for r in table[1:])
+    chart = f'<p><img src="/data/notes/{esc(note["id"])}/chart.png" alt="{esc(note["title"])}" style="max-width:100%;height:auto"></p>' if note.get("has_chart") else ""
+    text = render_markdown(re.sub(r"<[^>]*>", "", note["markdown"]))
+    body = f"""<div class="page"><h1>{esc(note["title"])}</h1>{text}{chart}
+<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>
+<h2>Source and limits</h2>
+<p>Source: <a href="{HIRA_SOURCE}" rel="noopener">Health Insurance Review &amp; Assessment Service (HIRA), hospital information service</a>, Korea Open Government License Type 1. Retrieved {esc(note["as_of"])}, aggregated by {esc(cfg["name"])}.</p>
+<p>The count covers institutions that list a dermatology department. It is not a count of dermatologists or specialist clinics, and it does not rank or recommend any institution.</p>
+<p><a href="/data/">All data and CSV download</a>. Our aggregated tables are available under <a href="{DATA_LICENSE}" rel="noopener">CC BY 4.0</a>.</p></div>"""
+    jsonld = [{"@context": "https://schema.org", "@type": "Article", "headline": note["title"], "description": note["description"],
+               "url": f"{base}/data/notes/{note['id']}/", "dateModified": note["as_of"], "isBasedOn": HIRA_SOURCE,
+               "author": {"@type": "Organization", "name": cfg["name"], "url": f"{base}/"}}]
+    return page(cfg, f"{note['title']} — {cfg['name']}", body, path=f"/data/notes/{note['id']}/", description=note["description"], jsonld=jsonld)
 
 
 def render_sitemap(cfg: dict, posts: list[dict]) -> str:
     base = base_url(cfg)
     urls = [("/", posts[0]["date"] if posts else ""), ("/about/", ""), ("/privacy/", "")]
+    if cfg.get("data_page"):
+        urls.append(("/data/", ""))
+        urls += [(f"/data/notes/{n['id']}/", n["as_of"]) for n in importlib.import_module("pipeline.data_notes").published()]
+    pages = site_links.treatment_pages(posts)
+    if pages:
+        urls.append(("/treatments/", max(v[0]["date"] for v in pages.values())))
+        urls += [(f"/treatments/{site_links.treatment_slug(k)}/", v[0]["date"]) for k, v in pages.items()]
+    trend_editions = naver_trends.site_editions(cfg)
+    urls += [(naver_trends.edition_path(e, trend_editions[0]), e["fetched_at"]) for e in trend_editions]
     urls += [(f"/{p['slug']}/", p["date"]) for p in posts]
     items = "".join(f"<url><loc>{base}{u}</loc>" + (f"<lastmod>{d[:10]}</lastmod>" if d else "") + "</url>" for u, d in urls)
     return f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{items}</urlset>\n'
@@ -1099,6 +1474,37 @@ def _clinic_links(post: dict, mapping: dict[str, dict], title: str) -> bool:
     return changed
 
 
+def _affiliate_links(post: dict, mapping: dict[str, dict], title: str) -> bool:
+    """화장품 글의 올리브영 구매 링크마다 추적 링크 — 미국 방문자는 추적기가 US 몰로 보낸다 (target_us)."""
+    draft = post["draft"]
+    cfg = affiliates.settings()
+    if not cfg or not affiliates.applies(draft):
+        return False
+    changed = False
+    for item in affiliates.products(draft):
+        key = affiliates.link_key(draft["id"], item["id"])
+        if key in mapping:
+            continue
+        state = affiliates.product_status(item["id"])  # 링크를 만들 때 한 번: 사라진 제품은 구매 링크에서 뺀다
+        if state["status"] == "gone":
+            log.warning("올리브영에서 사라진 제품 — 구매 링크 없음: %s (%s)", item["name"], item["id"])
+            mapping[key] = {"url": "", **link_meta(post, "affiliate"), "placement": "buy", "product": item["id"],
+                            "product_name": item["name"], "gone": True}
+            changed = True
+            continue
+        name = state.get("name") or item["name"]  # 몰에서 읽은 실제 제품명 (출처 제목이 틀릴 수 있다)
+        try:
+            link = tracker.add_link(None, affiliates.global_url(item["id"], cfg), f"oliveyoung: {name}"[:120],
+                                    target_us=affiliates.us_target(item["id"], cfg))
+        except tracker.TrackerError as e:
+            log.warning("올리브영 링크 추적 생성 실패 (바로 연결): %s — %s", item["name"], e)
+            continue
+        mapping[key] = {"url": f"{link['url']}?s=blog", "code": link["code"], **link_meta(post, "affiliate"),
+                        "placement": "buy", "product": item["id"], "product_name": name}
+        changed = True
+    return changed
+
+
 def tracked_links(posts: list[dict]) -> dict[str, dict]:
     """글별 추적 링크 (?s=blog): 스폰서 글 → 병원 공식 사이트, 중립 시술·여행 글 → 등록기관 목록 (글마다 따로 세서
     어떤 글·시술이 병원 찾기로 이어졌는지 본다). 추적기 미설정이면 기존 목록만 — 링크는 원래 주소로 나간다."""
@@ -1109,6 +1515,7 @@ def tracked_links(posts: list[dict]) -> dict[str, dict]:
     for p in posts:
         draft = p["draft"]
         title = draft["blog"].get("title", "")
+        changed |= _affiliate_links(p, mapping, title)
         if draft.get("sponsor"):
             key, kind, sponsor_id, target, label = draft["id"], "sponsor", draft["sponsor"]["id"], None, f"blog: {title}"
         elif draft.get("content_type") in REGISTRY_AXES:
@@ -1160,6 +1567,8 @@ def build(out: Path | None = None) -> dict:
         shutil.copytree(static, out, dirs_exist_ok=True)
         if (static / "img" / "brand-hero.jpg").exists():
             cfg = {**cfg, "_hero_image": "/img/brand-hero.jpg"}
+    for p in posts:  # 글 안의 설명 그림 (pipeline/figures.py — 게시 전 글에만 만든다)
+        p["figures"] = copy_figures(p, out)
     for slug, image in site_images.build_images(posts, out).items():  # 글마다 대표 사진 (없으면 브랜드 색)
         next(p for p in posts if p["slug"] == slug)["image"] = image
     if og.available():  # 링크 미리보기 카드 이미지 (글마다 + 기본)
@@ -1172,17 +1581,54 @@ def build(out: Path | None = None) -> dict:
     else:
         log.warning("Pillow 가 없어 공유 이미지(og:image)를 만들지 않았습니다 (pip install -r requirements.txt)")
 
+    pages = site_links.treatment_pages(posts)  # 시술별 목록 (2026-11-10)
+    if pages:
+        cfg = {**cfg, "_treatments": [(k, site_links.short_name(k)) for k in pages]}
+    trend_editions = naver_trends.site_editions(cfg)  # 한국 시술 검색 관심도 (2026-11-17) — 월간 페이지 + 글 안 문장
+    trend_now = naver_trends.current(trend_editions, now_kst().date())
+    if trend_editions:
+        cfg = {**cfg, "_trends": True}
     for p in posts:
+        p["trend"] = trend_now
         own = links.get(p["draft"]["id"], {}).get("url")
         registry = (links.get(registry_key(p["draft"]["id"])) or links.get(REGISTRY_KEY) or {}).get("url")
         ad = route_ad_sponsor(p)
         ad_url = (links.get(route_ad_key(p["draft"]["id"], ad["id"])) or {}).get("url") if ad else None
         prefix = clinic_link_key(p["draft"]["id"], "")
         clinic_urls = {k[len(prefix):]: v["url"] for k, v in links.items() if k.startswith(prefix)}
-        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls))
+        aff_prefix = affiliates.link_key(p["draft"]["id"], "")
+        p["aff_urls"] = {k[len(aff_prefix):]: v.get("url") or "" for k, v in links.items() if k.startswith(aff_prefix)}
+        p["aff_names"] = {k[len(aff_prefix):]: v.get("product_name") for k, v in links.items() if k.startswith(aff_prefix) and not v.get("gone")}
+        write(f"{p['slug']}/index.html", render_post(cfg, p, own, registry, ad_url, clinic_urls, posts=posts, pages=pages, aff_urls=p["aff_urls"]))
     write("index.html", render_index(cfg, posts))
-    write("about/index.html", render_about(cfg))
+    write("about/index.html", render_about(cfg, posts))
     write("privacy/index.html", render_privacy(cfg))
+    if pages:
+        write("treatments/index.html", site_links.render_treatments_index(cfg, pages))
+        for key, members in pages.items():
+            write(f"treatments/{site_links.treatment_slug(key)}/index.html", site_links.render_treatment(cfg, key, members))
+    for e in trend_editions:  # 최신 달 = /trends/, 지난 달 = /trends/<달>/
+        rel = naver_trends.edition_path(e, trend_editions[0]).strip("/")
+        write(f"{rel}/index.html", naver_trends.render(cfg, e, posts, pages, trend_editions))
+    if waitlist_cfg(cfg):  # 대기 명단 안내·완료 페이지 (검색 제외, sitemap 에 넣지 않음)
+        write("waitlist/index.html", render_waitlist(cfg))
+        write("waitlist/thanks/index.html", render_waitlist(cfg, thanks=True))
+    if data := data_ready(cfg):  # 영어 공개 데이터 세트 (pipeline/dataset.py)
+        dataset = importlib.import_module("pipeline.dataset")
+        try:
+            write("data/index.html", render_data(cfg, data))
+            write(f"data/{DATA_CSV}", dataset.to_csv(data))
+            notes_mod = importlib.import_module("pipeline.data_notes")
+            for note in notes_mod.published():
+                write(f"data/notes/{note['id']}/index.html", render_note(cfg, note))
+                chart = notes_mod.note_file(note["id"]).with_name("chart.png")
+                if chart.exists():
+                    shutil.copy(chart, out / "data" / "notes" / note["id"] / "chart.png")
+        except dataset.DatasetError as e:  # 새 지역 영문명이 없어도 블로그 배포는 막지 않는다
+            log.warning("데이터 페이지 생략: %s", e)
+    ig_page = importlib.import_module("pipeline.ig_page")  # 인스타그램 프로필 링크 도착 페이지 (config/reels.yaml landing)
+    if ig_page.enabled() and (ig_html := ig_page.render(cfg, posts)):
+        write(f"{ig_page.PATH}/index.html", ig_html)
     if cfg.get("partners_page"):  # 병원 대상 안내 — 변호사 확인 후 켠다 (기획서 12-1-1 체크리스트)
         write("partners/index.html", render_partners(cfg))
     write("404.html", page(cfg, f"Not found — {cfg['name']}", '<div class="page"><h1>Page not found</h1><p><a href="/">Back to all guides</a></p></div>',
@@ -1193,7 +1639,7 @@ def build(out: Path | None = None) -> dict:
     write("llms.txt", render_llms_txt(cfg, posts))
     write("llms-full.txt", render_llms_full(cfg, posts))
     for p in posts:
-        write(f"{p['slug']}/index.md", render_post_md(cfg, p))
+        write(f"{p['slug']}/index.md", render_post_md(cfg, p, p.get("aff_urls")))
     write("rss.xml", render_rss(cfg, posts))
     if cfg["domain"]:
         write("sitemap.xml", render_sitemap(cfg, posts))

@@ -1,0 +1,5 @@
+name: skin-router
+version: 1.0.0
+description: "텔레그램 메시지를 대화 에이전트(Gemini) 대신 pipeline.telegram_router 로 넘긴다"
+hooks:
+  - pre_gateway_dispatch
