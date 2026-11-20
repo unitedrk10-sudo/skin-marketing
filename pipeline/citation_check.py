@@ -84,7 +84,7 @@ def previous() -> dict | None:
     folder = content_dir() / "reports" / "citations"
     files = sorted(folder.glob("*.json")) if folder.exists() else []
     # 측정 실패를 구분하기 전(2026-11-02 이전) 결과는 비교하지 않는다
-    return next((d for d in map(load_json, reversed(files[:-1])) if "measured" in d), None)
+    return next((d for d in map(load_json, reversed(files[:-1])) if "measured" in d and d.get("total")), None)
 
 
 def report_lines(result: dict) -> list[str]:
