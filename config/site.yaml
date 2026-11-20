@@ -41,6 +41,7 @@ route_ads:                      # 중립 여행 글의 코스 광고 카드 (spo
   enabled: true
   hide_in_countries: [KR]       # 해외 대상 광고: 이 나라 방문자에게는 숨김 (의료법 §56②12 국내광고 시비 차단)
 palette: charcoal               # 색 체계: green(짙은 녹색·세이지) | charcoal(차콜·토프). 포인트 버건디는 공통 — 바꾸면 아이콘·카드도 같이
+trends_page: false             # 한국 시술 검색 관심도 /trends/ + 글 안 문장 (pipeline/naver_trends.py) — 네이버 API 이용 조건 확인·첫 결과 확인 뒤 켠다
 data_page: true               # 영어 공개 데이터 /data/ (pipeline/dataset.py) — 2026-11-02 운영자 결정: 공공누리 제1유형 기준으로 공개
 waitlist:                     # 대기 명단 (2026-11-10 운영자 결정) — 2027년 예약 도움 서비스 출시 알림용 이메일만 받는다
   enabled: true               # 추적기(TRACKER_URL)가 설정돼 있을 때만 양식이 나온다. 스폰서 글에는 넣지 않는다

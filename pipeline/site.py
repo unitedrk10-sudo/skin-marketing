@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 import markdown
 
-from pipeline import affiliates, clinics, og, site_images, site_links, sponsors, tracker
+from pipeline import affiliates, clinics, naver_trends, og, site_images, site_links, sponsors, tracker
 from pipeline.common import (PRACTICE_KIND, ROOT, content_dir, draft_dirs, get_logger, is_medical_fact, load_draft, load_json,
                              load_review, load_yaml, run_cli, save_json, slugify)
 
@@ -510,6 +510,11 @@ filter:saturate(.85)}
 .glance{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:26px 30px;margin-bottom:40px}
 .glance dl{margin:0;display:grid;grid-template-columns:150px 1fr;gap:14px 24px;font-size:15.5px}
 .glance dt{color:var(--muted);font-size:13px;letter-spacing:.04em;padding-top:2px}.glance dd{margin:0}
+.trend{border-left:3px solid var(--sage);background:var(--sage-soft);padding:16px 20px;margin:0 0 36px;font-size:15px}
+.trend .label{margin-bottom:8px}.trend ul{margin:0 0 8px;padding-left:18px}.trend li{margin:2px 0}
+.trend .note{margin:0;font-size:13px;color:var(--muted)}.trend .note a{color:var(--sage);text-decoration:underline}
+.page.trends{max-width:1040px}.tscroll{overflow-x:auto}.trends td.num{text-align:right;white-space:nowrap}
+.trends td.tg{font-size:14px;min-width:220px}.spark{color:var(--sage);display:block}
 .prose{font-size:17.5px;line-height:1.78}.prose p{margin:0 0 1.15em}
 .prose h2{font-family:var(--serif);font-weight:400;font-size:38px;line-height:1.1;margin:1.6em 0 .5em;letter-spacing:-.01em;scroll-margin-top:24px}
 .prose h3{font-size:19px;margin:1.4em 0 .4em}.prose ul,.prose ol{padding-left:1.2em}.prose li{margin:.35em 0}
@@ -561,7 +566,7 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
         f"<title>{esc(title)}</title>", f'<meta name="description" content="{esc(description or cfg["description"])}">',
         f'<meta property="og:title" content="{esc(title)}">', f'<meta property="og:site_name" content="{esc(cfg["name"])}">',
         f'<meta property="og:description" content="{esc(description or cfg["description"])}">',
-        f'<meta property="og:type" content="{"article" if path.count("/") == 2 and path not in ("/about/", "/privacy/", "/treatments/", "/partners/", "/data/") else "website"}">',
+        f'<meta property="og:type" content="{"article" if path.count("/") == 2 and path not in ("/about/", "/privacy/", "/treatments/", "/partners/", "/data/", "/trends/") else "website"}">',
         '<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192">'
         '<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">'
         '<meta name="theme-color" content="#FBF9F6">',
@@ -594,16 +599,19 @@ def page(cfg: dict, title: str, body: str, *, path: str, description: str = "", 
     foot_treat = "".join(f'<a href="/treatments/{site_links.treatment_slug(k)}/">{esc(n)}</a>'
                          for k, n in (cfg.get("_treatments") or [])[:4])
     foot_treat += '<a href="/treatments/">All treatments</a>' if cfg.get("_treatments") else ""
+    # 한국 시술 검색 관심도 (2026-11-17, naver_trends) — 페이지가 있을 때만
+    nav_trend = f'<a href="/{naver_trends.PATH}/">Trends</a>' if cfg.get("_trends") else ""
+    foot_trend = f'<a href="/{naver_trends.PATH}/">Korea treatment trends</a>' if cfg.get("_trends") else ""
     return f"""<!doctype html>
 <html lang="{lang or cfg.get('language', 'en')}" data-palette="{esc(cfg.get('palette') or 'green')}"><head>{''.join(head)}</head>
 <body><header class="hd"><div class="wrap hd-in"><a class="brand" href="/" aria-label="{name} Korea"><img src="/icon-192.png" alt="" width="49" height="49">{wordmark}</a>
-<nav><a href="/#guides">Guides</a>{nav_treat}<a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
+<nav><a href="/#guides">Guides</a>{nav_treat}{nav_trend}<a href="/#trip">Seoul &amp; recovery</a><a href="/about/">About</a></nav>
 </div></header>
 <main>{body}</main>
 <footer class="ft"><div class="wrap ft-in"><div><span class="brand"><img src="/icon-inverse-192.png" alt="" width="49" height="49">{wordmark}</span>
 <p>{esc(cfg['description'])} AI-assisted content — not medical advice. Always consult a licensed doctor.
 Sponsored posts are clearly labeled advertisements.</p></div>
-<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a>{foot_treat}<a href="/rss.xml">RSS</a>{data_link}{waitlist_link}</div>
+<div><h4>Guides</h4><a href="/#guides">Latest guides</a><a href="/#trip">Seoul &amp; recovery</a>{foot_treat}{foot_trend}<a href="/rss.xml">RSS</a>{data_link}{waitlist_link}</div>
 <div><h4>About</h4><a href="/about/">About &amp; editorial policy</a><a href="/privacy/">Privacy</a>{contact}{partners}</div></div></footer>
 </body></html>"""
 
@@ -1021,6 +1029,7 @@ def render_post(cfg: dict, post: dict, tracked_url: str | None = None, registry_
 <div class="doc"><b>Not medical advice.</b> Every medical statement links to its source. Results and side effects vary —
 please consult a licensed doctor before any treatment.</div></aside>
 <article class="prose">{glance_html(draft, sources)}
+{naver_trends.post_html(post, post.get("trend"))}
 {body_html}
 {buy}
 {registry_box(registry_url) if not sponsor and draft.get("content_type") in REGISTRY_AXES else ""}
@@ -1237,6 +1246,10 @@ def render_llms_txt(cfg: dict, posts: list[dict]) -> str:
         lines += ["", "## Data", f"- [Dermatology institutions in Korea by region]({base}/data/): counts by province and district from Korean public health insurance data "
                               f"([CSV]({base}/data/{DATA_CSV}))"]
         lines += [f"- [{n['title']}]({base}/data/notes/{n['id']}/): {n['description']}" for n in importlib.import_module("pipeline.data_notes").published()]
+    if trend_editions := naver_trends.site_editions(cfg):
+        lines += ["", "## Korea treatment search trends",
+                  f"- [Monthly ranking, {naver_trends.month_label(trend_editions[0]['month'])}]({base}/{naver_trends.PATH}/): "
+                  f"{len(trend_editions[0]['items'])} skin treatments by search interest on NAVER in Korea (relative index, not procedure counts)"]
     lines += ["", "## About", f"- [Editorial policy]({base}/about/)",
               f"- [All guides as one Markdown file]({base}/llms-full.txt)"]
     return "\n".join(lines) + "\n"
@@ -1276,6 +1289,8 @@ def render_post_md(cfg: dict, post: dict, aff_urls: dict[str, str] | None = None
         buy += [f"- [{i['name']}]({(aff_urls or {}).get(i['id']) or affiliates.global_url(i['id'])})" for i in items]
         buy += ["", "Olive Young Global does not ship to the United States; US readers are sent to Olive Young US."]
         tail = buy + tail
+    if trend_md := naver_trends.post_md(post, post.get("trend"), base_url(cfg)):
+        tail = ["", trend_md.rstrip()] + tail
     return "\n".join(head) + "\n" + body.strip() + "\n" + "\n".join(tail) + "\n"
 
 
@@ -1371,6 +1386,8 @@ def render_sitemap(cfg: dict, posts: list[dict]) -> str:
     if pages:
         urls.append(("/treatments/", max(v[0]["date"] for v in pages.values())))
         urls += [(f"/treatments/{site_links.treatment_slug(k)}/", v[0]["date"]) for k, v in pages.items()]
+    trend_editions = naver_trends.site_editions(cfg)
+    urls += [(naver_trends.edition_path(e, trend_editions[0]), e["fetched_at"]) for e in trend_editions]
     urls += [(f"/{p['slug']}/", p["date"]) for p in posts]
     items = "".join(f"<url><loc>{base}{u}</loc>" + (f"<lastmod>{d[:10]}</lastmod>" if d else "") + "</url>" for u, d in urls)
     return f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{items}</urlset>\n'
@@ -1567,7 +1584,12 @@ def build(out: Path | None = None) -> dict:
     pages = site_links.treatment_pages(posts)  # 시술별 목록 (2026-11-10)
     if pages:
         cfg = {**cfg, "_treatments": [(k, site_links.short_name(k)) for k in pages]}
+    trend_editions = naver_trends.site_editions(cfg)  # 한국 시술 검색 관심도 (2026-11-17) — 월간 페이지 + 글 안 문장
+    trend_now = naver_trends.current(trend_editions, now_kst().date())
+    if trend_editions:
+        cfg = {**cfg, "_trends": True}
     for p in posts:
+        p["trend"] = trend_now
         own = links.get(p["draft"]["id"], {}).get("url")
         registry = (links.get(registry_key(p["draft"]["id"])) or links.get(REGISTRY_KEY) or {}).get("url")
         ad = route_ad_sponsor(p)
@@ -1585,6 +1607,9 @@ def build(out: Path | None = None) -> dict:
         write("treatments/index.html", site_links.render_treatments_index(cfg, pages))
         for key, members in pages.items():
             write(f"treatments/{site_links.treatment_slug(key)}/index.html", site_links.render_treatment(cfg, key, members))
+    for e in trend_editions:  # 최신 달 = /trends/, 지난 달 = /trends/<달>/
+        rel = naver_trends.edition_path(e, trend_editions[0]).strip("/")
+        write(f"{rel}/index.html", naver_trends.render(cfg, e, posts, pages, trend_editions))
     if waitlist_cfg(cfg):  # 대기 명단 안내·완료 페이지 (검색 제외, sitemap 에 넣지 않음)
         write("waitlist/index.html", render_waitlist(cfg))
         write("waitlist/thanks/index.html", render_waitlist(cfg, thanks=True))
