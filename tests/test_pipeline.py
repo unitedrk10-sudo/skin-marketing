@@ -1398,6 +1398,17 @@ def test_from_seed_order_and_reuse(env):
     assert twice and not twice & {t["seed_id"] for t in week3["topics"]}
 
 
+def test_topics_already_answered_elsewhere_go_down():
+    # 한 원출처가 질문 전체에 답하는 주제는 수요가 같아도 뒤로 (2026-11-20)
+    raw = [{"title": "Botox downtime", "axis": "procedure", "angle": "a", "keywords": [], "answered_elsewhere": True},
+           {"title": "Botox and soju night", "axis": "procedure", "angle": "a", "keywords": [], "answered_elsewhere": "yes"}]
+    topics = topics_mod.validate(raw, ["procedure"])
+    assert [t["answered_elsewhere"] for t in topics] == [True, False]  # true 만 인정
+    ranked = topics_mod.annotate(topics, demand_mod.all_scores())
+    assert ranked[0]["title"] == "Botox and soju night" and "원출처가 이미 답함" in ranked[1]["demand"]["reason"]
+    assert "📚원출처 있음" in topics_mod.telegram_message("2026-W48", ranked)
+
+
 def test_seed_week_limits_same_procedure():
     topics = [{"title": f"Rejuran {i}", "keywords": [], "axis": "procedure", "angle": "a"} for i in range(4)]
     topics.append({"title": "Botox basics", "keywords": [], "axis": "procedure", "angle": "a"})
@@ -3917,7 +3928,8 @@ def test_site_markdown_versions_and_ai_robots(site_env, monkeypatch):
     assert "Downtime is 1-3 days" in (dist / "llms-full.txt").read_text(encoding="utf-8")
     assert "/what-is-rejuran/index.md" in (dist / "llms.txt").read_text(encoding="utf-8")
     robots = (dist / "robots.txt").read_text(encoding="utf-8")
-    assert "User-agent: OAI-SearchBot\nAllow: /" in robots and "User-agent: Bytespider\nDisallow: /" in robots
+    assert "User-agent: OAI-SearchBot\nAllow: /" in robots and "User-agent: Bytespider\nAllow: /" in robots
+    assert "Disallow" not in robots                                         # 막는 크롤러 없음 (2026-11-20)
 
 
 def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
@@ -3942,6 +3954,17 @@ def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
     assert calls == {"q1": 1, "q2": 1, "q3": 2}                     # 출처 없을 때만 한 번 더
     line = cc.report_lines(res)[0]
     assert "우리 사이트 인용 1/2" in line and "측정 실패 1" in line
+    # 이름·우리만 답할 질문은 따로 센다 — 맨 위 숫자(추이 비교)는 일반 질문만 (2026-11-20)
+    answers["b"] = llm.LLMResult(text="Skinboundkorea.com is a guide", model="m", stage="citation_check", grounding_urls=[])
+    answers["o"] = llm.LLMResult(text="...", model="m", stage="citation_check",
+                                 grounding_urls=[{"url": "https://hira.or.kr/x", "title": "HIRA"}])
+    monkeypatch.setattr(cc, "questions", lambda: [("general", "q2"), ("brand", "b"), ("original", "o")])
+    res = cc.check()
+    assert (res["cited"], res["measured"], res["total"]) == (0, 1, 1)
+    assert res["groups"]["brand"] == {"total": 1, "measured": 1, "cited": 1} and res["groups"]["original"]["cited"] == 0
+    assert "이름 질문 1/1 · 우리만 답할 질문 0/1" in "\n".join(cc.report_lines(res))
+    cfg = common.load_yaml("citation_prompts.yaml")                        # 실제 설정에 세 묶음이 다 있다
+    assert len(cfg["questions"]) == 20 and cfg["brand"] and cfg["original"]
 
 
 def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_path):

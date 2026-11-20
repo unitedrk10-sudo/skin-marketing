@@ -35,6 +35,8 @@ log = get_logger("01_topics")
 RECENT_LIMIT = 60
 WAVE_BONUS = {1: 0.3, 2: 0.1}   # seed 의 wave(시의성·기초 주제)는 가산점으로만 — 순서는 수요 점수가 정한다
 MAX_PER_FOCUS = 2               # 한 주에 같은 시술·관광지 주제는 최대 2개 (다양성)
+# 한 원출처가 질문 전체에 이미 답하는 주제는 뒤로 (2026-11-20 — AI 답변은 그런 질문에 원출처를 직접 인용하고 우리 글을 건너뛴다)
+ANSWERED_PENALTY = 0.3
 EXTRA_CANDIDATES = 4            # Gemini 에게 더 받아 두고 쿼터(config/channels.yaml topic_quota)대로 고른다
 
 
@@ -62,6 +64,7 @@ def validate(topics: list[dict], axes: list[str]) -> list[dict]:
         t.setdefault("keywords", [])
         t.setdefault("sources", [])
         t["has_price"] = bool(t.get("has_price"))
+        t["answered_elsewhere"] = t.get("answered_elsewhere") is True
         out.append(t)
     return out
 
@@ -81,6 +84,9 @@ def annotate(topics: list[dict], tables: dict[str, dict[str, dict]], bonus: dict
     """주제마다 수요 점수·근거를 붙이고 점수 순으로 정렬한다 (bonus: 주제 index → 가산점)."""
     for i, t in enumerate(topics):
         score, focus, why = demand.topic_score(t, tables)
+        if t.get("answered_elsewhere"):
+            score -= ANSWERED_PENALTY
+            why = f"{why} · 원출처가 이미 답함 -{ANSWERED_PENALTY}"
         t["demand"] = {"score": round(score + (bonus or {}).get(i, 0), 3), "focus": focus, "reason": why}
     return sorted(topics, key=lambda t: -t["demand"]["score"])  # 동점은 원래 순서
 
@@ -145,7 +151,7 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
 def telegram_message(week: str, topics: list[dict]) -> str:
     lines = [f"[{week} 주제 후보 {len(topics)}건 — 수요 높은 순] 번호로 골라주세요 (예: 1,3,4)"]
     for i, t in enumerate(topics, 1):
-        price = " 💲가격" if t["has_price"] else ""
+        price = (" 💲가격" if t["has_price"] else "") + (" 📚원출처 있음" if t.get("answered_elsewhere") else "")
         d = t.get("demand")
         score = f"\n   └ 📈 수요 {d['score']:.2f} ({d['reason']})" if d else ""
         lines.append(f"{i}. {t['title']} ({t['axis']}){price}\n   └ {t['angle']}\n   └ 근거: {t.get('why_now', '')}{score}")

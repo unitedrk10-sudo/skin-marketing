@@ -1416,13 +1416,15 @@ def render_robots(cfg: dict) -> str:
     sitemap = f"\nSitemap: {base_url(cfg)}/sitemap.xml" if cfg["domain"] else ""
     ai = "".join(f"User-agent: {ua}\nAllow: /\n\n" for ua in AI_CRAWLERS)
     blocked = "".join(f"User-agent: {ua}\nDisallow: /\n\n" for ua in BLOCKED_CRAWLERS)
+    blocked = f"# Bulk scrapers with no search or citation use\n{blocked}" if blocked else ""
     return (f"# AI search and assistant crawlers are welcome — being cited in AI answers is the point of this site\n{ai}"
-            f"# Bulk scrapers with no search or citation use\n{blocked}User-agent: *\nAllow: /\n{sitemap}\n")
+            f"{blocked}User-agent: *\nAllow: /\n{sitemap}\n")
 
 
 AI_CRAWLERS = ("OAI-SearchBot", "ChatGPT-User", "GPTBot", "PerplexityBot", "Perplexity-User", "ClaudeBot", "Claude-User",
-               "Claude-SearchBot", "Google-Extended", "Applebot-Extended", "Bingbot")
-BLOCKED_CRAWLERS = ("Bytespider",)
+               "Claude-SearchBot", "Google-Extended", "Applebot-Extended", "Bingbot", "Bytespider")
+# 2026-11-20 Bytespider 허용 — 바이트댄스 검색 색인(터우탸오, 더우바오·Dola 답변이 쓴다는 업계 설명). 학습용 GPTBot 도 이미 허용 중
+BLOCKED_CRAWLERS: tuple[str, ...] = ()
 
 
 # ---------------- 스폰서 추적 링크 ----------------

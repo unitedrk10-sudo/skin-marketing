@@ -2,6 +2,8 @@
 
 Gemini 검색 연동(stage citation_check)으로 질문마다 답을 받아, 답의 출처 주소(grounding)와 본문에 skinboundkorea.com 이
 있는지 센다. 질문 목록은 config/citation_prompts.yaml (같은 질문을 계속 써야 추이를 비교할 수 있다).
+질문은 세 묶음 (2026-11-20): 일반(questions — 추이 비교는 이것만), 이름(brand — AI 가 우리를 아는가),
+우리만 답할 질문(original — 공개 데이터·시술 × 한국 여행 조합. 일반 질문은 원출처가 직접 인용된다).
 4주마다 주간 리포트(07_report.trust_check 와 같은 주)에 들어가고, 결과는 content/reports/citations/<날짜>.json.
 ChatGPT·Perplexity·Claude 는 자동화하지 않는다 — 같은 질문으로 사람이 가끔 확인.
 
@@ -24,8 +26,13 @@ def domain() -> str:
     return (load_yaml("site.yaml").get("domain") or "").lower()
 
 
-def questions() -> list[str]:
-    return [str(q) for q in (load_yaml("citation_prompts.yaml").get("questions") or [])]
+GROUPS = {"general": "questions", "brand": "brand", "original": "original"}
+LABELS = {"brand": "이름 질문", "original": "우리만 답할 질문"}
+
+
+def questions() -> list[tuple[str, str]]:
+    cfg = load_yaml("citation_prompts.yaml")
+    return [(g, str(q)) for g, key in GROUPS.items() for q in (cfg.get(key) or [])]
 
 
 def _host(url: str) -> str:
@@ -51,7 +58,8 @@ def check(limit: int | None = None) -> dict:
     출처가 없으면 인용 여부를 알 수 없으므로 '측정 실패' 로 따로 센다."""
     site = domain()
     results = []
-    for q in questions()[:limit]:
+    for item in questions()[:limit]:
+        group, q = item if isinstance(item, tuple) else ("general", item)
         try:
             res = _ask(q)
         except llm.LLMError as e:
@@ -61,9 +69,13 @@ def check(limit: int | None = None) -> dict:
                  for u in res.grounding_urls]  # 검색 연동 리디렉션 주소는 title 에 실제 도메인이 온다
         hosts = [h for h in hosts if h]
         cited = bool(site) and (any(site in h for h in hosts) or site in res.text.lower())
-        results.append({"q": q, "measured": bool(hosts) or cited, "cited": cited, "sources": list(dict.fromkeys(hosts))[:8]})
-    out = {"date": date.today().isoformat(), "total": len(results), "measured": sum(r["measured"] for r in results),
-           "cited": sum(r["cited"] for r in results), "results": results}
+        results.append({"q": q, "group": group, "measured": bool(hosts) or cited, "cited": cited,
+                        "sources": list(dict.fromkeys(hosts))[:8]})
+    general = [r for r in results if r["group"] == "general"]  # 맨 위 숫자는 예전과 같은 일반 질문만 (추이 비교)
+    out = {"date": date.today().isoformat(), "total": len(general), "measured": sum(r["measured"] for r in general),
+           "cited": sum(r["cited"] for r in general), "results": results,
+           "groups": {g: {"total": len(rs), "measured": sum(r["measured"] for r in rs), "cited": sum(r["cited"] for r in rs)}
+                      for g in GROUPS if (rs := [r for r in results if r["group"] == g])}}
     save_json(content_dir() / "reports" / "citations" / f"{out['date']}.json", out)
     return out
 
@@ -76,15 +88,20 @@ def previous() -> dict | None:
 
 
 def report_lines(result: dict) -> list[str]:
-    if not result["total"]:
+    if not result["results"]:
         return ["🔎 AI 인용 점검: 질문을 돌리지 못함"]
     prev = previous()
     trend = f" (지난번 {prev['cited']}/{prev['measured']})" if prev else ""
     failed = result["total"] - result["measured"]
     lines = [f"🔎 AI 인용 점검 (Gemini 검색, 질문 {result['total']}개): 우리 사이트 인용 {result['cited']}/{result['measured']}{trend}"
              + (f" · 측정 실패 {failed}" if failed else "")]
+    extra = [f"{LABELS[g]} {c['cited']}/{c['measured']}" for g, c in (result.get("groups") or {}).items() if g in LABELS]
+    if extra:
+        lines.append("   " + " · ".join(extra))
     top = {}
     for r in result["results"]:
+        if r.get("group", "general") != "general":
+            continue
         for h in r["sources"]:
             top[h] = top.get(h, 0) + 1
     common = sorted(top.items(), key=lambda x: -x[1])[:4]
@@ -100,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
     res = check(args.limit)
     print("\n".join(report_lines(res)))
     for r in res["results"]:
-        print(f"{'✅' if r['cited'] else '·' if r['measured'] else '?'} {r['q']}  ← {', '.join(r['sources'][:4])}")
+        tag = f"[{LABELS[r['group']]}] " if r.get("group") in LABELS else ""
+        print(f"{'✅' if r['cited'] else '·' if r['measured'] else '?'} {tag}{r['q']}  ← {', '.join(r['sources'][:4])}")
     return 0
 
 
