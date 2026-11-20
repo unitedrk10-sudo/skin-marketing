@@ -46,3 +46,25 @@ def test_store_depts_rules():
     assert fm.store_depts({"종별코드명": "치과의원", "요양기관명": "OO치과"}, {"49"}) == ["치과", fm.ALL_DEPT]
     assert fm.store_depts({"종별코드명": "약국", "요양기관명": "OO약국"}, set()) == ["약국", fm.ALL_DEPT]
     assert fm.store_depts({"종별코드명": "보건소", "요양기관명": "OO보건소"}, {"14"}) == []
+
+
+def test_registered_basis():
+    derm = {"종별코드명": "의원", "요양기관명": "OO클리닉의원"}
+    assert fm.REG + "피부과" in fm.store_depts(derm, {"14": 0}, registered=True)       # 피부과는 신고만으로
+    assert fm.REG + "성형외과" not in fm.store_depts(derm, {"08": 0}, registered=True)  # 성형외과는 전문의가 있어야
+    assert fm.REG + "성형외과" in fm.store_depts(derm, {"08": 1}, registered=True)
+    assert fm.REG + "성형외과" in fm.store_depts({"종별코드명": "의원", "요양기관명": "OO성형외과의원"}, {}, registered=True)
+    assert not [d for d in fm.store_depts(derm, {"14": 0}) if d.startswith(fm.REG)]       # 미등록은 등록 칸 없음
+    assert not [d for d in fm.store_depts({"종별코드명": "약국", "요양기관명": "OO약국"}, {}, registered=True) if d.startswith(fm.REG)]
+
+
+def test_match_registry_unique_names_only():
+    insts = [{"시도코드명": "서울", "요양기관명": "가나피부과의원", "종별코드명": "의원", "암호화요양기호": "a"},
+             {"시도코드명": "서울", "요양기관명": "다라 성형외과의원", "종별코드명": "의원", "암호화요양기호": "b"},
+             {"시도코드명": "서울", "요양기관명": "마바한의원", "종별코드명": "한의원", "암호화요양기호": "c"},
+             {"시도코드명": "서울", "요양기관명": "마바한의원", "종별코드명": "한의원", "암호화요양기호": "d"}]
+    reg = [{"상호명": "가나피부과의원", "기관구분": "의원", "지역": "서울"},
+           {"상호명": "다라성형외과", "기관구분": "의원", "지역": "서울"},   # "의원" 빠진 이름
+           {"상호명": "마바한의원", "기관구분": "한의원", "지역": "서울"}]   # 동명 2곳 → 버림
+    ids, stats = fm.match_registry(insts, reg)
+    assert ids == {"a", "b"} and stats == {"matched": 2, "ambiguous": 1, "missing": 0}

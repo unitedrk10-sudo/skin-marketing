@@ -300,8 +300,13 @@ def _write_csv(path, rows: list[dict]) -> None:
 #     심평원 진료과목은 전문의가 없어도 신고할 수 있어 간판 기준보다 넓다 (서초4동 피부과: 신고 152곳, 이름·전문의 13곳).
 #   치과: 치과의원·치과병원 / 한의학과: 한의원·한방병원 / 대학/종합병원: 상급종합·종합병원 / 약국: 약국
 #   한약방: 심평원 자료에 없음 / 전체(약국 포함): 위 종별 전부 / 의원 전체: 종별 "의원" 전부(과목 무관)
+# 등록 기준 ("등록:<과목>", 2026-11-20 운영자 제안): 한국보건산업진흥원 외국인환자 유치기관 현황에 있는 의료기관만.
+#   피부과는 전문의 없이도 하는 곳이 많아 진료과목 신고·이름 기준, 성형외과·안과는 그 과 전문의가 있거나 이름에
+#   과 이름이 있는 곳(전문과목을 이름에 쓰려면 전문의여야 한다), 나머지는 종별. 약국·한약방은 등록 대상이 아니다.
+#   유치기관 목록에는 주소가 없어 같은 시도 안 이름(+종별)이 한 곳으로 맞는 기관만 센다.
 
-HIRA_PAGE = "https://www.data.go.kr/data/15051059/fileData.do"
+HIRA_PK = "15051059"
+REGISTRY_PK = "3050000"  # 한국보건산업진흥원_외국인환자 유치기관 현황
 HIRA_TOKEN = "https://www.data.go.kr/tcs/dss/selectFileDataDownload.do"
 HIRA_FILE = "https://www.data.go.kr/cmm/cmm/fileDownload.do"
 NAME_DEPTS = {"피부과": ("피부", "14"), "성형외과": ("성형", "08"), "안과": ("안과", "12")}
@@ -310,29 +315,79 @@ KIND_DEPTS = {"치과의원": "치과", "치과병원": "치과", "한의원": "
 ALL_KINDS = {"의원", "병원", *KIND_DEPTS}
 ALL_DEPT = "전체(약국 포함)"
 CLINIC_ALL = "의원 전체"  # 종별 "의원" 전부 — 진료과목을 신고하지 않은 미용 의원까지 피부과로 볼 때 (2026-11-20 요청)
+REG = "등록:"
+SPECIALIST_DEPTS = {"성형외과": ("성형외과", "08"), "안과": ("안과", "12")}
+SIDO_SHORT = {"서울": "서울", "경기": "경기", "인천": "인천"}
+REG_KIND = {"상급종합병원": "상급종합"}
 
 
-def hira_zip(refresh: bool = False):
-    """data.go.kr 파일 데이터 (키 없이 받는다). 첨부 번호가 분기마다 바뀌어 화면이 쓰는 두 단계를 그대로 따른다."""
+def datago_file(pk: str, name: str, refresh: bool = False):
+    """data.go.kr 파일 데이터 (키 없이 받는다). 첨부 번호가 갱신마다 바뀌어 화면이 쓰는 두 단계를 그대로 따른다."""
     import re
-    cache = content_dir() / "foreign_medical" / "hira.zip"
+    cache = content_dir() / "foreign_medical" / name
     if cache.exists() and not refresh:
         return cache
+    page_url = f"https://www.data.go.kr/data/{pk}/fileData.do"
     s = requests.Session()
-    page = s.get(HIRA_PAGE, timeout=60).text
-    m = re.search(r"fn_fileDataDown\('15051059', '(uddi:[^']+)'", page)
+    page = s.get(page_url, timeout=60).text
+    m = re.search(rf"fn_fileDataDown\('{pk}', '(uddi:[^']+)'", page)
     if not m:
-        raise FetchError("심평원 파일 페이지에서 다운로드 정보를 찾지 못함")
-    tok = s.post(HIRA_TOKEN, timeout=60, headers={"Referer": HIRA_PAGE}, data={
-        "publicDataDetailPk": m.group(1), "publicDataPk": "15051059", "atchFileId": "", "fileDetailSn": "1",
+        raise FetchError(f"data.go.kr {pk} 페이지에서 다운로드 정보를 찾지 못함")
+    tok = s.post(HIRA_TOKEN, timeout=60, headers={"Referer": page_url}, data={
+        "publicDataDetailPk": m.group(1), "publicDataPk": pk, "atchFileId": "", "fileDetailSn": "1",
         "publicDataTyCode": "PR0051"}).json()
     if not tok.get("status"):
-        raise FetchError(f"심평원 파일 다운로드 거절: {tok.get('error')}")
+        raise FetchError(f"data.go.kr {pk} 다운로드 거절: {tok.get('error')}")
     r = s.get(HIRA_FILE, params={"atchFileId": tok["atchFileId"], "fileDetailSn": tok["fileDetailSn"]}, timeout=600)
     r.raise_for_status()
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_bytes(r.content)
     return cache
+
+
+def hira_zip(refresh: bool = False):
+    return datago_file(HIRA_PK, "hira.zip", refresh)
+
+
+def registry_rows(refresh: bool = False) -> list[dict]:
+    """외국인환자 유치기관 현황 (상호명·기관구분·지역만 있다). 유치사업자는 뺀다."""
+    import csv
+    import io
+    raw = datago_file(REGISTRY_PK, "registry.csv", refresh).read_bytes()
+    text = raw.decode("utf-8-sig") if raw.startswith(b"\xef\xbb\xbf") else raw.decode("cp949", errors="replace")
+    return [r for r in csv.DictReader(io.StringIO(text))
+            if r.get("기관구분") != "유치사업자" and r.get("지역") in SIDO_SHORT and r.get("상태", "유지") == "유지"]
+
+
+def norm_name(name: str) -> str:
+    import re
+    name = re.sub(r"^\((재|의|사|학|사복)\)", "", name.strip())
+    name = re.sub(r"^(의료법인|재단법인|사단법인|학교법인|사회복지법인)\s*\S+\s+", "", name)
+    return re.sub(r"[\s()（）&·.,]", "", name)
+
+
+def match_registry(insts: list[dict], registry: list[dict]) -> tuple[set[str], dict]:
+    """유치기관을 심평원 기관에 이름으로 맞춘다 — 같은 시도에서 한 곳만 맞을 때만 (동명 기관은 버린다)."""
+    idx: dict[tuple[str, str], list[dict]] = {}
+    for i in insts:
+        if i["시도코드명"] in SIDO_SHORT:
+            idx.setdefault((i["시도코드명"], norm_name(i["요양기관명"])), []).append(i)
+    ids, stats = set(), {"matched": 0, "ambiguous": 0, "missing": 0}
+    for r in registry:
+        key = norm_name(r["상호명"])
+        cand = idx.get((r["지역"], key), [])
+        if not cand and r["기관구분"] in ("의원", "치과의원"):  # "OO성형외과" ↔ "OO성형외과의원"
+            alt = key[:-2] if key.endswith("의원") else key + "의원"
+            cand = idx.get((r["지역"], alt), [])
+        kind = REG_KIND.get(r["기관구분"], r["기관구분"])
+        if len(cand) > 1:
+            cand = [i for i in cand if i["종별코드명"] == kind] or cand
+        if len(cand) == 1:
+            ids.add(cand[0]["암호화요양기호"])
+            stats["matched"] += 1
+        else:
+            stats["ambiguous" if cand else "missing"] += 1
+    return ids, stats
 
 
 def _zip_csv(zf, prefix: str) -> list[dict]:
@@ -342,21 +397,34 @@ def _zip_csv(zf, prefix: str) -> list[dict]:
     return list(csv.DictReader(io.StringIO(zf.read(name).decode("cp949", errors="replace"))))
 
 
-def store_depts(inst: dict, subjects: set[str]) -> list[str]:
+def store_depts(inst: dict, subjects, registered: bool = False) -> list[str]:
+    """subjects: 신고한 진료과목 코드 → 과목별 전문의 수 (set 이면 전문의 0 으로 본다)."""
+    spec = subjects if isinstance(subjects, dict) else {c: 0 for c in subjects}
     kind, name = inst["종별코드명"], inst["요양기관명"]
     out = []
     if kind in ("의원", "병원"):
-        out += [d for d, (word, code) in NAME_DEPTS.items() if word in name or code in subjects]
+        out += [d for d, (word, code) in NAME_DEPTS.items() if word in name or code in spec]
     if kind in KIND_DEPTS:
         out.append(KIND_DEPTS[kind])
     if kind == "의원":
         out.append(CLINIC_ALL)
     if kind in ALL_KINDS:
         out.append(ALL_DEPT)
+    if registered and kind != "약국":
+        reg = []
+        if kind in ("의원", "병원"):
+            if "피부" in name or "14" in spec:
+                reg.append("피부과")
+            reg += [d for d, (word, code) in SPECIALIST_DEPTS.items() if word in name or spec.get(code, 0) > 0]
+        if kind in KIND_DEPTS:
+            reg.append(KIND_DEPTS[kind])
+        if kind in ALL_KINDS:
+            reg.append(ALL_DEPT)
+        out += [REG + d for d in reg]
     return out
 
 
-def dong_store_rows(zip_path) -> tuple[list[dict], str]:
+def dong_store_rows(zip_path, registry: list[dict] | None = None) -> tuple[list[dict], str]:
     """기관 좌표를 행정동 경계(2026-10)에 넣어 동 × 진료과목 점포 수를 센다."""
     import re
     import zipfile
@@ -367,9 +435,12 @@ def dong_store_rows(zip_path) -> tuple[list[dict], str]:
         base = re.search(r"\((\d{4})\.(\d{1,2})\.\)", zf.namelist()[0])
         as_of = f"{base.group(1)}-{int(base.group(2)):02d}" if base else ""
         insts = _zip_csv(zf, "1.") + _zip_csv(zf, "2.")
-        subjects: dict[str, set[str]] = {}
+        subjects: dict[str, dict[str, int]] = {}
         for r in _zip_csv(zf, "5."):
-            subjects.setdefault(r["암호화요양기호"], set()).add(r["진료과목코드"])
+            subjects.setdefault(r["암호화요양기호"], {})[r["진료과목코드"]] = int(r.get("과목별 전문의수") or 0)
+    registered, stats = match_registry(insts, registry or [])
+    if registry:
+        log.info("유치기관 이름 맞추기: %s (수도권 의료기관 %d곳)", stats, len(registry))
     feats = [f for f in load_json(content_dir() / "foreign_medical" / "hangjeongdong.geojson")["features"]
              if f["properties"]["sido"] in SIDOS]
     geoms = [shape(f["geometry"]) for f in feats]
@@ -379,7 +450,7 @@ def dong_store_rows(zip_path) -> tuple[list[dict], str]:
     for inst in insts:
         if inst["시도코드명"] not in ("서울", "경기", "인천"):
             continue
-        depts = store_depts(inst, subjects.get(inst["암호화요양기호"], set()))
+        depts = store_depts(inst, subjects.get(inst["암호화요양기호"], {}), inst["암호화요양기호"] in registered)
         if not depts:
             continue
         try:
@@ -409,7 +480,7 @@ def cmd_export(args) -> int:
     _write_csv(out / "sido_dept.csv", sido_dept_rows(d))
     _write_csv(out / "regions_monthly.csv", regions)
     _write_csv(out / "top_dongs.csv", dongs)
-    stores, as_of = dong_store_rows(hira_zip(refresh=args.refresh_stores))
+    stores, as_of = dong_store_rows(hira_zip(refresh=args.refresh_stores), registry_rows(refresh=args.refresh_stores))
     _write_csv(out / "dong_stores.csv", stores)
     log.info("동별 점포 수: %d행 (심평원 %s 기준)", len(stores), as_of)
     region_geo, dong_geo = boundaries(names, {r["dong"] for r in dongs})
@@ -431,7 +502,7 @@ def main() -> int:
     f.set_defaults(fn=cmd_fetch)
     sub.add_parser("show").set_defaults(fn=cmd_show)
     e = sub.add_parser("export", help="대시보드용 CSV·경계·동별 점포 수 → reports/foreign_medical/")
-    e.add_argument("--refresh-stores", action="store_true", help="심평원 병의원 파일을 다시 받는다 (분기 갱신)")
+    e.add_argument("--refresh-stores", action="store_true", help="심평원 병의원·유치기관 파일을 다시 받는다")
     e.set_defaults(fn=cmd_export)
     args = p.parse_args()
     return args.fn(args)
