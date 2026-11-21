@@ -1258,6 +1258,12 @@ def test_naver_trends_rank_page_and_post_line(site_env, tmp_path, monkeypatch):
     assert line in (dist / "rejuran" / "index.md").read_text(encoding="utf-8")
     log_file = site_mod.content_log_file()
     assert not common.load_json(log_file)[approved]["updated_at"]                        # 문장이 붙어도 글 수정일은 그대로
+    # 약관 7.3④: 광고(코스 광고 카드·제휴 링크)가 있는 글에는 문장을 넣지 않는다
+    monkeypatch.setattr(site_mod, "route_ad_sponsor", lambda p: {"id": "ad"})
+    monkeypatch.setattr(site_mod, "route_ad_html", lambda *a, **k: "", raising=False)
+    site_mod.build()
+    assert line not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(site_mod, "route_ad_sponsor", lambda p: None)
 
     posts = site_mod.collect_posts()
     assert [it["key"] for it in nt.post_items(posts[0], data)] == ["rejuran"]

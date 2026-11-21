@@ -1593,10 +1593,11 @@ def build(out: Path | None = None) -> dict:
     if trend_editions:
         cfg = {**cfg, "_trends": True}
     for p in posts:
-        p["trend"] = trend_now
         own = links.get(p["draft"]["id"], {}).get("url")
         registry = (links.get(registry_key(p["draft"]["id"])) or links.get(REGISTRY_KEY) or {}).get("url")
         ad = route_ad_sponsor(p)
+        # NAVER API HUB 약관 7.3④ (API 결과화면과 함께 광고 노출 금지): 코스 광고 카드·제휴 링크가 있는 글엔 검색 관심도 문장을 안 넣는다
+        p["trend"] = None if ad or site_links.has_affiliate(p) else trend_now
         ad_url = (links.get(route_ad_key(p["draft"]["id"], ad["id"])) or {}).get("url") if ad else None
         prefix = clinic_link_key(p["draft"]["id"], "")
         clinic_urls = {k[len(prefix):]: v["url"] for k, v in links.items() if k.startswith(prefix)}
