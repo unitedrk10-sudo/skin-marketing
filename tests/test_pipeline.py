@@ -1343,6 +1343,13 @@ def test_glance_uses_only_cited_verified_facts():
     assert "Not cited anywhere." not in box and "A park." not in box                   # 인용 안 된 사실·여행 정보는 빼고
     assert "2 · aad.org" in box                                                      # 본문과 같은 출처 번호
     assert site_mod.glance_html({**draft, "blog": {"markdown": "A [F1]."}}, sources) == ""   # 3개 미만이면 상자 없음
+    # 아픈 정도·걸리는 시간이 먼저, 원리는 뒤 (2026-11-21)
+    facts += [{"id": "F6", "kind": "pain", "text": "Numbing cream is applied first.", "url": "https://www.aad.org/b"},
+              {"id": "F7", "kind": "duration", "text": "A session takes about 20 minutes.", "url": "https://www.aad.org/b"}]
+    draft = {"facts": facts, "blog": {"markdown": "A [F1]. B [F2]. C [F3]. E [F6]. F [F7]."}}
+    _, sources = site_mod._numbered_sources(draft["blog"]["markdown"], facts)
+    box = site_mod.glance_html(draft, sources)
+    assert box.index("What it feels like") < box.index("How long it takes") < box.index("Typical course") < box.index("What it is")
     assert site_mod.source_type("https://www.ncbi.nlm.nih.gov/pmc/x") == "Peer-reviewed"
     assert site_mod.source_type("https://www.fda.gov/x") == "Government" and site_mod.source_type("https://blog.example") == ""
 
