@@ -36,7 +36,7 @@ CLICKS_FOR_FULL_WEIGHT = 100
 CLICK_VALUE = 20               # 클릭 1 = 조회 20 (병원 찾기·병원 도착은 조회보다 강한 신호)
 COVERAGE_PENALTY = 0.15        # 최근 8주 글 1개당 점수 감소율
 OTHER_PRIOR = 2
-TREND_BOOST = 0.4              # 관광지: 트렌드 스캔 100점 = +0.4 (pipeline.trends)
+TREND_BOOST = 0.4              # 관광지: 트렌드 스캔 100점 = +0.4 (pipeline.trends) / 시술: 네이버 검색 관심도 1위(100) = +0.4 (2026-11-21)
 SEASON_BOOST = 0.15            # 관광지: 이번·다음 달이 시즌이면 +0.15
 EMERGING_PRIOR = 0.6           # 목록에 없는 신규 트렌드 장소의 기본값 (관심도 3/5 상당)
 CF_GRAPHQL = "https://api.cloudflare.com/client/v4/graphql"
@@ -113,6 +113,18 @@ def posts_by_catalog(catalog: str = "procedures") -> tuple[dict[str, list[str]],
     return paths, recent
 
 
+def search_interest(today: date) -> dict[str, dict]:
+    """시술 키 → 네이버 검색 관심도 (pipeline.naver_trends 최신 달, 2개월 넘게 묵었으면 없음). 한 시술에 항목이 둘이면 높은 순위."""
+    from pipeline import naver_trends
+    data = naver_trends.current([e for e in [naver_trends.latest()] if e], today)
+    out: dict[str, dict] = {}
+    for it in (data or {}).get("items", []):
+        if it.get("procedure") and it["procedure"] not in out:
+            out[it["procedure"]] = {"trend": round(it["index"]), "rank": it["rank"],
+                                     "why": f"#{it['rank']} in Korean NAVER searches ({naver_trends.month_label(data['month'])})"}
+    return out
+
+
 def scores(today: date | None = None, catalog_name: str = "procedures", views: dict[str, int] | None = None) -> dict[str, dict]:
     end = (today or date.today()) - timedelta(days=1)
     start = end - timedelta(days=WINDOW_DAYS - 1)
@@ -139,6 +151,8 @@ def scores(today: date | None = None, catalog_name: str = "procedures", views: d
     # 관광지는 유행·계절을 탄다: 최근 트렌드 스캔(21일 이내)과 계절 가산점
     from pipeline import trends
     scan = trends.place_trends(trends.latest(today)) if catalog_name == "attractions" else {}  # 관광지 + 근처 맛집·카페 트렌드
+    if catalog_name == "procedures":  # 시술은 한국 검색 관심도 (2026-11-21)
+        scan = search_interest(today or date.today())
 
     out = {}
     for pid, prior in priors.items():
@@ -150,7 +164,8 @@ def scores(today: date | None = None, catalog_name: str = "procedures", views: d
         base = (1 - w) * prior + w * data + TREND_BOOST * trend.get("trend", 0) / 100 + (SEASON_BOOST if season else 0)
         score = base / (1 + COVERAGE_PENALTY * recent.get(pid, 0))
         out[pid] = {**raw[pid], "prior": prior, "recent_posts": recent.get(pid, 0), "data_weight": round(w, 2),
-                    "trend": trend.get("trend", 0), "trend_why": trend.get("why", ""), "season": season,
+                    "trend": trend.get("trend", 0), "trend_why": trend.get("why", ""), "search_rank": trend.get("rank"),
+                    "season": season,
                     "score": round(score, 3), "name": (catalog.get(pid) or {}).get("name", "Other")}
     return out
 
@@ -159,7 +174,9 @@ def reason(s: dict) -> str:
     parts = [f"관심도 {round(s['prior'] * 5)}/5"]
     if s["data_weight"]:
         parts.append(f"조회 {s['views']}·클릭 {s['clicks']} (글 {s['posts']}개, 데이터 {round(s['data_weight'] * 100)}%)")
-    if s.get("trend"):
+    if s.get("search_rank"):
+        parts.append(f"🔎 한국 검색 {s['search_rank']}위")
+    elif s.get("trend"):
         parts.append(f"🔥 트렌드 {s['trend']}")
     if s.get("season"):
         parts.append("🍂 시즌")

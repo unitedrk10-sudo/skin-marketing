@@ -34,6 +34,7 @@ from pipeline.common import (
 log = get_logger("01_topics")
 RECENT_LIMIT = 60
 WAVE_BONUS = {1: 0.3, 2: 0.1}   # seed 의 wave(시의성·기초 주제)는 가산점으로만 — 순서는 수요 점수가 정한다
+PIN_BONUS = 10                  # seed 의 week: <주차> = 운영자가 그 주 후보로 지정 (2026-11-21) — 유형 쿼터 안에서 맨 앞
 MAX_PER_FOCUS = 2               # 한 주에 같은 시술·관광지 주제는 최대 2개 (다양성)
 # 한 원출처가 질문 전체에 이미 답하는 주제는 뒤로 (2026-11-20 — AI 답변은 그런 질문에 원출처를 직접 인용하고 우리 글을 건너뛴다)
 ANSWERED_PENALTY = 0.3
@@ -135,15 +136,20 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
         return None
     candidates = []
     for s in fresh:
-        topic = {k: v for k, v in s.items() if k not in ("id", "wave")}
+        topic = {k: v for k, v in s.items() if k not in ("id", "wave", "week")}
         topic["sources"] = [x if isinstance(x, dict) else {"url": x, "title": ""} for x in s.get("sources", [])]
         topic["seed_id"] = s["id"]
         candidates.append(topic)
     candidates = validate(candidates, axes)  # 다루지 않는 축은 여기서 빠진다
     tables = tables or demand.all_scores()
     wave = {s["id"]: s.get("wave", 9) for s in fresh}  # 필터 뒤에도 주제에 맞게 붙도록 id 로 찾는다
-    bonus = {i: WAVE_BONUS.get(wave[t["seed_id"]], 0) for i, t in enumerate(candidates)}
+    pinned = {s["id"] for s in fresh if str(s.get("week", "")) == week}
+    bonus = {i: WAVE_BONUS.get(wave[t["seed_id"]], 0) + (PIN_BONUS if t["seed_id"] in pinned else 0)
+             for i, t in enumerate(candidates)}
     ranked = annotate(candidates, tables, bonus)
+    for t in ranked:
+        if t["seed_id"] in pinned:
+            t["demand"]["reason"] += " · 📌 운영자 지정"
     return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [],
             "topics": pick(ranked, count)}
 

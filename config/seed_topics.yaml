@@ -2,6 +2,7 @@
 #   python -m pipeline.01_topics --from-seed 6     # 아직 안 쓴 주제 중 wave 순으로 6개 → 텔레그램 주제 선택
 # 규칙: 병원·의사명 없음, 최상급 표현 없음 (기획서 7장). 가격은 범위만. 사실은 02_draft 가 출처와 함께 다시 수집한다.
 # wave: 1 = 첫 2주 (검색 수요 확실·시의성), 2 = 3~4주, 3 = 이후
+# week: 2026-W49 처럼 주차를 적으면 그 주 후보로 지정 (운영자 요청, 유형 쿼터 안에서 맨 앞 — pipeline.01_topics PIN_BONUS)
 # 조사 근거 (why_now): 2026 외국인 피부과 수요·트렌드 기사, VAT 환급 종료(2026-01-01), K-ETA 면제 연장(~2026-12-31)
 
 topics:
@@ -300,14 +301,26 @@ topics:
     keywords: [korean dermatologist certification, check doctor license korea, dermatology specialist korea]
     hook: "Not every 'skin clinic' doctor in Korea is a dermatologist."
     has_price: false
+  # 2026-11-21: 네이버 검색 관심도 1·2위(보톡스·필러)인데 설명 글이 없어 wave 1 로 당김 — 제품명(브랜드) 비교는 빼고 독자가 먼저 묻는 순서로
   - id: botox-in-korea
-    wave: 3
+    wave: 1
+    week: 2026-W49   # 운영자 지정: 11/26 목요일 주제 후보 (11/30 주 게시용)
     axis: procedure
-    title: "Botox in Korea for first-timers: units, brands and aftercare"
-    angle: "Common botulinum toxin products used in Korea, what units mean, how long results last, and aftercare during travel."
-    why_now: "Frequently bundled into trips; confusion about local brands and dosing."
-    keywords: [botox korea, korean botox brands, botox units korea]
-    hook: "Different botox brands in Korea — does it matter?"
+    title: "Botox in Korea for first-timers: how much it hurts, how long it takes, the days after"
+    angle: "Botulinum toxin injections as first-timers ask about them: how much the injections hurt and whether numbing is used, how long the visit takes, what is common in the first days (small bumps, redness, bruising) and when the effect usually shows and how long it lasts per sources, what 'units' mean, risks to ask about, and aftercare during a trip. No product or brand comparisons."
+    why_now: "Most-searched skin treatment in Korea (NAVER DataLab, Oct 2026) and frequently bundled into trips; we have no explainer yet."
+    keywords: [botox korea, botox pain, how long does botox take, botox first days, botox units korea]
+    hook: "First Botox in Korea — what the appointment actually feels like."
+    has_price: false
+  - id: fillers-in-korea
+    wave: 1
+    week: 2026-W49
+    axis: procedure
+    title: "Dermal fillers in Korea: how much it hurts, how long it takes, the days after"
+    angle: "Hyaluronic acid fillers as first-timers ask about them: how much injections hurt and how they are numbed (numbing cream, lidocaine in the product), how long the visit takes, swelling and bruising day by day per sources, how long fillers usually last, that hyaluronic acid filler can be dissolved, the rare serious risks to ask the doctor about (blocked blood vessel), and flying or sauna after fillers on a trip. No product or brand comparisons, no before/after."
+    why_now: "Second most-searched skin treatment in Korea and the biggest riser (+37%, NAVER DataLab, Oct 2026); we have no filler explainer."
+    keywords: [fillers korea, filler pain, filler swelling how long, how long do fillers last, flying after fillers]
+    hook: "Fillers in Korea — what the first week usually looks like."
     has_price: false
   - id: public-review-themes
     wave: 3
