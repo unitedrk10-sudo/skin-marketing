@@ -345,9 +345,11 @@ def render(cfg: dict, data: dict, posts: list[dict], pages: dict[str, list[dict]
 
     def guides(item: dict) -> str:
         links = [f'<a href="/{p["slug"]}/">{esc(p["draft"]["blog"].get("title", ""))}</a>' for p in item_posts(item, posts)[:GUIDE_LINKS]]
+        # 제목이 여러 줄로 감겨도 글 경계가 보이게 2편 이상이면 번호 (2026-11-21), 전체 목록 링크는 번호 밖
+        out = ("<ol class=\"rg\">" + "".join(f"<li>{a}</li>" for a in links) + "</ol>") if len(links) > 1 else "".join(links)
         if item["procedure"] in pages:
-            links.append(f'<a href="/treatments/{site_links.treatment_slug(item["procedure"])}/">All {esc(site_links.short_name(item["procedure"]))} guides</a>')
-        return "<br>".join(links) or '<span class="meta">No guide yet</span>'
+            out += f'<a class="all" href="/treatments/{site_links.treatment_slug(item["procedure"])}/">All {esc(site_links.short_name(item["procedure"]))} guides →</a>'
+        return out or '<span class="meta">No guide yet</span>'
 
     rows = "".join(
         f'<tr><td class="num">{it["rank"]}</td><td><strong>{esc(it["name"])}</strong><br><span class="meta" lang="ko">{esc(", ".join(it["search"]))}</span></td>'
