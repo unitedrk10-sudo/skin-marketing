@@ -345,14 +345,16 @@ def render(cfg: dict, data: dict, posts: list[dict], pages: dict[str, list[dict]
 
     def guides(item: dict) -> str:
         links = [f'<a href="/{p["slug"]}/">{esc(p["draft"]["blog"].get("title", ""))}</a>' for p in item_posts(item, posts)[:GUIDE_LINKS]]
+        # 제목이 여러 줄로 감겨도 글 경계가 보이게 2편 이상이면 번호 (2026-11-21), 전체 목록 링크는 번호 밖
+        out = ("<ol class=\"rg\">" + "".join(f"<li>{a}</li>" for a in links) + "</ol>") if len(links) > 1 else "".join(links)
         if item["procedure"] in pages:
-            links.append(f'<a href="/treatments/{site_links.treatment_slug(item["procedure"])}/">All {esc(site_links.short_name(item["procedure"]))} guides</a>')
-        return "<br>".join(links) or '<span class="meta">No guide yet</span>'
+            out += f'<a class="all" href="/treatments/{site_links.treatment_slug(item["procedure"])}/">All {esc(site_links.short_name(item["procedure"]))} guides →</a>'
+        return out or '<span class="meta">No guide yet</span>'
 
     rows = "".join(
         f'<tr><td class="num">{it["rank"]}</td><td><strong>{esc(it["name"])}</strong><br><span class="meta" lang="ko">{esc(", ".join(it["search"]))}</span></td>'
-        f'<td class="num">{index_text(it["index"])}</td><td class="num">{rank_move(it)} <span class="meta">{pct_text(it.get("change"))}</span></td>'
-        f'<td>{sparkline(it["values"])}</td><td class="tg">{guides(it)}</td></tr>' for it in data["items"])
+        f'<td class="num"><span class="ml">Index </span>{index_text(it["index"])}</td><td class="num"><span class="ml">vs {esc(prev)}: </span>{rank_move(it)} <span class="meta">{pct_text(it.get("change"))}</span></td>'
+        f'<td>{sparkline(it["values"])}</td><td class="tg"><span class="ml">Related: </span>{guides(it)}</td></tr>' for it in data["items"])
     top3 = "; ".join(f"{it['name']} at {index_text(it['index'])}" for it in data["items"][:3])
     up, down = movers(data)
     moves = [f"<li>Most searched in {esc(label)}: {esc(top3)}.</li>"]
@@ -365,12 +367,12 @@ def render(cfg: dict, data: dict, posts: list[dict], pages: dict[str, list[dict]
         f'<li><a href="{edition_path(e, newest)}">{esc(month_label(e["month"]))}</a></li>' for e in older) + "</ul>") if older else ""
     title = f"Korea Skin Treatment Search Trends — {label}"
     summary = (f"Which skin treatments people in Korea searched for most in {label}: a monthly ranking of {n} treatments by "
-               f"search interest on NAVER, with links to our sourced guides.")
+               f"search interest on NAVER, with links to related guides.")
     body = f"""<div class="page trends"><p class="kicker">Monthly data · {esc(label)}</p><h1>What Korea is searching for: skin treatments</h1>
 <p>{esc(summary)} The leading treatment is set to 100 and the rest are shown relative to it.</p>
 <ul>{"".join(moves)}</ul>
 <div class="tscroll"><table><thead><tr><th>#</th><th>Treatment <span class="meta">(Korean search terms)</span></th><th>Index</th>
-<th>vs {esc(prev)}</th><th>12 months</th><th>Our guides</th></tr></thead><tbody>{rows}</tbody></table></div>
+<th>vs {esc(prev)}</th><th>12 months</th><th>Related guides</th></tr></thead><tbody>{rows}</tbody></table></div>
 <p class="meta">Index: search interest in {esc(label)}, most-searched treatment = 100. "vs {esc(prev)}": change in rank, then change in
 that treatment's own search interest. The 12-month line shows each treatment's own shape and is not comparable between rows.</p>
 <h2>How to read this</h2>
