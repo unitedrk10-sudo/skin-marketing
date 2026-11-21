@@ -150,6 +150,7 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
     for t in ranked:
         if t["seed_id"] in pinned:
             t["demand"]["reason"] += " · 📌 운영자 지정"
+            t["demand"]["pinned"] = True
     return {"week": week, "created_at": now_iso(), "model": "seed", "grounding_urls": [],
             "topics": pick(ranked, count)}
 
@@ -159,7 +160,8 @@ def telegram_message(week: str, topics: list[dict]) -> str:
     for i, t in enumerate(topics, 1):
         price = (" 💲가격" if t["has_price"] else "") + (" 📚원출처 있음" if t.get("answered_elsewhere") else "")
         d = t.get("demand")
-        score = f"\n   └ 📈 수요 {d['score']:.2f} ({d['reason']})" if d else ""
+        shown = d["score"] - PIN_BONUS if d and d.get("pinned") else (d or {}).get("score", 0)  # 지정 가산점은 순서용 — 수요 표시에선 뺀다
+        score = f"\n   └ 📈 수요 {shown:.2f} ({d['reason']})" if d else ""
         lines.append(f"{i}. {t['title']} ({t['axis']}){price}\n   └ {t['angle']}\n   └ 근거: {t.get('why_now', '')}{score}")
     return "\n".join(lines)
 

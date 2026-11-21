@@ -1792,6 +1792,8 @@ def test_seed_pinned_week_goes_first(env):
     ids = [t["seed_id"] for t in week["topics"]]
     assert set(pinned) <= set(ids) and set(ids[:len(pinned)]) == set(pinned)
     assert all("week" not in t and "📌 운영자 지정" in t["demand"]["reason"] for t in week["topics"] if t["seed_id"] in pinned)
+    first = week["topics"][0]["demand"]["score"] - topics_mod.PIN_BONUS
+    assert f"수요 {first:.2f}" in topics_mod.telegram_message("2026-W49", week["topics"])   # 지정 가산점은 표시에서 뺀다
     other = topics_mod.from_seed("2026-W50", 6)["topics"]
     assert not any("📌" in t["demand"]["reason"] for t in other)
 
