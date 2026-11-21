@@ -9,8 +9,8 @@
 anchor: botox
 months: 13          # 지난달 포함 13개월 (12개월 추세 + 1년 전 같은 달)
 items:
-  botox:        {name: "Botulinum toxin (Botox)", search: [보톡스], match: [botox, botulinum], procedure: botox}
-  filler:       {name: "Dermal fillers", search: [필러, 필러시술], match: [filler], procedure: filler}
+  botox:        {name: "Botulinum toxin (Botox)", search: [보톡스, 사각턱보톡스, 이마보톡스, 주름보톡스, 스킨보톡스, 턱보톡스], match: [botox, botulinum], procedure: botox}
+  filler:       {name: "Dermal fillers", search: [필러, 필러시술, 입술필러, 애교필러, 팔자필러, 코필러, 이마필러], match: [filler], procedure: filler}
   rejuran:      {name: "Rejuran", search: [리쥬란, 리쥬란힐러], match: [rejuran], procedure: rejuran}
   juvelook:     {name: "Juvelook", search: [쥬베룩, 쥬베룩볼륨], match: [juvelook], procedure: juvelook}
   re2o:         {name: "Re2O (Lituo)", search: [리투오], match: [re2o, lituo], procedure: re2o}

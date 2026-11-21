@@ -1238,7 +1238,8 @@ def test_naver_trends_rank_page_and_post_line(site_env, tmp_path, monkeypatch):
     review_mod.review(common.content_dir("drafts") / approved, fetch=ok_fetch)
     _approve(site_env, approved)
     dist = tmp_path / "dist"
-    site_mod.build()                                            # 기본: trends_page 꺼짐 → 아무것도 안 나감
+    monkeypatch.setattr(site_mod, "config", lambda: {**common.load_yaml("site.yaml"), "trends_page": False})
+    site_mod.build()                                            # trends_page 꺼짐 → 아무것도 안 나감
     assert "Search interest in Korea" not in (dist / "rejuran" / "index.html").read_text(encoding="utf-8")
     assert not (dist / "trends").exists() and "/trends/" not in (dist / "sitemap.xml").read_text(encoding="utf-8")
 
