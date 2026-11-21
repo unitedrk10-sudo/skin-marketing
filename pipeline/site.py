@@ -896,8 +896,10 @@ def source_type(url: str) -> str:
     return ""
 
 
-GLANCE_KINDS = [("mechanism", "What it is"), ("sessions", "Typical course"), ("downtime", "Recovery & aftercare"),
-                ("risk", "Risk to ask about"), ("suitability", "Who it's for"), ("price", "Price range")]
+# 독자가 먼저 묻는 순서 (2026-11-21): 아픈 정도 → 걸리는 시간 → 회복 → 횟수 → 위험, 원리는 뒤 (상자는 5줄까지)
+GLANCE_KINDS = [("pain", "What it feels like"), ("duration", "How long it takes"), ("downtime", "Recovery & aftercare"),
+                ("sessions", "Typical course"), ("risk", "Risk to ask about"), ("mechanism", "What it is"),
+                ("suitability", "Who it's for"), ("price", "Price range")]
 
 
 def glance_html(draft: dict, sources: list[dict]) -> str:
