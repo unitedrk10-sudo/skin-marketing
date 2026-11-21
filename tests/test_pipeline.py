@@ -1252,6 +1252,7 @@ def test_naver_trends_rank_page_and_post_line(site_env, tmp_path, monkeypatch):
     page = (dist / "trends" / "index.html").read_text(encoding="utf-8")
     assert nt.month_label(months[-1]) in page and '<a href="/rejuran/">Rejuran explained</a>' in page     # 순위 → 우리 글
     assert "Search interest is not treatment volume" in page and "NAVER DataLab" in page and "리쥬란" in page
+    assert "Related guides" in page and "Our guides" not in page  # 사후관리 글도 붙으니 "관련 글" (2026-11-21)
     assert ".csv" not in page and f'href="/trends/{months[-2]}/"' in page                # 원자료 내려받기 없음, 지난 달 링크
     assert (dist / "trends" / months[-2] / "index.html").exists()
     assert "https://skinbound.example/trends/" in (dist / "sitemap.xml").read_text(encoding="utf-8")
