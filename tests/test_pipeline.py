@@ -1733,6 +1733,21 @@ def test_trend_scan_keeps_only_sourced_current_items(env):
     assert trends_mod.ensure_fresh()["week"] == "2026-W40" and len(env.calls) == 1   # 최근 스캔 있으면 다시 안 함
 
 
+def test_korean_search_interest_raises_procedure_scores(env):
+    # 네이버 검색 관심도 순위가 시술 주제 점수에 (2026-11-21) — 1위 = +0.4, 묵은 달은 무시
+    from pipeline import naver_trends as nt
+    today = date(2026, 11, 21)
+    before = demand_mod.scores(today, "procedures")
+    items = [{"key": "botox", "procedure": "botox", "index": 100, "rank": 1},
+             {"key": "filler", "procedure": "filler", "index": 73, "rank": 2}]
+    nt.store_dir().mkdir(parents=True, exist_ok=True)
+    (nt.store_dir() / "2026-10.json").write_text(json.dumps({"month": "2026-10", "items": items, "fetched_at": "2026-11-21"}), encoding="utf-8")
+    after = demand_mod.scores(today, "procedures")
+    assert round(after["filler"]["score"] - before["filler"]["score"], 3) == round(0.4 * 0.73, 3) and after["filler"]["search_rank"] == 2
+    assert "🔎 한국 검색 1위" in demand_mod.reason(after["botox"])
+    assert demand_mod.scores(date(2027, 3, 1), "procedures")["botox"]["trend"] == 0   # 묵은 달
+
+
 def test_trend_and_season_raise_attraction_scores(env):
     today = date(2026, 9, 28)
     before = demand_mod.scores(today, "attractions")
@@ -1767,6 +1782,20 @@ def test_seed_wave_bonus_follows_the_topic_after_filtering(env):
         base = demand_mod.topic_score(t, tables)[0]
         expected = base + topics_mod.WAVE_BONUS.get(seeds[t["seed_id"]].get("wave", 9), 0)
         assert t["demand"]["score"] == round(expected, 3), t["seed_id"]
+
+
+def test_seed_pinned_week_goes_first(env):
+    # 운영자가 week 를 적은 seed 는 그 주에만 유형 쿼터 맨 앞 (2026-11-21: 보톡스·필러 → 2026-W49)
+    pinned = [s["id"] for s in common.load_yaml("seed_topics.yaml")["topics"] if s.get("week") == "2026-W49"]
+    assert pinned
+    week = topics_mod.from_seed("2026-W49", 6)
+    ids = [t["seed_id"] for t in week["topics"]]
+    assert set(pinned) <= set(ids) and set(ids[:len(pinned)]) == set(pinned)
+    assert all("week" not in t and "📌 운영자 지정" in t["demand"]["reason"] for t in week["topics"] if t["seed_id"] in pinned)
+    first = week["topics"][0]["demand"]["score"] - topics_mod.PIN_BONUS
+    assert f"수요 {first:.2f}" in topics_mod.telegram_message("2026-W49", week["topics"])   # 지정 가산점은 표시에서 뺀다
+    other = topics_mod.from_seed("2026-W50", 6)["topics"]
+    assert not any("📌" in t["demand"]["reason"] for t in other)
 
 
 def test_old_trend_scan_is_ignored(env):
