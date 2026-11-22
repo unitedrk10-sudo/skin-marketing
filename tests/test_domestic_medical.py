@@ -32,3 +32,19 @@ def test_quarterly_rows_sum_dongs_into_gu(monkeypatch):
     gu = dm.quarterly_rows({"rows": rows}, "gu")
     assert len(gu) == 1 and gu[0]["name"] == "강남구" and gu[0]["amount_eok"] == 4.0
     assert gu[0]["female_share"] == 0.65
+
+
+def test_kosis_rows_keep_capital_area_health_only():
+    raw = [{"C1_NM": "서울특별시", "C2_NM": "보건업 및 사회복지 서비스업", "ITM_NM": "원지수", "PRD_DE": "202501", "DT": "120.5", "UNIT_NM": "2020=100"},
+           {"C1_NM": "부산광역시", "C2_NM": "보건업 및 사회복지 서비스업", "ITM_NM": "원지수", "PRD_DE": "202501", "DT": "110"},
+           {"C1_NM": "경기도", "C2_NM": "도매 및 소매업", "ITM_NM": "원지수", "PRD_DE": "202501", "DT": "99"},
+           {"C1_NM": "인천광역시", "C2_NM": "보건업 및 사회복지 서비스업", "ITM_NM": "원지수", "PRD_DE": "202501", "DT": "-"}]
+    rows = dm.kosis_rows(raw)
+    assert [(r["sido"], r["value"]) for r in rows] == [("서울특별시", 120.5)]
+
+
+def test_fetch_kosis_needs_key(monkeypatch):
+    import pytest
+    monkeypatch.delenv("KOSIS_API_KEY", raising=False)
+    with pytest.raises(dm.FetchError):
+        dm.fetch_kosis()

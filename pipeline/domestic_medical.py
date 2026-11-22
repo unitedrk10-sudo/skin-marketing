@@ -6,8 +6,12 @@
   1) 서울: 서울시 상권분석서비스(추정매출-행정동, 열린데이터광장 OA-22175) — 가맹점 소재 행정동 × 서비스 업종 × 분기.
      의료 관련 업종: 일반의원·치과의원·한의원·의약품·의료기기·피부관리실. "일반의원"은 진료과목 구분이 없다
      (내과·소아과 등이 모두 섞인다). 연도별 zip 파일만 받는다(로그인·키 없음).
+  2) 수도권 시도: 국가데이터처 KOSIS "시도별 서비스업생산지수(2020=100.0)"(orgId 101, tblId DT_1KC2023) 중 보건업 관련
+     산업 — 시도 × 분기 지수. OpenAPI 키가 필요하다(환경변수 `KOSIS_API_KEY`, 키는 주소 매개변수로만 받는 API 라
+     프록시 헤더 주입을 쓸 수 없다). 환경 네트워크에 kosis.kr 허용 필요.
 
     python -m pipeline.domestic_medical fetch-seoul [--years 2021-2025]
+    python -m pipeline.domestic_medical fetch-kosis [--start 2019]   # KOSIS_API_KEY 필요
     python -m pipeline.domestic_medical export      # reports/domestic_medical/ 에 CSV
     python -m pipeline.domestic_medical show
 """
@@ -124,6 +128,62 @@ def fetch_seoul(years: list[int] | None = None) -> dict:
     return {"fetched_at": now_iso(), "source": SEOUL_PAGE, "years": years, "rows": rows}
 
 
+# ---- KOSIS 시도별 서비스업생산지수 ----
+
+KOSIS_URL = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
+KOSIS_TABLE = {"orgId": "101", "tblId": "DT_1KC2023"}
+KOSIS_SIDO = ("전국", "서울", "경기", "인천")
+KOSIS_INDUSTRY = "보건"   # 산업 이름에 이 말이 들어간 항목만 (예: 보건업 및 사회복지 서비스업)
+
+
+def kosis_file():
+    return content_dir() / "domestic_medical" / "kosis_service_index.json"
+
+
+def kosis_rows(raw: list[dict]) -> list[dict]:
+    """KOSIS 응답에서 수도권·전국 × 보건 관련 산업만. 시도·산업 칸 위치(C1/C2)는 표마다 달라 이름으로 찾는다."""
+    out = []
+    for r in raw:
+        names = [r.get(f"C{i}_NM", "") for i in range(1, 5)]
+        sido = next((n for n in names if any(n.startswith(x) for x in KOSIS_SIDO)), None)
+        industry = next((n for n in names if KOSIS_INDUSTRY in n), None)
+        if not sido or not industry:
+            continue
+        try:
+            value = float(r.get("DT"))
+        except (TypeError, ValueError):
+            continue
+        out.append({"period": r.get("PRD_DE"), "sido": sido, "industry": industry, "item": r.get("ITM_NM"),
+                    "value": value, "unit": r.get("UNIT_NM")})
+    return out
+
+
+def fetch_kosis(start: str = "2019") -> dict:
+    import os
+    key = os.environ.get("KOSIS_API_KEY")
+    if not key:
+        raise FetchError("KOSIS_API_KEY 가 없음 — KOSIS 공유서비스(OpenAPI)에서 무료로 발급받아 환경변수로 넣는다")
+    params = {"method": "getList", "apiKey": key, "itmId": "ALL", "objL1": "ALL", "objL2": "ALL", "objL3": "",
+              "format": "json", "jsonVD": "Y", "prdSe": "Q", "startPrdDe": f"{start}01", "endPrdDe": "209904",
+              **KOSIS_TABLE}
+    r = requests.get(KOSIS_URL, params=params, timeout=120)
+    r.raise_for_status()
+    data = r.json()
+    if isinstance(data, dict):  # 오류는 {"err": "...", "errMsg": "..."} 로 온다 (키 값은 로그에 남기지 않는다)
+        raise FetchError(f"KOSIS 오류: {data.get('err')} {data.get('errMsg')}")
+    rows = kosis_rows(data)
+    if not rows:
+        raise FetchError("KOSIS 응답에서 수도권 보건 관련 산업 행을 찾지 못함 — 표 구조를 확인")
+    return {"fetched_at": now_iso(), "table": KOSIS_TABLE, "rows": rows}
+
+
+def cmd_fetch_kosis(args) -> int:
+    d = fetch_kosis(args.start)
+    save_json(kosis_file(), d)
+    log.info("저장: %s (%d행, %s)", kosis_file(), len(d["rows"]), sorted({r["industry"] for r in d["rows"]}))
+    return 0
+
+
 def gu_names() -> dict[str, str]:
     """행정동 코드 앞 5자리 → 구 이름 (foreign_medical 이 받아 둔 행정동 경계에서)."""
     p = content_dir() / "foreign_medical" / "hangjeongdong.geojson"
@@ -176,6 +236,8 @@ def cmd_export(_args) -> int:
     d = load_json(data_file())
     _write_csv(export_dir() / "seoul_gu_quarterly.csv", quarterly_rows(d, "gu"))
     _write_csv(export_dir() / "seoul_dong_quarterly.csv", quarterly_rows(d, "dong"))
+    if kosis_file().exists():
+        _write_csv(export_dir() / "kosis_health_index.csv", load_json(kosis_file())["rows"])
     log.info("내보냄: %s", export_dir())
     return 0
 
@@ -196,6 +258,9 @@ def main() -> int:
     f = sub.add_parser("fetch-seoul")
     f.add_argument("--years", default=None, help="예: 2021-2025 (기본: 올라온 연도 전부)")
     f.set_defaults(fn=cmd_fetch_seoul)
+    k = sub.add_parser("fetch-kosis", help="KOSIS 시도별 서비스업생산지수 중 보건 관련 (KOSIS_API_KEY 필요)")
+    k.add_argument("--start", default="2019")
+    k.set_defaults(fn=cmd_fetch_kosis)
     sub.add_parser("export").set_defaults(fn=cmd_export)
     sub.add_parser("show").set_defaults(fn=cmd_show)
     args = p.parse_args()
