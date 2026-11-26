@@ -1688,9 +1688,11 @@ def test_travel_topics_compete_on_attraction_demand(env):
 
 
 def test_weekly_topics_follow_axis_quota(env):
-    week = topics_mod.from_seed("2026-W40", 6)
+    week = topics_mod.from_seed("2026-W40", 8)
     axes = Counter(t["axis"] for t in week["topics"])
-    assert len(week["topics"]) == 6 and axes["procedure_travel"] == 2 and axes["skincare"] == 2  # 2026-11-10: 유형마다 2개 후보
+    assert len(week["topics"]) == 8 and axes["procedure_travel"] == 2 and axes["skincare"] == 2  # 2026-11-10: 유형마다 2개 후보
+    assert axes["how_to"] == 2                                                   # 2026-11-26: 화요일 "Before you book" 칸
+    assert topics_mod.schedule_hint().startswith("📅 다음 주 블로그 월·화·수·금 4편 — 유형마다 1개씩 4개")
     scores = [t["demand"]["score"] for t in week["topics"]]
     assert scores == sorted(scores, reverse=True)  # 메시지는 수요 점수 순
 
@@ -1700,7 +1702,11 @@ def test_quota_fills_from_other_groups_when_short():
               for i in range(6)] + [{"axis": "procedure_travel", "title": "t", "demand": {"score": 0.1, "focus": "x:t"}}]
     picked = topics_mod.pick(topics, 6)
     assert [t["title"] for t in picked] == ["p0", "p1", "p2", "p3", "p4", "t"]  # 여행 1개뿐 → 시술로 채움
-    assert topics_mod.quota(12) == [("info", topics_mod.quota(6)[0][1], 4), ("procedure_travel", ["procedure_travel"], 4), ("skincare", ["skincare"], 4)]
+    info = topics_mod.quota(8)[0][1]
+    assert topics_mod.quota(12) == [("info", info, 3), ("before_you_book", ["how_to"], 3), ("procedure_travel", ["procedure_travel"], 3),
+                                    ("skincare", ["skincare"], 3)]
+    assert [k for *_, k in topics_mod.quota(3)] == [1, 1, 1, 0]                   # 모자라면 앞 그룹부터 — 시술 정보가 0이 되지 않게
+    assert [k for *_, k in topics_mod.quota(6)] == [2, 2, 1, 1]
 
 
 # ---- 관광지 트렌드 ----
@@ -1785,16 +1791,16 @@ def test_seed_wave_bonus_follows_the_topic_after_filtering(env):
 
 
 def test_seed_pinned_week_goes_first(env):
-    # 운영자가 week 를 적은 seed 는 그 주에만 유형 쿼터 맨 앞 (2026-11-21: 보톡스·필러 → 2026-W49)
-    pinned = [s["id"] for s in common.load_yaml("seed_topics.yaml")["topics"] if s.get("week") == "2026-W49"]
-    assert pinned
-    week = topics_mod.from_seed("2026-W49", 6)
+    # 운영자가 week 를 적은 seed 는 그 주에만 유형 쿼터 맨 앞 (2026-11-26: 보톡스 + 간판·전문의 → 2026-W50)
+    pinned = [s["id"] for s in common.load_yaml("seed_topics.yaml")["topics"] if s.get("week") == "2026-W50"]
+    assert set(pinned) == {"botox-in-korea", "checking-a-doctor"}
+    week = topics_mod.from_seed("2026-W50", 8)
     ids = [t["seed_id"] for t in week["topics"]]
     assert set(pinned) <= set(ids) and set(ids[:len(pinned)]) == set(pinned)
     assert all("week" not in t and "📌 운영자 지정" in t["demand"]["reason"] for t in week["topics"] if t["seed_id"] in pinned)
     first = week["topics"][0]["demand"]["score"] - topics_mod.PIN_BONUS
-    assert f"수요 {first:.2f}" in topics_mod.telegram_message("2026-W49", week["topics"])   # 지정 가산점은 표시에서 뺀다
-    other = topics_mod.from_seed("2026-W50", 6)["topics"]
+    assert f"수요 {first:.2f}" in topics_mod.telegram_message("2026-W50", week["topics"])   # 지정 가산점은 표시에서 뺀다
+    other = topics_mod.from_seed("2026-W51", 8)["topics"]
     assert not any("📌" in t["demand"]["reason"] for t in other)
 
 
@@ -4720,20 +4726,24 @@ def test_affiliate_rules_and_first_posts_go_to_a_person(env, monkeypatch):
 
 
 def test_publish_slots_fix_one_type_per_weekday(env, monkeypatch):
-    assert common.load_yaml("site.yaml")["publish_schedule"]["slots"] == {"mon": "info", "wed": "procedure_travel", "fri": "skincare"}
-    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 2, 4], "hour": 7,
-                                                              "slots": {0: "info", 2: "procedure_travel", 4: "skincare"}})
+    assert common.load_yaml("site.yaml")["publish_schedule"]["slots"] == {"mon": "info", "tue": "before_you_book",
+                                                                          "wed": "procedure_travel", "fri": "skincare"}
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: {"days": [0, 1, 2, 4], "hour": 7,
+                                                              "slots": {0: "info", 1: "before_you_book", 2: "procedure_travel", 4: "skincare"}})
     monkeypatch.setattr(site_mod, "now_kst", lambda: datetime(2026, 11, 14, 11, 0, tzinfo=site_mod.KST))   # 토요일
     _skincare("2026-W47-03-sk", created="2026-11-13T00:00:00+00:00")
     _published("2026-W47-01-proc", live=False)
     path, draft = _skincare("2026-W47-02-trip", created="2026-11-13T01:00:00+00:00")
     common.save_json(path / "draft.json", {**draft, "content_type": "procedure_travel"})
     _skincare("2026-W47-04-sk2", created="2026-11-13T02:00:00+00:00")
+    path, draft = _skincare("2026-W47-05-byb", created="2026-11-13T03:00:00+00:00")
+    common.save_json(path / "draft.json", {**draft, "content_type": "how_to"})
     site_mod.collect_posts()
     sched = common.load_json(site_mod.schedule_file())
     assert {k: v["date"] for k, v in sched.items()} == {
         "2026-W47-01-proc": "2026-11-16", "2026-W47-02-trip": "2026-11-18",
-        "2026-W47-03-sk": "2026-11-20", "2026-W47-04-sk2": "2026-11-27"}                   # 화장품 둘째 편은 다음 주 금요일
+        "2026-W47-03-sk": "2026-11-20", "2026-W47-04-sk2": "2026-11-27",                   # 화장품 둘째 편은 다음 주 금요일
+        "2026-W47-05-byb": "2026-11-17"}                                                    # 이용 가이드는 화요일 (2026-11-26)
     assert site_mod.slot_group({"content_type": "sponsored", "sponsor": {"id": "g"}}) is None
 
 
@@ -4916,3 +4926,77 @@ def test_urls_in_a_revision_note_are_always_source_candidates(env, monkeypatch):
     assert [c["url"] for c in seen][:2] == ["https://global.oliveyoung.com/product/detail?prdtNo=GA240121573",
                                             "https://global.oliveyoung.com/product/detail?prdtNo=GA210610734"]
     assert seen[-1]["url"] == "https://www.fda.gov/x"                                          # 검색 결과는 그 뒤에
+
+
+# ---- 개편 2026-11-26: 법령 원문 출처 · seed 출처 · SNS 중단 날짜 ----
+
+def test_law_article_urls_read_through_the_law_api(monkeypatch):
+    law_api = importlib.import_module("pipeline.law_api")
+    calls = []
+
+    class FakeClient:
+        def search(self, name):
+            calls.append(("search", name))
+            return [law_api.LawSummary("의료법", "1", "M0", "20261112", "20261112"),
+                    law_api.LawSummary("의료법 시행규칙", "2", "M1", "20260612", "20260612")]
+
+        def document(self, mst, article):
+            calls.append(("document", mst, article))
+            return law_api.LawDocument("의료법 시행규칙", "2", "20260612", "20260612",
+                                       [law_api.Article(article, "의료기관의 명칭 표시", "제40조(의료기관의 명칭 표시) 4. 개설자가 전문의인 경우")])
+
+    monkeypatch.setattr(law_api, "LawApiClient", FakeClient)
+    url = "https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%9D%98%EB%A3%8C%EB%B2%95%EC%8B%9C%ED%96%89%EA%B7%9C%EC%B9%99/%EC%A0%9C40%EC%A1%B0"
+    assert web.law_article(url) == ("의료법시행규칙", "40")                        # 퍼센트 인코딩된 한글 주소도
+    assert web.law_article("https://www.law.go.kr/법령/의료법/제24조의2") == ("의료법", "24의2")
+    assert web.law_article("https://www.law.go.kr/LSW/main.html") is None
+    status, text = web.fetch_page(url)
+    assert status == 200 and text.startswith("의료법 시행규칙 (시행 20260612)\n제40조(")  # 띄어쓰기 빼고 법령명 맞춤
+    assert ("document", "M1", "40") in calls
+
+    class DownClient:
+        def __init__(self):
+            raise law_api.LawApiError("LAW_API_OC 없음")
+
+    monkeypatch.setattr(law_api, "LawApiClient", DownClient)
+    assert web.fetch_page(url) == (0, "")                                          # 조회 실패 → 출처에서 빠진다
+
+
+def test_seed_sources_go_first_and_short_law_pages_count(env):
+    law = "https://www.law.go.kr/법령/의료해외진출및외국인환자유치지원에관한법률/제8조"
+    seed = {"seed_id": "reading-a-quote", "sources": [{"url": law, "title": "Act Article 8"}, {"url": "not-a-url", "title": ""}]}
+    assert draft_mod.seed_sources(seed) == [{"url": law, "title": "Act Article 8"}]
+    assert draft_mod.seed_sources({"sources": [{"url": "https://news.example/a", "title": ""}]}) == []  # Gemini 주제의 근거 주소는 아님
+    pages = {law: (200, "의료 해외진출 및 외국인환자 유치 지원에 관한 법률 (시행 20260512)\n제8조(외국인환자의 권익 보호) " + "가" * 300),
+             "https://short.example/page": (200, "x" * 300)}
+    web.set_fetcher(lambda u: pages.get(u, (404, "")))
+    try:
+        got = draft_mod.fetch_sources([{"url": law, "title": "Act Article 8"}, {"url": "https://short.example/page", "title": ""}])
+    finally:
+        web.set_fetcher()
+    assert [s["url"] for s in got] == [law]                                        # 법령 조문은 500자 미만이어도, 웹 페이지는 아님
+
+
+def test_social_stops_after_until_date(env, monkeypatch):
+    monkeypatch.setattr(social_mod, "settings", lambda: {"until": "2026-11-30"})
+    assert social_mod.active(date(2026, 11, 30)) and not social_mod.active(date(2026, 12, 1))
+    monkeypatch.setattr(social_mod, "settings", lambda: {"until": ""})
+    assert social_mod.active(date(2027, 1, 1))
+    assert str(common.load_yaml("channels.yaml")["text_social"]["until"]) == "2026-11-30"   # 2026-11-26 운영자 결정
+
+
+def test_new_weekday_slot_starts_on_its_date(env, monkeypatch):
+    # 2026-11-26 화요일 칸 추가 — 시작일(12/8) 전 화요일은 게시일이 아니다: 빈 날 알림도, 배정도 없다
+    rule = {"days": [0, 1, 2, 4], "hour": 7, "slots": {1: "before_you_book"}, "starts": {1: "2026-12-08"}}
+    monkeypatch.setattr(site_mod, "publish_schedule", lambda: rule)
+    assert str(common.load_yaml("site.yaml")["publish_schedule"]["starts"]["tue"]) == "2026-12-08"
+    assert not site_mod.is_publish_day(rule, date(2026, 12, 1)) and site_mod.is_publish_day(rule, date(2026, 12, 8))
+    assert site_mod.is_publish_day(rule, date(2026, 11, 30))
+    monkeypatch.setattr(site_mod, "now_kst", lambda: datetime(2026, 11, 30, 18, 30, tzinfo=site_mod.KST))
+    assert "12/01" not in site_mod.publish_reminder(datetime(2026, 11, 30, 18, 30, tzinfo=site_mod.KST))
+    path, draft = _skincare("2026-W49-07-byb", created="2026-11-27T00:00:00+00:00")
+    common.save_json(path / "draft.json", {**draft, "content_type": "how_to"})
+    site_mod.collect_posts()
+    assert common.load_json(site_mod.schedule_file())["2026-W49-07-byb"]["date"] == "2026-12-08"   # 12/1 이 아니라 첫 화요일 칸
+    saturday = datetime(2026, 11, 28, 10, 30, tzinfo=site_mod.KST)
+    assert "화 ❌" not in site_mod.weekend_check(saturday, rule, {}, [])

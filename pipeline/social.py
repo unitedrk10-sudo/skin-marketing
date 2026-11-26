@@ -100,7 +100,15 @@ def settings() -> dict:
     return {"x": {"enabled": True, "mode": "intent", "max_chars": 280, **(cfg.get("x") or {})},
             "threads": {"auto_post": False, "mode": "api", "max_chars": 500, **(cfg.get("threads") or {})},
             "daily": {"hour": 9, "wait_until": 12, **(cfg.get("daily") or {})},
-            "ai_label": bool(cfg.get("ai_label", True))}
+            "ai_label": bool(cfg.get("ai_label", True)),
+            "until": str(cfg["until"]) if cfg.get("until") else ""}
+
+
+def active(today: date | None = None) -> bool:
+    """워커가 SNS 글을 만들고 보내는 기간 (channels.yaml text_social.until, 2026-11-26 — 11/30 공유 실험 종료로 중단).
+    텔레그램 명령(list·post·done)은 기간과 상관없이 그대로 쓸 수 있다."""
+    until = settings()["until"]
+    return not until or (today or now_kst().date()).isoformat() <= until
 
 
 def plain(text: str | None) -> str | None:

@@ -98,9 +98,13 @@ def quota(count: int) -> list[tuple[str, list[str], int]]:
     total = sum(n for _, _, n in groups)
     if not groups or total == count:
         return groups
-    scaled = [(name, axes, round(n * count / total)) for name, axes, n in groups]
-    name, axes, n = scaled[0]  # 반올림 차이는 첫 그룹(시술 정보)에서 맞춘다
-    return [(name, axes, n + count - sum(x[2] for x in scaled))] + scaled[1:]
+    # 비율대로 나누고 남는 자리는 나머지가 큰 그룹부터, 같으면 앞 그룹부터 (2026-11-26 — 그룹이 4개가 되자 반올림 차이를
+    # 첫 그룹에서 빼던 방식은 3개를 고를 때 시술 정보를 0개로 만들었다)
+    exact = [n * count / total for _, _, n in groups]
+    shares = [int(x) for x in exact]
+    for i in sorted(range(len(groups)), key=lambda i: (shares[i] - exact[i], i))[:count - sum(shares)]:
+        shares[i] += 1
+    return [(name, axes, k) for (name, axes, _), k in zip(groups, shares)]
 
 
 def pick(topics: list[dict], count: int) -> list[dict]:
@@ -166,6 +170,16 @@ def telegram_message(week: str, topics: list[dict]) -> str:
     return "\n".join(lines)
 
 
+DAY_KO = {"mon": "월", "tue": "화", "wed": "수", "thu": "목", "fri": "금", "sat": "토", "sun": "일"}
+
+
+def schedule_hint() -> str:
+    """주제 후보 끝 안내 — 게시 요일·편수는 site.yaml publish_schedule 에서 (2026-11-26 화요일 칸 추가로 주 4편)."""
+    days = [d.lower()[:3] for d in ((load_yaml("site.yaml").get("publish_schedule") or {}).get("days") or ["mon", "wed", "fri"])]
+    return (f"📅 다음 주 블로그 {'·'.join(DAY_KO.get(d, d) for d in days)} {len(days)}편 — 유형마다 1개씩 {len(days)}개 골라 "
+            "주시면 금요일까지 초안이 오고, 주말에 검수하면 요일 칸에 맞춰 올라갑니다.")
+
+
 def followups_block() -> str:
     """단일 연구 근거 후속 후보 (pipeline/followups.py) — 실패해도 주제 조사는 계속."""
     try:
@@ -211,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="주간 주제 후보 생성")
     parser.add_argument("--week", default=iso_week())
     parser.add_argument("--next-week", action="store_true",
-                        help="다음 주 게시용 (목요일 실행 → 주말 검수 → 월·수·금 게시, 2026-10-10)")
+                        help="다음 주 게시용 (목요일 실행 → 주말 검수 → site.yaml 게시 요일, 2026-10-10)")
     parser.add_argument("--count", type=int, default=load_yaml("channels.yaml").get("topics_per_week", 6))
     parser.add_argument("--from-seed", type=int, metavar="N", help="조사해 둔 초기 주제 N개 사용 (Gemini 호출 없음)")
     args = parser.parse_args(argv)
@@ -220,7 +234,8 @@ def main(argv: list[str] | None = None) -> int:
         args.week = iso_week(today + timedelta(days=7 - today.weekday()))  # 다음 월요일의 주
 
     scan = trends.ensure_fresh()  # 관광지 트렌드 주 1회 스캔 (실패해도 계속)
-    data = from_seed(args.week, args.from_seed) if args.from_seed else None
+    # 크론은 --from-seed 6 을 넘긴다 — 칸이 늘면(2026-11-26 화요일 칸) channels.yaml topics_per_week 가 더 크므로 큰 쪽
+    data = from_seed(args.week, max(args.from_seed, args.count)) if args.from_seed else None
     if data is None:
         if args.from_seed:
             log.info("초기 주제 목록을 모두 써서 Gemini 조사로 전환")
@@ -230,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("주제 %d건 저장: %s", len(data["topics"]), path)
     print(telegram_message(args.week, data["topics"]))
     if args.next_week:
-        print("\n📅 다음 주 블로그 월·수·금 3편 — 3개 골라 주시면 금요일까지 초안이 오고, 주말에 검수하면 월요일부터 순서대로 올라갑니다.")
+        print("\n" + schedule_hint())
     if scan and (scan["attractions"] or scan["emerging"] or scan.get("food")):
         hot = sorted(scan["attractions"].items(), key=lambda x: -x[1]["trend"])[:3]
         names = load_yaml("attractions.yaml").get("attractions") or {}

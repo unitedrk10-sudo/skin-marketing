@@ -51,6 +51,7 @@ MAX_SOURCES = 12      # 작성 모델에 넘기는 페이지 수
 MIN_SOURCES = 5       # 이보다 적으면 작성 모델이 직접 추가 검색 (stage write_search)
 SOURCE_CHARS = 12000  # 페이지당 넘기는 본문 길이
 MIN_PAGE_CHARS = 500  # 이보다 짧은 본문은 스크립트 렌더링·차단 페이지로 보고 뺀다
+MIN_LAW_CHARS = 100  # 법령 조문 (web.law_page)
 MIN_FACTS = 5
 # 병원 사이트는 단일 출처로 쓰지 않는다. 실무 정보(상담 절차·언어 지원·예약·패키지 구성)만, 서로 다른 병원
 # MIN_CLINIC_AGREE 곳 이상이 같은 내용일 때 kind "practice" 사실로 — 블로그엔 링크 없이 "several clinic websites".
@@ -136,7 +137,8 @@ def fetch_sources(candidates: list[dict], sponsor: dict | None = None) -> list[d
         pages = list(pool.map(lambda s: web.get(s["url"]), todo))
     sources = []
     for s, (status, text) in zip(todo, pages):
-        if status != 200 or len(text) < MIN_PAGE_CHARS:
+        # 법령 조문은 API 본문이라 짧아도 진짜다 (유치법 제8조 476자) — 렌더링·차단 화면 걸러내기는 웹 페이지에만
+        if status != 200 or len(text) < (MIN_LAW_CHARS if web.law_article(s["url"]) else MIN_PAGE_CHARS):
             log.info("출처 제외 (%s, 본문 %d자): %s", status or "연결 오류", len(text), s["url"])
             continue
         title = affiliates.source_title(s["url"], s["title"], text)  # 올리브영 제품 페이지는 실제 페이지 제목으로
@@ -306,6 +308,13 @@ def pinned_sources(note: str | None) -> list[dict]:
     return [{"url": u.rstrip("."), "title": ""} for u in dict.fromkeys(NOTE_URL.findall(note or ""))]
 
 
+def seed_sources(topic: dict) -> list[dict]:
+    """초기 주제 목록(seed_topics.yaml)에 적어 둔 출처도 검색 결과 앞에 넣는다 (2026-11-26 — 전에는 주제에 실려 오기만 하고
+    쓰이지 않았다). 법령 조문은 law.go.kr 한글 주소로 적으면 법령 API 본문이 출처가 된다 (web.law_page).
+    Gemini 주제 조사가 붙인 sources(트렌드 근거)는 넣지 않는다 — seed 주제만."""
+    return [s for s in topic.get("sources") or [] if topic.get("seed_id") and str(s.get("url", "")).startswith("http")]
+
+
 def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -> dict:
     rules = sponsors.rules_text(sponsor) if sponsor else None
     if sponsor:  # 스폰서 "병원 중심 코스" 글만 관광 데이터를 받는다 (병원 권역 기준)
@@ -313,7 +322,7 @@ def compose(topic: dict, note: str | None = None, sponsor: dict | None = None) -
     else:  # 여행 축: 관광지 속성·코스 규칙·맛집 트렌드
         travel = attractions.context(topic)
     candidates, clinic_candidates = search_sources(topic, note, rules, travel)
-    sources = fetch_sources(pinned_sources(note) + candidates, sponsor)
+    sources = fetch_sources(pinned_sources(note) + seed_sources(topic) + candidates, sponsor)
     # 스폰서 글에는 광고주 외 다른 병원이 들어가면 안 되므로 병원 공통 정보를 쓰지 않는다
     clinic_pages = [] if sponsor else fetch_clinic_pages(clinic_candidates)
     log.info("출처 %d곳 확보 (병원 공통 정보용 %d곳): %s", len(sources), len(clinic_pages), topic["title"])

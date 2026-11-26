@@ -43,6 +43,8 @@ text_social:
   ai_label: false      # 2026-11-10 운영자 결정: SNS 글 끝줄의 "AI-assisted" 를 뺀다. AI 기본법 §31 표시 의무는 AI 제품·서비스를 제공하는
                        # 사업자에게 있고 AI 를 도구로 써서 글을 올리는 쪽은 대상이 아니라는 과기정통부 가이드라인 해설 기준 (원문은 미확인),
                        # Meta 는 사실적인 AI 영상·음성에만 표시를 요구. 블로그·영상의 AI 표시는 그대로 둔다. 다시 붙이려면 true
+  until: 2026-11-30   # 2026-11-26 운영자 결정: 공유 실험이 끝나는 이 날까지만 SNS 글을 만들고 보낸다 (4주 조회 주 80~270·반응 0).
+                       # 다음 날부터 워커가 새 글 작성·오늘의 글·자동 게시를 멈춘다 (계정·저장된 글은 그대로, 다시 하려면 이 줄을 지운다)
   experiment:          # 공유 실험 (2026-11-02): share 글과 기존 글을 번갈아 보내 글별 Threads 반응을 비교 (social.experiment_lines)
     start: 2026-11-03
     end: 2026-11-30
@@ -59,12 +61,15 @@ text_social:
     mode: api          # api = Threads API (무료, THREADS_ACCESS_TOKEN — 없으면 작성 링크) | intent
     max_chars: 500
 
-topics_per_week: 6        # 주제 후보 6개 (유형마다 2개) → 유형마다 1편 골라 주 3편 게시 (2026-11-10)
+topics_per_week: 8        # 주제 후보 8개 (유형마다 2개) → 유형마다 1편 골라 주 4편 게시 (2026-11-26 화요일 칸 추가, 전엔 6개·3편)
 # 주제 후보 유형별 개수 (합 = topics_per_week). 유형 안에서는 수요 점수 순, 모자라면 다른 유형으로 채운다.
 topic_quota:
-# 2026-11-10 운영자 결정: 시술·여행·화장품 주 1편씩 고정 — 게시 요일도 유형별로 고정 (site.yaml publish_schedule.slots: 월 info · 수 여행 · 금 화장품)
+# 2026-11-10 운영자 결정: 시술·여행·화장품 주 1편씩 고정 — 게시 요일도 유형별로 고정 (site.yaml publish_schedule.slots: 월 info · 화 병원 이용 · 수 여행 · 금 화장품)
   info:                   # 시술 정보 → 월요일
-    axes: [procedure, price_guide, how_to, trend, review_curation]
+    axes: [procedure, price_guide, trend, review_curation]
+    count: 2
+  before_you_book:        # 한국 병원 이용·확인법 → 화요일 (2026-11-26 개편 docs/site-revamp-plan.md: 간판·전문의, 상담, 누가 시술, 견적 — 순위·추천 없이)
+    axes: [how_to]
     count: 2
   procedure_travel:       # 시술 × 여행 → 수요일
     axes: [procedure_travel]
