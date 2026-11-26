@@ -47,6 +47,7 @@ from pipeline.common import (
     save_json,
     script_text,
     shortform_on,
+    STATES,
 )
 
 log = get_logger("03_review")
@@ -460,6 +461,12 @@ def apply(reply: str, stage: str = "drafts", confirm: bool = False) -> list[str]
     # 글번호로 답해도 된다: W46-03 / w46 03 / W4603 (2026-11-05 — 띄어 쓴 답장이 해석 실패)
     reply = re.sub(r"(?i)\bW(\d{2})[-\s]?(\d{2})\b",
                    lambda m: codes.get(f"W{m.group(1)}-{m.group(2)}", m.group(0)), reply)
+    # 번호표에 없는 글번호 = 이미 다른 단계(자동 승인 등) — "해석할 수 없는 답장" 대신 어디 있는지 알린다 (2026-11-26)
+    for m in re.finditer(r"(?i)\bW(\d{2})[-\s]?(\d{2})\b", reply):
+        found = [(s, p.name) for s in STATES for p in content_dir(s).glob(f"*-W{m.group(1)}-{m.group(2)}-*") if p.is_dir()]
+        where = ", ".join(s for s, _ in found) or "어느 단계에도 없음"
+        raise ReplyError(f"W{m.group(1)}-{m.group(2)} 은 이번 {stage} 검수 번호표에 없습니다 (지금: {where})."
+                         + (" 이미 승인된 글입니다 — 막으려면 `승인글` 로 번호 확인 → `N 되돌리기`" if any(s == "approved" for s, _ in found) else ""))
     commands = parse_reply(reply)
     # 전부 검증한 뒤에 실행한다 (한 줄이 틀려 일부만 처리되는 일이 없도록)
     stage_of = {"approve": {"drafts"}, "revise": {"drafts"}, "reject": {"drafts", "rendered", "approved"}, "publish_ok": {"rendered"},
