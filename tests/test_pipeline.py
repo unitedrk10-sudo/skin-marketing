@@ -594,7 +594,7 @@ def test_review_message_readable_on_phone(env):
     assert len(media) == 2 and all(Path(m).exists() for m in media)
     doc = Path(media[1]).read_text(encoding="utf-8")
     assert doc.startswith(f"# [W40-02] {second}") and "## 검수에서 걸린 항목" in doc and "## 블로그" in doc
-    assert f"> {QUOTE}" in doc and URL in doc  # 사실별 원문 인용·출처
+    assert f"> {QUOTE}" not in doc and URL not in doc  # 2026-11-26: 링크 주석 없이 글만
 
 
 def test_approved_draft_can_be_withdrawn_before_publishing(env):
@@ -861,7 +861,7 @@ def test_worker_sends_each_draft_then_summary(worker_env):
     assert sent[0].startswith("[초안 1/2 · 글번호 W40-01]") and "🎬 숏폼 대본" in sent[0] and "📝 블로그: Rejuran explained" in sent[0]
     # 남은 지적 → 의료 문장과 출처 → 대본 순, 블로그 전문은 요청할 때만
     assert sent[0].index("🔎 남은 지적") < sent[0].index("🩺 의료 정보 확인") < sent[0].index("🎬 숏폼 대본")
-    assert f"• It uses polynucleotides.\n   ↳ {URL}" in sent[0] and f"• (대본) Rejuran uses polynucleotides.\n   ↳ {URL}" in sent[0]
+    assert "• It uses polynucleotides." in sent[0] and "• (대본) Rejuran uses polynucleotides." in sent[0] and f"↳ {URL}" not in sent[0]
     assert "Results vary; ask a licensed doctor." not in sent[0] and "`1번 블로그 보여줘`" in sent[0]
     assert "↑ 초안 전문은 위 메시지에" in message and "MEDIA:" not in message and "🎬" not in message  # 요약만
     assert "1. [W40-01] What is Rejuran?" in message
@@ -2901,7 +2901,7 @@ def test_review_message_in_korean_with_stable_post_number(env):
     msg = human_mod.draft_message(path, 1, 1)
     assert msg.startswith("[초안 1/1 · 글번호 W40-01]") and "🇰🇷 검수용 한국어 번역" in msg and "대본 0" in msg
     doc = human_mod.review_doc(path).read_text(encoding="utf-8")
-    assert "## 블로그 (한국어 번역)" in doc and "한국어 본문 [F1]" in doc and "## 원문(영어) — 블로그" in doc
+    assert "## 블로그 (한국어 번역)" in doc and "한국어 본문" in doc and "본문 [F1]" not in doc and "## 원문(영어) — 블로그" in doc
     draft = common.load_json(path / "draft.json")
     draft["blog"]["markdown"] += "\nNew sentence."                                       # 내용이 바뀌면 다시 번역
     common.save_json(path / "draft.json", draft)
@@ -5000,3 +5000,17 @@ def test_new_weekday_slot_starts_on_its_date(env, monkeypatch):
     assert common.load_json(site_mod.schedule_file())["2026-W49-07-byb"]["date"] == "2026-12-08"   # 12/1 이 아니라 첫 화요일 칸
     saturday = datetime(2026, 11, 28, 10, 30, tzinfo=site_mod.KST)
     assert "화 ❌" not in site_mod.weekend_check(saturday, rule, {}, [])
+
+
+def test_topic_message_groups_candidates_by_weekday(env):
+    # 2026-11-26: 요일마다 후보 2개 중 하나 — 번호 = 저장 순서
+    topics = topics_mod.by_day(topics_mod.from_seed("2026-W50", 8)["topics"])
+    groups = [topics_mod.group_of(t) for t in topics]
+    assert groups == sorted(groups, key=["info", "before_you_book", "procedure_travel", "skincare"].index)
+    msg = topics_mod.telegram_message("2026-W50", topics)
+    assert "📅 월요일 · 시술 정보 — 1 / 2 중 하나" in msg and "📅 화요일 · 병원 이용법 — 3 / 4 중 하나" in msg
+    assert msg.index("화요일") < msg.index("수요일") < msg.index("금요일")
+    assert msg.split("📅 화요일")[1].split("\n")[1].startswith("3. ")
+    assert "(예: 1,3,5,7)" in msg
+    one = topics_mod.telegram_message("2026-W50", [t for t in topics if topics_mod.group_of(t) != "skincare"] + topics[-1:])
+    assert "7번 (후보 1개)" in one

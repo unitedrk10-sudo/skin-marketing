@@ -159,9 +159,39 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
             "topics": pick(ranked, count)}
 
 
+def day_slots() -> list[tuple[str, str]]:
+    """[(요일 한글, topic_quota 이름)] — site.yaml publish_schedule 의 요일 순서."""
+    rule = load_yaml("site.yaml").get("publish_schedule") or {}
+    slots = {d.lower()[:3]: str(g) for d, g in (rule.get("slots") or {}).items()}
+    return [(DAY_KO.get(d.lower()[:3], d), slots[d.lower()[:3]]) for d in rule.get("days") or [] if d.lower()[:3] in slots]
+
+
+def group_of(topic: dict) -> str | None:
+    return next((name for name, axes, _ in quota(8) if topic.get("axis") in axes), None)
+
+
+def by_day(topics: list[dict]) -> list[dict]:
+    """게시 요일 순으로 묶는다 (유형 안에서는 수요 점수 순) — 번호가 저장 순서라 저장 전에 정렬한다 (2026-11-26).
+    요일 칸이 없는 유형은 맨 뒤."""
+    order = {g: i for i, (_, g) in enumerate(day_slots())}
+    return sorted(topics, key=lambda t: (order.get(group_of(t), len(order)), -t.get("demand", {}).get("score", 0)))
+
+
 def telegram_message(week: str, topics: list[dict]) -> str:
-    lines = [f"[{week} 주제 후보 {len(topics)}건 — 수요 높은 순] 번호로 골라주세요 (예: 1,3,4)"]
+    """요일마다 후보 2개 중 하나를 고르는 형식 (2026-11-26). 번호는 저장된 목록 순서 그대로."""
+    days = {g: d for d, g in day_slots()}
+    firsts = list(dict.fromkeys(group_of(t) for t in topics))
+    example = ",".join(str(next(n for n, x in enumerate(topics, 1) if group_of(x) == g)) for g in firsts)
+    lines = [f"[{week} 주제 후보 {len(topics)}건] 요일마다 하나씩 번호로 골라주세요 (예: {example})"]
+    head = None
     for i, t in enumerate(topics, 1):
+        g = group_of(t)
+        if (g, days.get(g)) != head:
+            head = (g, days.get(g))
+            nums = [n for n, x in enumerate(topics, 1) if group_of(x) == g]
+            label = f"{days[g]}요일 · {GROUP_KO.get(g, g)}" if g in days else "요일 칸 없음"
+            pick = f"{' / '.join(map(str, nums))} 중 하나" if len(nums) > 1 else f"{nums[0]}번 (후보 1개)"
+            lines.append(f"\n📅 {label} — {pick}")
         price = (" 💲가격" if t["has_price"] else "") + (" 📚원출처 있음" if t.get("answered_elsewhere") else "")
         d = t.get("demand")
         shown = d["score"] - PIN_BONUS if d and d.get("pinned") else (d or {}).get("score", 0)  # 지정 가산점은 순서용 — 수요 표시에선 뺀다
@@ -171,6 +201,7 @@ def telegram_message(week: str, topics: list[dict]) -> str:
 
 
 DAY_KO = {"mon": "월", "tue": "화", "wed": "수", "thu": "목", "fri": "금", "sat": "토", "sun": "일"}
+GROUP_KO = {"info": "시술 정보", "before_you_book": "병원 이용법", "procedure_travel": "시술 × 여행", "skincare": "화장품"}
 
 
 def schedule_hint() -> str:
@@ -240,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.from_seed:
             log.info("초기 주제 목록을 모두 써서 Gemini 조사로 전환")
         data = build(args.week, args.count)
+    data["topics"] = by_day(data["topics"])  # 요일별 묶음 = 텔레그램 번호 순서
     path = content_dir("topics") / f"{args.week}.json"
     save_json(path, data)
     log.info("주제 %d건 저장: %s", len(data["topics"]), path)
