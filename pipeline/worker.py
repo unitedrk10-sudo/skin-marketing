@@ -265,7 +265,7 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
         recovered.unlink()
         notices.append("✅ Claude 로그인 복구 — 멈췄던 글쓰기를 이어서 합니다.")
     pending = [] if auth_down else sorted(requests_dir().glob("*.json"))
-    if pending:  # 초안 작성은 수십 분 걸린다 — 오늘의 SNS 글은 기다리게 하지 않고 먼저 보낸다 (2026-10-29)
+    if pending and importlib.import_module("pipeline.social").active():  # 초안 작성은 수십 분 걸린다 — 오늘의 SNS 글은 기다리게 하지 않고 먼저 보낸다 (2026-10-29)
         try:
             if (early := importlib.import_module("pipeline.social").daily_message()) and not (sender or hermes_send)(early):
                 notices.append(early)  # 따로 못 보냈으면 이번 실행 메시지에 붙인다
@@ -365,7 +365,8 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
 
     social_mod = importlib.import_module("pipeline.social")
     try:
-        if not auth_down and social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 글 3종 (한 번에 3건, 보내기는 오늘의 글로)
+        social_on = social_mod.active()  # text_social.until 이 지나면 SNS 글을 만들지도 보내지도 않는다 (2026-11-26)
+        if social_on and not auth_down and social_mod.pending_paths():  # 블로그에 게시된 새 글 → X·Threads 글 3종 (한 번에 3건, 보내기는 오늘의 글로)
             try:
                 made, social_failures = social_mod.compose_pending(limit=3)
             except llm.ClaudeAuthExpired as e:
@@ -378,7 +379,7 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
                        for k, i in d["items"].items() if i["status"] == "blocked"]
             if blocked:
                 message = (message + "\n\n" if message else "") + "\n".join(blocked)
-        if not auth_down:  # 공유 실험 글 (한 번에 2건, 보내기는 오늘의 글로)
+        if social_on and not auth_down:  # 공유 실험 글 (한 번에 2건, 보내기는 오늘의 글로)
             try:
                 _made, share_failures = social_mod.compose_shares(limit=2)
                 failures += [f"SNS 실험 글 생성 실패 {f}" for f in share_failures]
@@ -386,8 +387,8 @@ def run(review_runner=None, sender=None) -> tuple[str, list[str]]:
                 if msg := mark_auth_down(e):
                     message = (message + "\n\n" if message else "") + msg
                 auth_down = True
-        daily = social_mod.daily_message()  # 오전 9시(한국 시간) 이후 하루 한 번 — 오늘 올릴 글 1개
-        reminder = importlib.import_module("pipeline.site").publish_reminder()  # 게시일(월·수·금)에 올라갈 글이 없으면
+        daily = social_mod.daily_message() if social_on else ""  # 오전 9시(한국 시간) 이후 하루 한 번 — 오늘 올릴 글 1개
+        reminder = importlib.import_module("pipeline.site").publish_reminder()  # 게시일(site.yaml 게시 요일)에 올라갈 글이 없으면
         exp = importlib.import_module("pipeline.experiment")  # 숏폼 화면 소스 실험: 그날 안내·영상이 들어오면 편집
         experiments = "\n\n".join(m for m in (exp.daily_message(), exp.poll_message()) if m)
         ahead = "" if auth_down else "\n".join(importlib.import_module("pipeline.figures").ensure_upcoming()  # 게시 예정 글: 블로그 그림 먼저

@@ -139,7 +139,7 @@ def _issues(review: dict | None) -> list[dict]:
 
 
 def review_doc(path: Path) -> Path:
-    """휴대폰에서 읽는 검수용 파일 (텔레그램 첨부): 걸린 항목 → 대본 → 블로그 → 사실별 원문 인용·출처."""
+    """휴대폰에서 읽는 검수용 파일 (텔레그램 첨부): 걸린 항목 → 블로그 (한국어 → 영어 원문, [F#] 표시 없이)."""
     draft, review = load_draft(path), load_review(path)
     ko = _korean(path)
     out = [f"# [{code(draft['id'])}] {draft['id']}", "",
@@ -153,18 +153,24 @@ def review_doc(path: Path) -> Path:
         out += [f"- {ISSUE_ICON[f['severity']]} {m}" + (f"\n  > {f['quote']}" if f["quote"] else "") for f, m in zip(issues, msgs)]
     if (review or {}).get("always_human"):
         out += ["", "👤 사람 확인 필요: " + ", ".join(review["always_human"])]
+    # 2026-11-26 운영자 요청: 링크 주석([F#]·사실별 인용·출처 주소) 없이 글만 — 출처 대조는 02b 가 한다
     if ko:
-        out += ["", "## 블로그 (한국어 번역)", "", ko["blog"], "", "## 원문(영어) — 블로그", "", blog_text(draft)]
+        out += ["", "## 블로그 (한국어 번역)", "", no_refs(ko["blog"]), "", "## 원문(영어) — 블로그", "", no_refs(blog_text(draft))]
     else:
-        out += ["", "## 블로그", "", blog_text(draft)]
+        out += ["", "## 블로그", "", no_refs(blog_text(draft))]
     if shortform_on():
         out += ["", "## 숏폼 대본", "", script_text(draft)]
-    out += ["", "## 사실과 원문 인용"]
-    for f in draft.get("facts", []):
-        out.append(f"- [{f['id']}] {f['text']}\n  > {f.get('quote', '')}\n  {f['url']}")
     doc = path / f"{draft['id']}.md"
     doc.write_text("\n".join(out) + "\n", encoding="utf-8")
     return doc
+
+
+REF_MARK = re.compile(r"\s?\[(?:R:)?F\d+(?:\s*[,，]\s*(?:R:)?F\d+)*\]")
+
+
+def no_refs(text: str) -> str:
+    """검수 메시지·첨부에서 [F#] 사실 표시를 뺀다 (2026-11-26 운영자 요청: 링크 주석 없이 글만)."""
+    return REF_MARK.sub("", text or "")
 
 
 def code(draft_id: str) -> str:
@@ -205,16 +211,14 @@ def draft_message(path: Path, number: int, total: int) -> str:
         if f.get("quote") and len(f["quote"]) < 400:
             out.append(f"   ↳ 걸린 곳: “…{f['quote'].strip()}…”")
     medical = medical_sentences(draft)
-    out += ["", f"🩺 의료 정보 확인 ({len(medical)}문장) — 문장과 출처가 맞는지 봐 주세요"]
-    for i, (text, urls) in enumerate(medical):
-        out.append(f"• {ko['medical'][i] if ko else text}")
-        out += [f"   ↳ {u}" for u in urls]
+    out += ["", f"🩺 의료 정보 확인 ({len(medical)}문장)"]
+    for i, (text, _urls) in enumerate(medical):
+        out.append(f"• {no_refs(ko['medical'][i] if ko else text)}")
     practice = medical_sentences(draft, lambda f: f.get("kind") == PRACTICE_KIND)
     if practice:  # 블로그에는 병원 링크 없이 "[clinic websites]" 로만 나간다
-        out += ["", f"🏥 병원 사이트 공통 정보 ({len(practice)}문장) — 블로그엔 병원명·링크 없이 게시, 근거 병원 확인용"]
-        for i, (text, urls) in enumerate(practice):
-            out.append(f"• {ko['practice'][i] if ko else text}")
-            out += [f"   ↳ {u}" for u in urls]
+        out += ["", f"🏥 병원 사이트 공통 정보 ({len(practice)}문장) — 블로그엔 병원명·링크 없이 게시"]
+        for i, (text, _urls) in enumerate(practice):
+            out.append(f"• {no_refs(ko['practice'][i] if ko else text)}")
     if shortform_on():
         out += ["", "🎬 숏폼 대본"]
         for i, ln in enumerate(sf.get("lines", []), 1):
@@ -222,7 +226,7 @@ def draft_message(path: Path, number: int, total: int) -> str:
             out.append(f"{i}. {ko['script'][i - 1] if ko and ko['script'] else ln.get('voice', '')}{refs}")
         out.append(f"화면 표기: {sf.get('on_screen_disclosure', '')}")
     if ko:  # 숏폼이 없으니 블로그 전문(한국어)을 바로 읽게 한다
-        out += ["", f"📝 블로그 전문 (한국어 번역) — 영어 제목: {blog.get('title', '')}", "", ko["blog"]]
+        out += ["", f"📝 블로그 전문 (한국어 번역) — 영어 제목: {blog.get('title', '')}", "", no_refs(ko["blog"])]
     else:
         sections = re.findall(r"(?m)^##\s+(.+)$", blog.get("markdown", ""))
         out += ["", f"📝 블로그: {blog.get('title', '')}" + (f" ({' · '.join(s.strip() for s in sections)})" if sections else ""),

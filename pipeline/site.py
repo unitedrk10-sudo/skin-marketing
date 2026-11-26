@@ -112,7 +112,14 @@ def publish_schedule() -> dict | None:
         return None
     days = [WEEKDAYS.index(d.lower()[:3]) for d in cfg["days"]]
     slots = {WEEKDAYS.index(d.lower()[:3]): str(g) for d, g in (cfg.get("slots") or {}).items()}
-    return {"days": days, "hour": int(cfg.get("hour", 7)), "slots": {d: g for d, g in slots.items() if d in days}}
+    starts = {WEEKDAYS.index(d.lower()[:3]): str(v) for d, v in (cfg.get("starts") or {}).items()}
+    return {"days": days, "hour": int(cfg.get("hour", 7)), "slots": {d: g for d, g in slots.items() if d in days}, "starts": starts}
+
+
+def is_publish_day(rule: dict, day) -> bool:
+    """게시 요일이고, 새로 늘린 요일이면 시작일(site.yaml publish_schedule.starts) 이후 — 2026-11-26 화요일 칸은 12/7 주부터라
+    그 전 화요일을 '빈 날'로 알리지 않는다."""
+    return day.weekday() in rule["days"] and day.isoformat() >= (rule.get("starts") or {}).get(day.weekday(), "")
 
 
 def slot_group(draft: dict) -> str | None:
@@ -162,7 +169,7 @@ def apply_schedule(posts: list[dict], include_scheduled: bool = False) -> list[d
             group = slot_group(p["draft"])
             slots = rule.get("slots") or {}
             allowed = [d for d, g in slots.items() if g == group] or rule["days"]  # 정해진 요일이 없는 유형은 아무 게시 요일
-            while day.weekday() not in allowed or day.isoformat() in taken:
+            while day.weekday() not in allowed or not is_publish_day(rule, day) or day.isoformat() in taken:
                 day += timedelta(days=1)
             at = datetime(day.year, day.month, day.day, rule["hour"], tzinfo=KST)
             sched[did] = {"date": day.isoformat(), "at": at.isoformat()}
@@ -187,7 +194,7 @@ def reminder_file() -> Path:
 
 
 def publish_reminder(now: datetime | None = None) -> str:
-    """게시일(월·수·금)에 올라갈 글이 없으면 알린다 — 전날 18시 이후, 당일 9시 이후 각 한 번."""
+    """게시일(site.yaml 게시 요일)에 올라갈 글이 없으면 알린다 — 전날 18시 이후, 당일 9시 이후 각 한 번."""
     rule = publish_schedule()
     if not rule:
         return ""
@@ -199,9 +206,9 @@ def publish_reminder(now: datetime | None = None) -> str:
     taken = set(by_date)
     due = []
     tomorrow = now.date() + timedelta(days=1)
-    if now.hour >= REMIND_EVENING and tomorrow.weekday() in rule["days"] and tomorrow.isoformat() not in taken:
+    if now.hour >= REMIND_EVENING and is_publish_day(rule, tomorrow) and tomorrow.isoformat() not in taken:
         due.append(("내일", tomorrow))
-    if now.hour >= 9 and now.date().weekday() in rule["days"] and now.date().isoformat() not in taken:
+    if now.hour >= 9 and is_publish_day(rule, now.date()) and now.date().isoformat() not in taken:
         due.append(("오늘", now.date()))
     sent = load_json(reminder_file()) if reminder_file().exists() else []
     weekend = weekend_check(now, rule, by_date, sent)
@@ -249,7 +256,7 @@ def weekend_check(now: datetime, rule: dict, by_date: dict[str, dict], sent: lis
         return ""
     human = importlib.import_module("pipeline.03_review")
     monday = now.date() + timedelta(days=7 - now.weekday())
-    days = [monday + timedelta(days=d) for d in rule["days"]]
+    days = [day for d in rule["days"] if is_publish_day(rule, day := monday + timedelta(days=d))]
     empty = [d for d in days if d.isoformat() not in by_date]
     waiting = [p for p in draft_dirs("drafts") if (p / "draft.json").exists()]
     sent.append(f"{now.date()}:weekend")

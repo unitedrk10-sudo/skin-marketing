@@ -13,7 +13,7 @@ import re
 import unicodedata
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 FETCH_TIMEOUT = 20
 USER_AGENT = "Mozilla/5.0 (compatible; skin-marketing-source-check/1.0)"
@@ -62,9 +62,42 @@ def ncbi_api_url(url: str) -> str | None:
     return None
 
 
+LAW_HOSTS = {"law.go.kr"}  # host() 는 www. 를 뗀다
+LAW_ARTICLE_PATH = re.compile(r"/법령/([^/]+)/제(\d+)조(?:의(\d+))?/?")
+
+
+def law_article(url: str) -> tuple[str, str] | None:
+    """law.go.kr 한글 주소(/법령/<법령명>/제N조[의M]) → (법령명, "N" 또는 "N의M"). 다른 주소는 None."""
+    if host(url) not in LAW_HOSTS:
+        return None
+    m = LAW_ARTICLE_PATH.fullmatch(unquote(urlparse(url).path))
+    return (m.group(1), m.group(2) + (f"의{m.group(3)}" if m.group(3) else "")) if m else None
+
+
+def law_page(url: str) -> tuple[int, str] | None:
+    """법령 조문 주소는 국가법령정보 API 본문으로 읽는다 (2026-11-26 — law.go.kr 화면은 스크립트로 그려져 본문이 HTML 에 없다).
+    주소의 법령명은 띄어쓰기를 빼고 맞춘다 (의료법시행규칙 = 의료법 시행규칙). 조회 실패는 상태 0 → 출처에서 빠진다."""
+    if not (ref := law_article(url)):
+        return None
+    from pipeline import law_api  # web 은 모든 단계가 쓰므로 법령 API 는 필요할 때만 불러온다
+    name, number = ref
+    try:
+        client = law_api.LawApiClient()
+        law = next((x for x in client.search(name) if x.name.replace(" ", "") == name.replace(" ", "")), None)
+        doc = client.document(law.mst, number) if law else None
+    except law_api.LawApiError:
+        return 0, ""
+    arts = [a for a in (doc.articles if doc else []) if a.number == number]
+    if not arts:
+        return 0, ""
+    return 200, f"{doc.name} (시행 {doc.effective_date})\n" + "\n".join(a.text for a in arts)
+
+
 def fetch_page(url: str) -> tuple[int, str]:
     """(HTTP 상태, 본문 텍스트). 연결 실패는 상태 0. PDF(FDA 문서·논문 등)는 글자를 뽑는다.
-    PMC·PubMed 논문은 E-utilities 로 받는다 (웹 페이지는 봇 확인 화면)."""
+    PMC·PubMed 논문은 E-utilities 로 받는다 (웹 페이지는 봇 확인 화면). 법령 조문은 국가법령정보 API 로."""
+    if law := law_page(url):
+        return law
     if api := ncbi_api_url(url):
         status, text = _fetch(api)
         if status == 200 and text.lstrip().startswith("<"):

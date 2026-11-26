@@ -26,13 +26,16 @@ operator:                       # 운영 주체 공개 — About "Who runs" 단�
 social_profiles:                # 공식 SNS 계정 — 구조화 데이터 sameAs (검색·AI 가 같은 브랜드로 묶게)
   - https://www.threads.com/@skinboundkorea
   - https://x.com/Skinboundkorea
-publish_schedule:               # 블로그 게시 요일 (2026-10-10 결정: 월·수·금, 하루 1편). 승인된 글은 다음 빈 요일에 배정
-  days: [mon, wed, fri]         # 배정은 content/site/schedule.json 에 고정 — 확인: python -m pipeline.site schedule
+publish_schedule:               # 블로그 게시 요일 (2026-10-10 결정: 월·수·금 → 2026-11-26 화요일 추가, 하루 1편). 승인된 글은 다음 빈 요일에 배정
+  days: [mon, tue, wed, fri]    # 배정은 content/site/schedule.json 에 고정 — 확인: python -m pipeline.site schedule
   hour: 7                       # 한국 시간. 매시 배포 크론이 이 시각 이후 첫 실행에 올린다 → SNS 오늘의 글(9시) 전에 게시
   slots:                        # 2026-11-10 운영자 결정: 시술·여행·화장품 주 1편씩 고정 (channels.yaml topic_quota 이름)
     mon: info                   # 시술 정보
+    tue: before_you_book        # 병원 이용·확인법 (2026-11-26 개편)
     wed: procedure_travel       # 시술 × 여행
     fri: skincare               # 화장품 (올리브영 제휴)
+  starts:                       # 새로 늘린 요일의 첫 게시일 — 그 전 같은 요일은 게시일이 아니다 (리마인드·주말 점검·배정)
+    tue: 2026-12-08             # 화요일 칸은 W50 부터 (12/3 목요일 후보 → 12/8 첫 글)
 clinic_directory:               # 여행 글 코스 주변 피부과 목록 (pipeline/clinics.py) — 기준을 바꾸면 모든 글에 똑같이 적용
   radius_m: 700                 # 관광지 중심 반경 — 이 안의 피부과 진료 의료기관 전부
   max_per_stop: 40              # 관광지당 표시 수 (넘으면 가까운 순으로 자르고 'N곳 중 가까운 M곳' 표시)
