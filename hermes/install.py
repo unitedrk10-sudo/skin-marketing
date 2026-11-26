@@ -43,6 +43,8 @@ JOBS: list[tuple[str, str | None, list[dict]]] = [
         {"cmd": ["{git}", "pull", "-q", "--ff-only"], "on_fail": "(코드 업데이트 실패 — 기존 코드로 진행)", "quiet": True},
         _py("pipeline.01_topics", "--next-week", "--from-seed", "6"),  # 초기 주제 목록 소진 후 자동으로 Gemini 조사
     ]),
+    # 주제 은행 — 매월 1일 08:00 유형마다 안 쓴 주제 10개가 되게 Gemini 조사 (2026-11-27, 요일마다 후보 2개)
+    ("skin-topic-bank", "0 8 1 * *", [_py("pipeline.01_topics", "--refill")]),
     ("skin-worker", "every 10m", [_py("pipeline.worker", "run")]),
     # 블로그: 승인된 글이 바뀌었을 때만 Cloudflare Pages 배포 (없으면 조용)
     ("skin-site", "every 1h", [_py("pipeline.site", "deploy")]),

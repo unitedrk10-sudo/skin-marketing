@@ -46,6 +46,7 @@ python -m pipeline.site build && python -m pipeline.site deploy       # 첫 배�
 |---|---|---|---|
 | skin-law-sync | 월 08:00 | `skin-law-sync.py` | 추적 법령 변경 감지 → 변경 있을 때만 알림 |
 | skin-weekly-topics | 월 09:00 | `skin-weekly-topics.py` | 코드 업데이트(`git pull`) → 관광지 트렌드 스캔(주 1회) → 주간 주제 후보 전송 (수요·트렌드·계절 순) |
+| skin-topic-bank | 매월 1일 08:00 | `skin-topic-bank.py` | 주제 은행 채우기 — 유형(월·화·수·금 칸)마다 안 쓴 주제가 10개가 되게 Gemini 조사 → 추가된 제목 알림 (`content/topics/bank/`) |
 | skin-worker | 10분마다 | `skin-worker.py` | 요청 처리(초안 생성·수정 재생성: Gemini 출처 찾기 → Claude 작성) → 자동 검수(Gemini) → 바뀐 게 있으면 검수 요청 전송 |
 | skin-weekly-report | 일 20:00 | `skin-weekly-report.py` | 주간 리포트 — 요약(전주 → 이번 주 증감) + 그래프. 상세는 텔레그램 `리포트 상세` (2026-11-17: 월요일 링크 유입 리포트를 합침 — 기존 설치에는 `hermes cron remove <skin-traffic-report id>`) |
 | skin-clinics | 월 07:00 | `skin-clinics.py` | 코스 관광지 주변 피부과 목록 갱신 (심평원 공공데이터, `DATA_GO_KR_KEY` 없으면 조용) |

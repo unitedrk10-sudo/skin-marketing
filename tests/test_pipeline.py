@@ -1709,6 +1709,29 @@ def test_quota_fills_from_other_groups_when_short():
     assert [k for *_, k in topics_mod.quota(6)] == [2, 2, 1, 1]
 
 
+
+def test_topic_bank_refills_short_groups_only(env):
+    have = topics_mod.unused_by_group()
+    short = {name for name, _, _ in topics_mod.quota(8) if have[name] < 12}
+    env.responses["topics"] = {"topics": [
+        {"title": "Packing sunscreen for a Busan beach trip after laser", "axis": "procedure_travel", "angle": "a", "why_now": "w"},
+        {"title": "Mild cleansers at Olive Young after a peel", "axis": "skincare", "angle": "a", "why_now": "w"},
+        {"title": "Mild cleansers at Olive Young after a peel", "axis": "skincare", "angle": "dup", "why_now": "w"},  # 같은 제목은 한 번만
+        {"title": "Seoul palace walking guide", "axis": "travel_guide", "angle": "a", "why_now": "w"},              # 다루지 않는 축
+    ]}
+    added = topics_mod.refill(12)
+    assert {t["axis"] for t in added} <= {"procedure_travel", "skincare"} and len(added) == 2
+    assert all(t["id"].startswith("bank-") and t["wave"] == 2 for t in added)
+    after = topics_mod.unused_by_group()
+    assert after["procedure_travel"] == have["procedure_travel"] + 1 and short
+    assert "주제 은행: 2건 추가" in topics_mod.bank_message(added)
+    week = topics_mod.from_seed("2026-W40", 200)                                 # 은행 주제도 주간 후보로 나온다
+    assert {"Packing sunscreen for a Busan beach trip after laser"} <= {t["title"] for t in week["topics"]}
+    assert not any(t["title"] == "Packing sunscreen for a Busan beach trip after laser" and "added" in t for t in week["topics"])
+    assert not list((topics_mod.content_dir("topics")).glob("*.json"))          # 주차 파일 목록에 안 섞임
+    env.responses["topics"] = {"topics": []}
+    assert topics_mod.refill(0) == []                                            # 다 차 있으면 조사하지 않음
+
 # ---- 관광지 트렌드 ----
 
 trends_mod = importlib.import_module("pipeline.trends")
