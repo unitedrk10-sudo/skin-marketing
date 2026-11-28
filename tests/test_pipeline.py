@@ -4039,6 +4039,7 @@ def test_aftercare_product_link_matches_needs_not_forced(monkeypatch):
 
 def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
     cc = importlib.import_module("pipeline.citation_check")
+    monkeypatch.setattr(cc, "ENGINES", cc.ENGINES[:1])                  # 기준 엔진(Gemini)만 — 세 엔진은 아래 테스트
     monkeypatch.setattr(cc, "questions", lambda: ["q1", "q2"])
     monkeypatch.setattr(cc, "domain", lambda: "skinboundkorea.com")
     answers = {"q1": llm.LLMResult(text="...", model="m", stage="citation_check", grounding_urls=[
@@ -4071,6 +4072,29 @@ def test_citation_check_counts_our_domain(env, monkeypatch, tmp_path):
     cfg = common.load_yaml("citation_prompts.yaml")                        # 실제 설정에 세 묶음이 다 있다
     assert len(cfg["questions"]) == 20 and cfg["brand"] and cfg["original"]
 
+
+
+def test_citation_check_compares_engines_and_skips_broken_one(env, monkeypatch):
+    cc = importlib.import_module("pipeline.citation_check")
+    monkeypatch.setattr(cc, "domain", lambda: "skinboundkorea.com")
+    monkeypatch.setattr(cc, "questions", lambda: [("general", "q1"), ("general", "q2"), ("brand", "b")])
+    text = "Answer.\nhttps://www.skinboundkorea.com/rejuran/ and https://aad.org/x."
+
+    def generate(stage, prompt):
+        if stage == "citation_check_claude":
+            raise llm.LLMError("claude 로그인 만료")
+        if stage == "citation_check_chatgpt":
+            assert "list every source URL" in prompt                       # CLI 엔진은 본문에 주소를 적게
+            return llm.LLMResult(text=text, model="codex", stage=stage, grounding_urls=llm.text_urls(text))
+        return llm.LLMResult(text="...", model="m", stage=stage, grounding_urls=[{"url": "https://aad.org/y", "title": ""}])
+    monkeypatch.setattr(cc.llm, "generate", generate)
+    res = cc.check()
+    assert (res["cited"], res["measured"], res["total"]) == (0, 2, 2)      # 맨 위 숫자는 Gemini 그대로
+    assert res["engines"]["ChatGPT"]["cited"] == 2 and res["engines"]["ChatGPT"]["groups"]["brand"]["cited"] == 1
+    assert "Claude" in res["skipped"] and not [r for r in res["results"] if r["engine"] == "Claude"]
+    out = "\n".join(cc.report_lines(res))
+    assert "ChatGPT 검색: 인용 2/2 · 이름 질문 1/1" in out and "Claude: 측정 못함" in out
+    assert [u["url"] for u in llm.text_urls(text)] == ["https://www.skinboundkorea.com/rejuran/", "https://aad.org/x"]
 
 def test_experiment_flow_prompts_then_clips_then_score(env, monkeypatch, tmp_path):
     exp = importlib.import_module("pipeline.experiment")

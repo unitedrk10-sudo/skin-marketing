@@ -34,6 +34,8 @@ KEY_ENV = {"gemini": "GEMINI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 EXTERNAL = "claude_code"
 # 같은 머신의 Claude Code CLI(claude -p, Pro 로그인)로 바로 호출하는 단계 — 초안 작성 (API 키 불필요)
 CLAUDE_CLI = "claude_cli"
+# 같은 머신의 OpenAI Codex CLI(codex exec, ChatGPT 로그인) — AI 인용 점검의 ChatGPT 측정 전용 (2026-11-28, API 키 불필요)
+CODEX_CLI = "codex_cli"
 RETRIES = 3
 # 응답이 오지 않는 호출을 끊는다 (없으면 워커가 Hermes 1시간 제한까지 멈추고 잠금 때문에 다음 실행도 건너뜀).
 # pro + 검색 연동은 2분 안팎 걸린다. 초과하면 재시도.
@@ -78,7 +80,7 @@ def stage_config(stage: str) -> dict:
     cfg = dict(stages[stage])
     if cfg.get("provider") == CLAUDE_CLI and not cfg.get("model"):  # Claude Code 기본 모델에 맡기지 않는다 (2026-11-18)
         cfg["model"] = load_yaml("models.yaml").get("claude_cli_model") or ""
-    if cfg.get("provider") not in (*KEY_ENV, EXTERNAL, CLAUDE_CLI):
+    if cfg.get("provider") not in (*KEY_ENV, EXTERNAL, CLAUDE_CLI, CODEX_CLI):
         raise LLMError(f"stage '{stage}': 지원하지 않는 provider {cfg.get('provider')!r}")
     return cfg
 
@@ -250,7 +252,41 @@ def _claude_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMRe
     return LLMResult(text=text, model=model, stage=stage)
 
 
-PROVIDERS = {"gemini": _gemini, "anthropic": _anthropic, CLAUDE_CLI: _claude_cli}
+URL_IN_TEXT = re.compile(r"https?://[^\s<>()\[\]\"'`]+")
+
+
+def text_urls(text: str) -> list[dict]:
+    """검색 연동 출처 목록을 따로 주지 않는 CLI 답 — 본문의 주소를 출처로 [{url, title}]."""
+    return [{"url": u.rstrip(".,;:"), "title": ""} for u in dict.fromkeys(URL_IN_TEXT.findall(text))]
+
+
+def _codex_cli(stage: str, cfg: dict, system: str | None, prompt: str) -> LLMResult:
+    """codex exec — 저장소 밖 빈 폴더, 읽기 전용 샌드박스, 기록 안 남김(--ephemeral). cfg.search 면 웹 검색을 켠다."""
+    exe = shutil.which(os.environ.get("CODEX_BIN", "codex"))
+    if not exe:
+        raise LLMError("codex 명령을 찾을 수 없습니다 (npm install -g @openai/codex, 또는 CODEX_BIN)")
+    timeout = cfg.get("timeout_sec", 600)
+    with tempfile.TemporaryDirectory(prefix="skin-codex-") as workdir:
+        last = Path(workdir) / "last.txt"
+        cmd = [exe, *(["--search"] if cfg.get("search") else []), "exec", "--skip-git-repo-check", "--ephemeral",
+               "-s", "read-only", "-o", str(last), *(["-m", cfg["model"]] if cfg.get("model") else []), "-"]
+        try:
+            proc = subprocess.run(cmd, input=(f"{system}\n\n{prompt}" if system else prompt), capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", cwd=workdir, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            raise RateLimited(f"codex exec {timeout}s 초과") from e
+        text = last.read_text(encoding="utf-8").strip() if last.exists() else ""
+    if proc.returncode != 0 or not text:
+        detail = ((proc.stderr or "") + (proc.stdout or "")).strip()[-400:] or f"exit {proc.returncode}"
+        if LIMIT_WORDS.search(detail):
+            raise RateLimited(f"ChatGPT 사용량 한도: {detail[:200]}")
+        if AUTH_WORDS.search(detail):
+            raise LLMError(f"Codex 로그인 필요 (codex login): {detail[:200]}")
+        raise LLMError(f"codex exec 실패 (stage={stage}): {detail[:300]}")
+    return LLMResult(text=text, model=cfg.get("model") or "codex", stage=stage, grounding_urls=text_urls(text))
+
+
+PROVIDERS = {"gemini": _gemini, "anthropic": _anthropic, CLAUDE_CLI: _claude_cli, CODEX_CLI: _codex_cli}
 
 
 def generate(stage: str, prompt: str, system: str | None = None, files: list | None = None) -> LLMResult:
@@ -311,6 +347,9 @@ def _check() -> int:
     if cli:
         default = load_yaml("models.yaml").get("claude_cli_model") or "Claude Code 기본값"
         print(f"Claude Code CLI (claude -p, 모델 {default}): {', '.join(cli)}")
+    codex = [s for s, c in stages.items() if c.get("provider") == CODEX_CLI]
+    if codex:
+        print(f"Codex CLI (codex exec, ChatGPT 로그인): {', '.join(codex)}")
     if not ok:
         return 1
     for stage in (s for s in stages if s not in external):
