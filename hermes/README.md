@@ -9,6 +9,7 @@
 git clone https://github.com/unitedrk10-sudo/skin-marketing.git && cd skin-marketing
 python -m venv .venv                       # 저장소 전용 파이썬 (Hermes 자체 venv 와 분리)
 .venv/bin/python hermes/install.py         # Windows: .venv\Scripts\python hermes\install.py
+# AI 인용 점검의 ChatGPT 측정(선택): npm install -g @openai/codex → codex login (ChatGPT 계정, API 키 불필요)
 # .env 에 GEMINI_API_KEY, LAW_API_OC 입력 후 — 설치 끝에 출력되는 skin-check 명령으로 키·모델·Claude Code 로그인 점검
 hermes cron run skin-weekly-topics         # 바로 주제 후보 받아보기
 ```

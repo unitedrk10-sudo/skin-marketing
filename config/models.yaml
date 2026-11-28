@@ -199,6 +199,16 @@ stages:
     model: gemini-3.8-flash
     search: true
 
+  citation_check_chatgpt:  # 같은 질문을 ChatGPT 검색으로 (2026-11-28, codex exec --search — ChatGPT 로그인, API 키 불필요). 측정 전용
+    provider: codex_cli
+    search: true
+    timeout_sec: 600
+
+  citation_check_claude:   # 같은 질문을 Claude 웹 검색으로 (claude -p, Pro 로그인). 측정 전용 — 쓰기·검수와 무관
+    provider: claude_cli
+    tools: [WebSearch]
+    timeout_sec: 600
+
   source_check:    # 02b ② 출처 본문 대조
     provider: gemini
     model: gemini-3.8-flash
