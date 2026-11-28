@@ -1712,25 +1712,53 @@ def test_quota_fills_from_other_groups_when_short():
 
 def test_topic_bank_refills_short_groups_only(env):
     have = topics_mod.unused_by_group()
-    short = {name for name, _, _ in topics_mod.quota(8) if have[name] < 12}
+    target = have["procedure_travel"] + 2                                    # 여행 2칸만 비게 (실제 seed 수와 무관하게)
+    short = {name for name, _, _ in topics_mod.quota(8) if have[name] < target}
+    assert have["skincare"] < target
     env.responses["topics"] = {"topics": [
         {"title": "Packing sunscreen for a Busan beach trip after laser", "axis": "procedure_travel", "angle": "a", "why_now": "w"},
         {"title": "Mild cleansers at Olive Young after a peel", "axis": "skincare", "angle": "a", "why_now": "w"},
         {"title": "Mild cleansers at Olive Young after a peel", "axis": "skincare", "angle": "dup", "why_now": "w"},  # 같은 제목은 한 번만
         {"title": "Seoul palace walking guide", "axis": "travel_guide", "angle": "a", "why_now": "w"},              # 다루지 않는 축
     ]}
-    added = topics_mod.refill(12)
-    assert {t["axis"] for t in added} <= {"procedure_travel", "skincare"} and len(added) == 2
-    assert all(t["id"].startswith("bank-") and t["wave"] == 2 for t in added)
-    after = topics_mod.unused_by_group()
-    assert after["procedure_travel"] == have["procedure_travel"] + 1 and short
-    assert "주제 은행: 2건 추가" in topics_mod.bank_message(added)
-    week = topics_mod.from_seed("2026-W40", 200)                                 # 은행 주제도 주간 후보로 나온다
-    assert {"Packing sunscreen for a Busan beach trip after laser"} <= {t["title"] for t in week["topics"]}
-    assert not any(t["title"] == "Packing sunscreen for a Busan beach trip after laser" and "added" in t for t in week["topics"])
+    env.responses["topics"]["topics"] += [
+        {"title": "Lip filler swelling and hot broth", "axis": "procedure_travel", "angle": "hot broth causes swelling", "why_now": "w"},
+        {"title": "Christmas market walk after fillers", "axis": "procedure_travel", "angle": "a", "why_now": "w"}]
+    # 교차 검증(Claude): 그대로·고침·행사 기간·제외 (2026-11-28)
+    env.responses["topic_check"] = {"topics": [
+        {"id": "bank-packing-sunscreen-for-a-busan-beach-trip-after-las", "verdict": "keep", "reason": "ok"},
+        {"id": "bank-mild-cleansers-at-olive-young-after-a-peel", "verdict": "fix", "reason": "숫자 뺌", "angle": "fixed angle"},
+        {"id": "bank-christmas-market-walk-after-fillers", "verdict": "keep", "reason": "기간 확인",
+         "event": {"name": "Xmas market", "start": "2026-12-01", "end": "2026-12-23", "source": "https://visitseoul.net/x"}},
+        {"id": "bank-lip-filler-swelling-and-hot-broth", "verdict": "drop", "reason": "근거 없음"}]}
+    ids = topics_mod.refill(target)
+    bank = {t["id"]: t for t in common.load_json(topics_mod.bank_path())["topics"]}
+    assert len(ids) == 4 and all(i.startswith("bank-") and bank[i]["wave"] == 2 for i in ids)
+    assert bank["bank-mild-cleansers-at-olive-young-after-a-peel"]["angle"] == "fixed angle"
+    assert bank["bank-lip-filler-swelling-and-hot-broth"]["checked"] == "drop"
+    assert [s for s, *_ in env.calls].count("topic_check") == 2                  # 1차: 여행 2칸 중 1개 제외 → 2차 조사로 한 칸 더 → 다시 검증
+    msg = topics_mod.bank_message(ids)
+    assert "교차 검증 통과 3 · 제외 1" in msg and "❌ Lip filler swelling and hot broth — 근거 없음" in msg and "12/01~12/23" in msg
+    assert short
+    titles = lambda week: {t["title"] for t in topics_mod.from_seed(week, 200)["topics"]}
+    assert "Packing sunscreen for a Busan beach trip after laser" in titles("2026-W40")   # 은행 주제도 주간 후보로
+    assert "Lip filler swelling and hot broth" not in titles("2026-W50")                  # 제외된 주제는 안 나옴
+    assert "Christmas market walk after fillers" not in titles("2026-W40")                # 행사 기간 밖 (9월)
+    week50 = topics_mod.from_seed("2026-W50", 200)["topics"]
+    xmas = next(t for t in week50 if t["title"] == "Christmas market walk after fillers")
+    assert "기간 한정" in xmas["demand"]["reason"] and "🗓 Xmas market 12/01~12/23" in topics_mod.telegram_message("2026-W50", [xmas])
+    assert "Christmas market walk after fillers" not in titles("2026-W52")                # 끝나기 3일 안쪽 주는 빠짐
+    assert not any("checked" in t or "added" in t for t in week50)
     assert not list((topics_mod.content_dir("topics")).glob("*.json"))          # 주차 파일 목록에 안 섞임
     env.responses["topics"] = {"topics": []}
-    assert topics_mod.refill(0) == []                                            # 다 차 있으면 조사하지 않음
+    assert topics_mod.refill(0) == []                                            # 다 차 있고 검증할 것도 없으면 조사하지 않음
+    # 검증 전 주제는 후보에 안 나오고, 한도로 검증이 멈추면 다음 실행 때
+    bank_data = common.load_json(topics_mod.bank_path())
+    bank_data["topics"].append({"id": "bank-new", "axis": "skincare", "title": "Unchecked sunscreen", "angle": "a", "why_now": "w"})
+    common.save_json(topics_mod.bank_path(), bank_data)
+    assert "Unchecked sunscreen" not in titles("2026-W50")
+    env.responses["topic_check"] = {"topics": []}
+    assert topics_mod.check_bank() == [] and "checked" not in common.load_json(topics_mod.bank_path())["topics"][-1]
 
 # ---- 관광지 트렌드 ----
 

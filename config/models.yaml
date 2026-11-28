@@ -194,6 +194,11 @@ stages:
     tools: []
     timeout_sec: 600
 
+  topic_check:     # 주제 은행 교차 검증 (2026-11-28) — Gemini 가 찾은 주제의 전제·행사 기간을 Claude 가 웹 검색으로 확인 (pipeline/01_topics.check_bank)
+    provider: claude_cli
+    tools: [WebSearch, WebFetch]
+    timeout_sec: 1500
+
   citation_check:  # AI 인용 점검 — 독자 질문에 우리 사이트가 출처로 잡히는지 (pipeline/citation_check.py, 4주마다)
     provider: gemini
     model: gemini-3.8-flash

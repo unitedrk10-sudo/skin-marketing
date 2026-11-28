@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import re
 from collections import Counter
 from datetime import date, timedelta
@@ -43,7 +44,11 @@ ANSWERED_PENALTY = 0.3
 EXTRA_CANDIDATES = 4            # Gemini 에게 더 받아 두고 쿼터(config/channels.yaml topic_quota)대로 고른다
 # 주제 은행 (2026-11-27): seed 가 바닥난 유형은 Gemini 조사로 채워 content/topics/bank/ 에 쌓는다 (운영 데이터 — config 는 git 이라 안 건드림)
 BANK_TARGET = 10                # 월 1회: 유형마다 안 쓴 주제를 이만큼 (주 2개 후보 × 약 5주)
-WEEK_MIN = 2                    # 주간 선정 직전: 유형마다 후보 2개가 안 되면 그 유형만 바로 조사
+CHECK_CHUNK = 6                 # Claude 교차 검증 한 번에 볼 주제 수 (웹 검색이 길어진다)
+EVENT_LEAD_DAYS = 30            # 행사 주제는 시작 30일 전부터 (여행 계획은 미리 한다)
+EVENT_MIN_LEFT = 3              # 끝나기 3일 전 주까지만
+EVENT_BONUS = 0.2               # 기간 한정 행사는 지금 아니면 못 쓴다 — 조금 앞으로
+WEEK_MIN = 2                   # 주간 선정 직전: 유형마다 후보 2개가 안 되면 그 유형만 바로 조사
 
 
 def recent_titles() -> list[str]:
@@ -85,14 +90,110 @@ def seed_topics() -> list[dict]:
     return (load_yaml("seed_topics.yaml").get("topics") or []) + bank
 
 
-def unused_by_group() -> Counter:
+def week_range(week: str) -> tuple[date, date]:
+    year, num = week.split("-W")
+    monday = date.fromisocalendar(int(year), int(num), 1)
+    return monday, monday + timedelta(days=6)
+
+
+def offerable(s: dict, week: str) -> bool:
+    """은행 주제는 Claude 교차 검증을 통과한 것만, 행사 주제는 그 주가 행사 기간(EVENT_LEAD_DAYS 전부터, 끝나기
+    EVENT_MIN_LEFT 일 전까지)에 들 때만 (2026-11-28)."""
+    if str(s["id"]).startswith("bank-") and s.get("checked") is not True:
+        return False
+    ev = s.get("event")
+    if not ev:
+        return True
+    try:
+        start, end = date.fromisoformat(ev["start"]), date.fromisoformat(ev["end"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    monday, sunday = week_range(week)
+    return monday <= end - timedelta(days=EVENT_MIN_LEFT) and sunday >= start - timedelta(days=EVENT_LEAD_DAYS)
+
+
+def period(t: dict) -> str:
+    ev = t.get("event") or {}
+    try:
+        return f" 🗓 {ev.get('name', '행사')} {date.fromisoformat(ev['start']):%m/%d}~{date.fromisoformat(ev['end']):%m/%d}"
+    except (KeyError, TypeError, ValueError):
+        return ""
+
+
+def next_week() -> str:
+    return iso_week(date.today() + timedelta(days=7 - date.today().weekday()))
+
+
+def unused_by_group(week: str | None = None) -> Counter:
+    """유형별로 다음 주에 낼 수 있는 안 쓴 주제 수 (검증 안 된 은행 주제·기간 밖 행사 주제는 빼고 센다)."""
     axes = load_yaml("channels.yaml")["content_axes"]
     used = used_seed_ids()
-    return Counter(group_of(s) for s in seed_topics() if s["id"] not in used and s.get("axis") in axes)
+    week = week or next_week()
+    return Counter(group_of(s) for s in seed_topics()
+                   if s["id"] not in used and s.get("axis") in axes and offerable(s, week))
 
 
-def refill(target: int) -> list[dict]:
-    """유형마다 안 쓴 주제가 target 개 미만이면 모자란 만큼 Gemini 로 조사해 주제 은행에 더한다. 더한 주제 목록."""
+def check_bank() -> list[str]:
+    """아직 검증 안 된 은행 주제를 Claude(웹 검색)가 교차 검증 — 찾기는 Gemini, 확인은 다른 회사 모델 (2026-11-28).
+    keep/fix 는 checked=True (fix 는 고친 앵글·제목), drop 은 checked="drop" (제목은 남겨 같은 주제를 다시 받지 않게).
+    행사 주제는 확인된 기간(event)을 붙인다. 검증한 주제 id 목록. 한도·실패면 남은 것은 다음 실행 때."""
+    bank = load_json(bank_path()) if bank_path().exists() else {"topics": []}
+    todo = [t for t in bank["topics"] if "checked" not in t]
+    if not todo:
+        return []
+    known = recent_titles() + [s["title"] for s in seed_topics() if "checked" in s or not str(s["id"]).startswith("bank-")]
+    done = []
+    for i in range(0, len(todo), CHECK_CHUNK):
+        chunk = todo[i:i + CHECK_CHUNK]
+        text = prompt("topic_check", today=date.today().isoformat(), known="\n".join(f"- {k}" for k in known) or "(none)",
+                      topics=json.dumps([{k: t.get(k) for k in ("id", "axis", "title", "angle", "why_now", "keywords")}
+                                         for t in chunk], ensure_ascii=False, indent=1))
+        try:
+            data, _ = llm.generate_json("topic_check", text)
+        except llm.LLMError as e:
+            log.warning("주제 교차 검증 중단 — 남은 %d건은 다음 실행 때: %s", len(todo) - i, e)
+            break
+        verdicts = {str(v.get("id")): v for v in (data.get("topics", []) if isinstance(data, dict) else data) if isinstance(v, dict)}
+        for t in chunk:
+            v = verdicts.get(t["id"])
+            if not v or v.get("verdict") not in ("keep", "fix", "drop"):
+                continue
+            t["check_reason"] = str(v.get("reason") or "")[:200]
+            if v["verdict"] == "drop":
+                t["checked"] = "drop"
+            else:
+                t.update({k: str(v[k]) for k in ("title", "angle", "why_now") if v.get(k)})
+                ev = v.get("event")
+                if ev:
+                    try:
+                        start, end = date.fromisoformat(str(ev["start"])), date.fromisoformat(str(ev["end"]))
+                        assert start <= end and str(ev.get("source", "")).startswith("http")
+                        t["event"] = {"name": str(ev.get("name") or ""), "start": start.isoformat(), "end": end.isoformat(),
+                                      "source": str(ev["source"])}
+                    except (KeyError, TypeError, ValueError, AssertionError):
+                        t["checked"], t["check_reason"] = "drop", "행사 기간 확인 실패"
+                        done.append(t["id"])
+                        continue
+                t["checked"] = True
+            done.append(t["id"])
+        save_json(bank_path(), bank)
+    return done
+
+
+def refill(target: int) -> list[str]:
+    """검증 안 된 은행 주제를 먼저 검증하고, 유형마다 낼 수 있는 주제가 target 개 미만이면 Gemini 로 조사 → Claude
+    교차 검증 (빠지는 주제가 있으면 한 번 더). 이번에 조사·검증한 주제 id 목록."""
+    ids = check_bank()
+    for _ in range(2):
+        new = research(target)
+        if not new:
+            break
+        ids += [t["id"] for t in new] + check_bank()
+    return list(dict.fromkeys(ids))
+
+
+def research(target: int) -> list[dict]:
+    """유형마다 낼 수 있는 주제가 target 개 미만이면 모자란 만큼 Gemini 로 조사해 주제 은행에 더한다 (검증 전)."""
     have = unused_by_group()
     need = {name: (axes, target - have[name]) for name, axes, _ in quota(8) if have[name] < target}
     if not need:
@@ -137,11 +238,19 @@ def refill(target: int) -> list[dict]:
     return added
 
 
-def bank_message(added: list[dict]) -> str:
+def bank_message(ids: list[str]) -> str:
     have = unused_by_group()
     counts = " · ".join(f"{GROUP_KO.get(name, name)} {have[name]}" for name, _, _ in quota(8))
-    lines = [f"🗂 주제 은행: {len(added)}건 추가 — 유형별 남은 주제 {counts}"]
-    lines += [f"- [{GROUP_KO.get(group_of(t), t['axis'])}] {t['title']}" for t in added]
+    by = {t["id"]: t for t in (load_json(bank_path()).get("topics", []) if bank_path().exists() else [])}
+    rows = [by[i] for i in ids if i in by]
+    ok = [t for t in rows if t.get("checked") is True]
+    bad = [t for t in rows if t.get("checked") == "drop"]
+    wait = [t for t in rows if "checked" not in t]
+    lines = [f"🗂 주제 은행: 교차 검증 통과 {len(ok)} · 제외 {len(bad)}" + (f" · 검증 대기 {len(wait)}" if wait else "")
+             + f" — 다음 주에 낼 수 있는 주제 {counts}"]
+    lines += [f"- ✅ [{GROUP_KO.get(group_of(t), t['axis'])}] {t['title']}{period(t)}" for t in ok]
+    lines += [f"- ❌ {t['title']} — {t.get('check_reason', '')}" for t in bad]
+    lines += [f"- ⏳ {t['title']}" for t in wait]
     return "\n".join(lines)
 
 
@@ -210,12 +319,12 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
     axes = load_yaml("channels.yaml")["content_axes"]
     seeds = seed_topics()
     used = used_seed_ids()
-    fresh = [s for s in seeds if s["id"] not in used]
+    fresh = [s for s in seeds if s["id"] not in used and offerable(s, week)]
     if not fresh:
         return None
     candidates = []
     for s in fresh:
-        topic = {k: v for k, v in s.items() if k not in ("id", "wave", "week", "added")}
+        topic = {k: v for k, v in s.items() if k not in ("id", "wave", "week", "added", "checked", "check_reason")}
         topic["sources"] = [x if isinstance(x, dict) else {"url": x, "title": ""} for x in s.get("sources", [])]
         topic["seed_id"] = s["id"]
         candidates.append(topic)
@@ -224,9 +333,11 @@ def from_seed(week: str, count: int, tables: dict[str, dict[str, dict]] | None =
     wave = {s["id"]: s.get("wave", 9) for s in fresh}  # 필터 뒤에도 주제에 맞게 붙도록 id 로 찾는다
     pinned = {s["id"] for s in fresh if str(s.get("week", "")) == week}
     bonus = {i: WAVE_BONUS.get(wave[t["seed_id"]], 0) + (PIN_BONUS if t["seed_id"] in pinned else 0)
-             for i, t in enumerate(candidates)}
+             + (EVENT_BONUS if t.get("event") else 0) for i, t in enumerate(candidates)}  # 기간 있는 행사는 지금 아니면 못 씀
     ranked = annotate(candidates, tables, bonus)
     for t in ranked:
+        if t.get("event"):
+            t["demand"]["reason"] += f" · 🗓 기간 한정 +{EVENT_BONUS}"
         if t["seed_id"] in pinned:
             t["demand"]["reason"] += " · 📌 운영자 지정"
             t["demand"]["pinned"] = True
@@ -271,7 +382,7 @@ def telegram_message(week: str, topics: list[dict]) -> str:
         d = t.get("demand")
         shown = d["score"] - PIN_BONUS if d and d.get("pinned") else (d or {}).get("score", 0)  # 지정 가산점은 순서용 — 수요 표시에선 뺀다
         score = f"\n   └ 📈 수요 {shown:.2f} ({d['reason']})" if d else ""
-        lines.append(f"{i}. {t['title']} ({t['axis']}){price}\n   └ {t['angle']}\n   └ 근거: {t.get('why_now', '')}{score}")
+        lines.append(f"{i}. {t['title']} ({t['axis']}){price}{period(t)}\n   └ {t['angle']}\n   └ 근거: {t.get('why_now', '')}{score}")
     return "\n".join(lines)
 
 

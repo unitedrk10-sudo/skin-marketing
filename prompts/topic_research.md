@@ -25,6 +25,8 @@ how_to topics explain how a foreign visitor uses Korean clinics: checking what a
 
 The weekly skincare topic is an Olive Young pick list for one concrete need after a skin treatment or on a trip (for example gentle sunscreen, simple moisturizer, mild cleanser): state the selection criteria, then give several products as examples. No ranking and no "best" claim.
 
+Seasonal events (markets, light shows, festivals, rinks): propose one only if it runs during the next six weeks, and state the event name and this year's dates in why_now. Event topics are checked against official dates and dropped when they cannot be confirmed or have ended. Do not state medical numbers or mechanisms (hours to stay upright, what causes swelling) in the angle or why_now — phrase them as the reader's question; the draft step finds sources.
+
 Each topic must be answerable purely with public, sourceable information and must not require naming any clinic or doctor.
 
 Answer gap (2026-11-20): AI assistants cite the original source directly when one authoritative page (a medical society, a government page, a major medical site, the product's own leaflet) already answers the whole question — a page that only restates it is skipped. Prefer topics whose full question no single page answers: a treatment combined with a concrete Korea trip situation (food, drink, sauna, sun, flights, sights, seasons), or a question our own public data answers. Each fact still needs its own source. For every topic set "answered_elsewhere": true when one authoritative page already answers the whole question as asked, otherwise false.
