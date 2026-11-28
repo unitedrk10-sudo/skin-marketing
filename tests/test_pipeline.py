@@ -2930,6 +2930,9 @@ def test_review_message_in_korean_with_stable_post_number(env):
     common.save_json(path / "draft.json", draft)
     assert translate.cached(path) is None
     assert "승인 → approved" in human_mod.apply("w40 01 승인", confirm=True)[0]             # 글번호로 답해도 된다 (띄어 써도)
+    human_mod.build_batch("drafts")                                                      # 새 번호표엔 없는 글번호 (자동 승인된 글)
+    with pytest.raises(human_mod.ReplyError, match=r"W40-01 은 .*지금: approved.*되돌리기"):  # 이미 승인된 글번호 = 어디 있는지 알림
+        human_mod.apply("W40-01 승인", confirm=True)
 
 
 def test_shortform_off_hides_script_everywhere(env, monkeypatch):
